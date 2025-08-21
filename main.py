@@ -5,9 +5,10 @@ from PyQt5.QtGui import *
 import sqlite3
 
 # Connect to the SQLite database
-conn = sqlite3.connect("Database.db")
-c = conn.cursor()
-
+def get_db_connection():
+    conn = sqlite3.connect("Database.db")
+    return conn, conn.cursor()
+conn, c = get_db_connection()
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -310,29 +311,66 @@ class AcademicYearTerm(QWidget):
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
         header_layout.addWidget(title)
         header_layout.addStretch()
-        add_year_btn = QPushButton("Add Year")
-        add_year_btn.clicked.connect(self.addYear)
+        # Action ComboBox for Academic Year
+        self.year_action_combo = QComboBox()
+        self.year_action_combo.setStyleSheet("""
+            QComboBox {
+            background-color: #4299E1;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            font-size: 14px;
+            }
+            QComboBox::drop-down {
+            border: none;
+            }
+            QComboBox QAbstractItemView {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E3E7;
+            selection-background-color: #EDF2F7;
+            color: #2D3748;
+            font-size: 14px;
+            }
+        """)
+        self.year_action_combo.addItem("Year ▼", None)
+        self.year_action_combo.addItem("Add Year", "add")
+        self.year_action_combo.addItem("Edit Year", "edit")
+        self.year_action_combo.addItem("Delete Year", "delete")
+        self.year_action_combo.activated.connect(self.handle_year_action)
+
         add_term_btn = QPushButton("Add Term")
-        header_layout.addWidget(add_year_btn)
+        add_term_btn.clicked.connect(self.addTerm)
+        header_layout.addWidget(self.year_action_combo)
         header_layout.addWidget(add_term_btn)
         layout.addLayout(header_layout)
 
         # Filter row
         filter_layout = QHBoxLayout()
-        search_input = QLineEdit()
-        search_input.setPlaceholderText("Search...")
-        search_input.setMaximumWidth(200)
+        self.Search_Input = QLineEdit()
+        self.Search_Input.setPlaceholderText("Search...")
+        self.Search_Input.setClearButtonEnabled(True)
+        self.Search_Input.setMaximumWidth(200)
         year_filter = QComboBox()
         year_filter.addItem("All Years")
-        c.exexute("SELECT * FROM AcademicYear")
+        c.execute("SELECT * FROM AcademicYear")
+        years = c.fetchall()
+        for year in years:
+            year_filter.addItem(year[1], year[0])
+        year_filter.setCurrentIndex(0)
+        
         year_filter.setMaximumWidth(150)
-        filter_layout.addWidget(search_input)
+        filter_layout.addWidget(self.Search_Input)
         filter_layout.addWidget(year_filter)
         filter_layout.addStretch()
         results_label = QLabel("0 results")
         results_label.setStyleSheet("font-size: 14px; color: #718096;")
         filter_layout.addWidget(results_label)
         layout.addLayout(filter_layout)
+
+        # Connect search input and year filter to reload data
+        self.Search_Input.textChanged.connect(self.Load_Data)
+        year_filter.currentIndexChanged.connect(self.Load_Data)
 
         # Table
         self.table = QTableWidget()
@@ -346,31 +384,64 @@ class AcademicYearTerm(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
 
-        # Add sample data
-        self.add_sample_data()
+        # Add Load data
+        self.Load_Data()
         self.update_results_count()
-   
-    def add_sample_data(self):
-        sample_data = [
-            ("2023-2024", "Term 1", "2023-09-01", "2023-12-31"),
-            ("2023-2024", "Term 2", "2024-01-01", "2024-04-30"),
-            ("2024-2025", "Term 1", "2024-09-01", "2024-12-31"),
-            ("2024-2025", "Term 2", "2025-01-01", "2025-04-30"),
-            ("2025-2026", "Term 1", "2025-09-01", "2025-12-31"),
-        ]
-        for row_data in sample_data:
+    
+        
+    def Load_Data(self):
+        self.table.setRowCount(0)
+        # Get selected year filter
+        year_filter = self.layout().itemAt(1).layout().itemAt(1).widget()
+        selected_year_id = year_filter.currentData()
+        query = """
+            SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate
+            FROM Term
+            JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
+        """
+        # Add search filter
+        search_text = self.Search_Input.text().strip()
+        params = ()
+        if search_text:
+            if "WHERE" not in query:
+                query += " WHERE"
+            else:
+                query += " AND"
+            query += " (AcademicYear.Year LIKE ? OR Term.TermName LIKE ?)"
+            params += (f"%{search_text}%", f"%{search_text}%")
+        c.execute(query, params)
+        results = c.fetchall()
+
+        if selected_year_id and selected_year_id != "All Years":
+            # Check if year exists and has no terms
+            c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (selected_year_id,))
+            year_row = c.fetchone()
+            if year_row and not results:
+                self.table.setRowCount(0)
+                self.update_results_count()
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Information)
+                msg_box.setWindowTitle("No Terms")
+                msg_box.setText(f"The year '{year_row[0]}' does not have any terms.")
+                msg_box.setStandardButtons(QMessageBox.Ok)
+                msg_box.setModal(False)
+                msg_box.show()
+                return
+
+        for row_data in results:
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setRowHeight(row, 50)
-
             for col, data in enumerate(row_data):
-                self.table.setItem(row, col, QTableWidgetItem(data))
+                self.table.setItem(row, col, QTableWidgetItem(str(data)))
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
             action_layout.setContentsMargins(5, 0, 5, 0)
             action_layout.setSpacing(5)
             edit_btn = QPushButton("Edit")
+            edit_btn.clicked.connect(lambda _, r=row: self.editTerm(r))
             delete_btn = QPushButton("Delete")
+            delete_btn.clicked.connect(lambda _, r=row: self.deleteTerm(r))
             delete_btn.setObjectName("delete")
             action_layout.addWidget(edit_btn)
             action_layout.addWidget(delete_btn)
@@ -378,6 +449,12 @@ class AcademicYearTerm(QWidget):
             self.table.setCellWidget(row, 4, action_widget)
 
         self.table.resizeColumnsToContents()
+        # Ensure header stretches after data reload
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.update_results_count()
+
+        # Connect filter to reload data
+        year_filter.currentIndexChanged.connect(self.Load_Data)
 
     def update_results_count(self):
         count = self.table.rowCount()
@@ -430,7 +507,6 @@ class AcademicYearTerm(QWidget):
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(20, 20, 20, 20)
-        # layout.setSpacing(15)
 
         label = QLabel("Academic Year Name")
         layout.addWidget(label)
@@ -462,23 +538,611 @@ class AcademicYearTerm(QWidget):
             c.execute("SELECT 1 FROM AcademicYear WHERE Year = ?", (year_name,))
             if c.fetchone():
                 error_label.setText("This academic year already exists.")
-                conn.close()
                 return
             try:
                 c.execute("INSERT INTO AcademicYear (Year) VALUES (?)", (year_name,))
                 conn.commit()
-                conn.close()
                 dialog.accept()
                 # Optionally, refresh the table or notify user
                 QMessageBox.information(self, "Success", f"Academic Year '{year_name}' added successfully.")
             except Exception as e:
                 error_label.setText("Error saving year.")
-                conn.close()
 
         save_btn.clicked.connect(save_year)
         cancel_btn.clicked.connect(dialog.reject)
 
         dialog.exec_()
+
+    def addTerm(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Term")
+        dialog.setFixedSize(400, 500)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+                border-radius: 10px;
+            }
+            QLabel {
+                font-size: 16px;
+                color: #2D3748;
+            }
+            QComboBox, QDateEdit {
+                background-color: #F7FAFC;
+                border: 1px solid #E0E3E7;
+                padding: 5px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton#cancel {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                border: 1px solid #E0E3E7;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QPushButton#cancel:hover {
+                background-color: #E2E8F0;
+            }
+            QLabel#error {
+                color: #E53E3E;
+                font-size: 13px;
+            }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Academic Year
+        year_label = QLabel("Academic Year")
+        layout.addWidget(year_label)
+        year_combo = QComboBox()
+        year_combo.addItem("Select Year", None)
+        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+        years = c.fetchall()
+        for year in years:
+            year_combo.addItem(year[1], year[0])
+        layout.addWidget(year_combo)
+
+        # Term
+        term_label = QLabel("Term")
+        layout.addWidget(term_label)
+        term_combo = QComboBox()
+        term_combo.addItem("Select Term", None)
+        term_combo.addItem("Term 1", "Term 1")
+        term_combo.addItem("Term 2", "Term 2")
+        term_combo.addItem("Term 3", "Term 3")
+        layout.addWidget(term_combo)
+
+        # Start Date
+        start_label = QLabel("Starting Date")
+        layout.addWidget(start_label)
+        start_date = QDateEdit()
+        start_date.setCalendarPopup(True)
+        start_date.setDisplayFormat("yyyy-MM-dd")
+        layout.addWidget(start_date)
+
+        # End Date
+        end_label = QLabel("Ending Date")
+        layout.addWidget(end_label)
+        end_date = QDateEdit()
+        end_date.setCalendarPopup(True)
+        end_date.setDisplayFormat("yyyy-MM-dd")
+        layout.addWidget(end_date)
+
+        # Error label
+        error_label = QLabel("")
+        error_label.setObjectName("error")
+        layout.addWidget(error_label)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancel")
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def save_term():
+            year_id = year_combo.currentData()
+            term = term_combo.currentData()
+            start = start_date.date().toString("yyyy-MM-dd")
+            end = end_date.date().toString("yyyy-MM-dd")
+
+            if not year_id or not term or not start or not end:
+                error_label.setText("All fields are required.")
+                return
+
+            if start > end:
+                error_label.setText("Start date must be before end date.")
+                return
+
+            # Check for duplicate term in the same year
+            c.execute("SELECT 1 FROM Term WHERE TermName=? AND AcademicYear=?",
+                    (term, year_id))
+            if c.fetchone():
+                error_label.setText("This term already exists for the selected year.")
+                return
+
+            try:
+                c.execute(
+                    "INSERT INTO Term (TermName, AcademicYear, StartDate, EndDate) VALUES (?, ?, ?, ?)",
+                    (term, year_id, start, end)
+                )
+                conn.commit()
+                dialog.accept()
+                QMessageBox.information(self, "Success", f"{term} added successfully.")
+                # Optionally, refresh the table or notify user
+            except Exception as e:
+                error_label.setText("Error saving term.")
+
+        save_btn.clicked.connect(save_term)
+        cancel_btn.clicked.connect(dialog.reject)
+
+        dialog.exec_()
+    
+    def editTerm(self, row):
+        # Get current term data from the table
+        year = self.table.item(row, 0).text()
+        term = self.table.item(row, 1).text()
+        start = self.table.item(row, 2).text()
+        end = self.table.item(row, 3).text()
+
+        # Get the term's database ID
+        c.execute("""
+            SELECT Term.TermID, AcademicYear.AcademicYearID
+            FROM Term
+            JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
+            WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
+        """, (year, term, start, end))
+        result = c.fetchone()
+        if not result:
+            QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
+            return
+        term_id, year_id = result
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Term")
+        dialog.setFixedSize(400, 500)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+                border-radius: 10px;
+            }
+            QLabel {
+                font-size: 16px;
+                color: #2D3748;
+            }
+            QComboBox, QDateEdit {
+                background-color: #F7FAFC;
+                border: 1px solid #E0E3E7;
+                padding: 5px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton#cancel {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                border: 1px solid #E0E3E7;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QPushButton#cancel:hover {
+                background-color: #E2E8F0;
+            }
+            QLabel#error {
+                color: #E53E3E;
+                font-size: 13px;
+            }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Academic Year
+        year_label = QLabel("Academic Year")
+        layout.addWidget(year_label)
+        year_combo = QComboBox()
+        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+        years = c.fetchall()
+        for y in years:
+            year_combo.addItem(y[1], y[0])
+        # Set current year
+        idx = [y[0] for y in years].index(year_id) if year_id in [y[0] for y in years] else 0
+        year_combo.setCurrentIndex(idx)
+        layout.addWidget(year_combo)
+
+        # Term
+        term_label = QLabel("Term")
+        layout.addWidget(term_label)
+        term_combo = QComboBox()
+        term_combo.addItem("Term 1", "Term 1")
+        term_combo.addItem("Term 2", "Term 2")
+        term_combo.addItem("Term 3", "Term 3")
+        # Set current term
+        idx = ["Term 1", "Term 2", "Term 3"].index(term) if term in ["Term 1", "Term 2", "Term 3"] else 0
+        term_combo.setCurrentIndex(idx)
+        layout.addWidget(term_combo)
+
+        # Start Date
+        start_label = QLabel("Starting Date")
+        layout.addWidget(start_label)
+        start_date = QDateEdit()
+        start_date.setCalendarPopup(True)
+        start_date.setDisplayFormat("yyyy-MM-dd")
+        start_date.setDate(QDate.fromString(start, "yyyy-MM-dd"))
+        layout.addWidget(start_date)
+
+        # End Date
+        end_label = QLabel("Ending Date")
+        layout.addWidget(end_label)
+        end_date = QDateEdit()
+        end_date.setCalendarPopup(True)
+        end_date.setDisplayFormat("yyyy-MM-dd")
+        end_date.setDate(QDate.fromString(end, "yyyy-MM-dd"))
+        layout.addWidget(end_date)
+
+        # Error label
+        error_label = QLabel("")
+        error_label.setObjectName("error")
+        layout.addWidget(error_label)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancel")
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def save_edit():
+            new_year_id = year_combo.currentData()
+            new_term = term_combo.currentData()
+            new_start = start_date.date().toString("yyyy-MM-dd")
+            new_end = end_date.date().toString("yyyy-MM-dd")
+
+            if not new_year_id or not new_term or not new_start or not new_end:
+                error_label.setText("All fields are required.")
+                return
+
+            if new_start > new_end:
+                error_label.setText("Start date must be before end date.")
+                return
+
+            # Check for duplicate term in the same year (excluding current term)
+            c.execute("""
+                SELECT 1 FROM Term 
+                WHERE TermName=? AND AcademicYear=? AND TermID<>?
+            """, (new_term, new_year_id, term_id))
+            if c.fetchone():
+                error_label.setText("This term already exists for the selected year.")
+                return
+
+            try:
+                c.execute("""
+                    UPDATE Term SET TermName=?, AcademicYear=?, StartDate=?, EndDate=?
+                    WHERE TermID=?
+                """, (new_term, new_year_id, new_start, new_end, term_id))
+                conn.commit()
+                dialog.accept()
+                QMessageBox.information(self, "Success", f"{new_term} updated successfully.")
+                self.Load_Data()
+            except Exception as e:
+                error_label.setText("Error updating term.")
+
+        save_btn.clicked.connect(save_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+
+        dialog.exec_()
+    
+    def deleteTerm(self, row):
+        # Get current term data from the table
+        year = self.table.item(row, 0).text()
+        term = self.table.item(row, 1).text()
+        start = self.table.item(row, 2).text()
+        end = self.table.item(row, 3).text()
+
+        # Get the term's database ID
+        c.execute("""
+            SELECT Term.TermID
+            FROM Term
+            JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
+            WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
+        """, (year, term, start, end))
+        result = c.fetchone()
+        if not result:
+            QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
+            return
+        term_id = result[0]
+
+        # Precaution message
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Delete Term")
+        msg.setText(
+            f"Are you sure you want to delete the term '{term}' for academic year '{year}'?\n\n"
+            "This action cannot be undone.\n\n"
+            "Note:\n"
+            "- If this term is linked to any fees, deletion is not allowed.\n"
+            "- If students are assigned to this term, their term assignment will be set to 'None'."
+        )
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        ret = msg.exec_()
+        if ret != QMessageBox.Yes:
+            return
+
+        # Check for Fees relation
+        c.execute("SELECT 1 FROM Fees WHERE TermID = ?", (term_id,))
+        if c.fetchone():
+            QMessageBox.critical(self, "Restricted", "This term cannot be deleted because it is linked to one or more fees records.")
+            return
+
+        # Set Student.TermID to NULL for students assigned to this term
+        c.execute("UPDATE Student SET TermID = NULL WHERE TermID = ?", (term_id,))
+        # Now delete the term
+        try:
+            c.execute("DELETE FROM Term WHERE TermID = ?", (term_id,))
+            conn.commit()
+            QMessageBox.information(self, "Deleted", f"Term '{term}' for academic year '{year}' has been deleted.\n\n"
+                                                     "Any students previously assigned to this term now have no term assigned.")
+            self.Load_Data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", "An error occurred while deleting the term.")
+    
+    def editYear(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Academic Year")
+        dialog.setFixedSize(350, 220)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+                border-radius: 10px;
+            }
+            QLabel {
+                font-size: 16px;
+                color: #2D3748;
+            }
+            QComboBox, QLineEdit {
+                background-color: #F7FAFC;
+                border: 1px solid #E0E3E7;
+                padding: 10px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton#cancel {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                border: 1px solid #E0E3E7;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QPushButton#cancel:hover {
+                background-color: #E2E8F0;
+            }
+            QLabel#error {
+                color: #E53E3E;
+                font-size: 13px;
+            }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        label = QLabel("Select Academic Year to Edit")
+        layout.addWidget(label)
+
+        year_combo = QComboBox()
+        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+        years = c.fetchall()
+        year_combo.addItem("Select Year", None)
+        for y in years:
+            year_combo.addItem(y[1], y[0])
+        layout.addWidget(year_combo)
+
+        new_label = QLabel("New Year Name")
+        layout.addWidget(new_label)
+
+        year_input = QLineEdit()
+        year_input.setPlaceholderText("e.g. 2024-2025")
+        layout.addWidget(year_input)
+
+        error_label = QLabel("")
+        error_label.setObjectName("error")
+        layout.addWidget(error_label)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancel")
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def save_edit():
+            year_id = year_combo.currentData()
+            new_year_name = year_input.text().strip()
+            if not year_id:
+                error_label.setText("Please select a year to edit.")
+                return
+            if not new_year_name:
+                error_label.setText("Year name cannot be empty.")
+                return
+            c.execute("SELECT 1 FROM AcademicYear WHERE Year = ? AND AcademicYearID != ?", (new_year_name, year_id))
+            if c.fetchone():
+                error_label.setText("This academic year already exists.")
+                return
+            try:
+                c.execute("UPDATE AcademicYear SET Year = ? WHERE AcademicYearID = ?", (new_year_name, year_id))
+                conn.commit()
+                dialog.accept()
+                QMessageBox.information(self, "Success", f"Academic Year updated successfully.")
+                self.Load_Data()
+            except Exception as e:
+                error_label.setText("Error updating year.")
+
+        save_btn.clicked.connect(save_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+
+        dialog.exec_()
+
+    def deleteYear(self):
+        # Dialog for deleting academic year
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Delete Academic Year")
+        dialog.setFixedSize(350, 180)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+                border-radius: 10px;
+            }
+            QLabel {
+                font-size: 16px;
+                color: #2D3748;
+            }
+            QComboBox {
+                background-color: #F7FAFC;
+                border: 1px solid #E0E3E7;
+                padding: 10px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton {
+                background-color: #E53E3E;
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton#cancel {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                border: 1px solid #E0E3E7;
+            }
+            QPushButton:hover {
+                background-color: #C53030;
+            }
+            QPushButton#cancel:hover {
+                background-color: #E2E8F0;
+            }
+            QLabel#error {
+                color: #E53E3E;
+                font-size: 13px;
+            }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        label = QLabel("Select Academic Year to Delete")
+        layout.addWidget(label)
+
+        year_combo = QComboBox()
+        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+        years = c.fetchall()
+        year_combo.addItem("Select Year", None)
+        for y in years:
+            year_combo.addItem(y[1], y[0])
+        layout.addWidget(year_combo)
+
+        error_label = QLabel("")
+        error_label.setObjectName("error")
+        layout.addWidget(error_label)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        delete_btn = QPushButton("Delete")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancel")
+        btn_layout.addWidget(delete_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def do_delete():
+            year_id = year_combo.currentData()
+            if not year_id:
+                error_label.setText("Please select a year to delete.")
+                return
+            # Check for child relations in Term
+            c.execute("SELECT 1 FROM Term WHERE AcademicYear = ?", (year_id,))
+            if c.fetchone():
+                error_label.setText("Cannot delete: This year has related terms.")
+                return
+            # Check for child relations in Class
+            c.execute("SELECT 1 FROM Class WHERE AcademicYear = ?", (year_id,))
+            if c.fetchone():
+                error_label.setText("Cannot delete: This year has related classes.")
+                return
+
+            # Get year name for message
+            year_name = year_combo.currentText()
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("Delete Academic Year")
+            msg.setText(
+                f"Are you sure you want to delete the academic year '{year_name}'?\n\n"
+                "This action cannot be undone.\n\n"
+                "Note:\n"
+                "- If this year is linked to any terms or classes, deletion is not allowed."
+            )
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            ret = msg.exec_()
+            if ret != QMessageBox.Yes:
+                return
+
+            try:
+                c.execute("DELETE FROM AcademicYear WHERE AcademicYearID = ?", (year_id,))
+                conn.commit()
+                dialog.accept()
+                QMessageBox.information(self, "Deleted", f"Academic Year '{year_name}' has been deleted successfully.")
+                self.Load_Data()
+            except Exception as e:
+                error_label.setText("Error deleting year.")
+
+        delete_btn.clicked.connect(do_delete)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def handle_year_action(self, index):
+        action = self.year_action_combo.itemData(index)
+        if action == "add":
+            self.addYear()
+            self.Load_Data()
+        elif action == "edit":
+            self.editYear()
+        elif action == "delete":
+            self.deleteYear()
+        self.year_action_combo.setCurrentIndex(0)
 
 class Dashboard(QWidget):
     def __init__(self):
@@ -505,13 +1169,429 @@ class Student(QWidget):
 class Class(QWidget):
     def __init__(self):
         super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+            color: #2D3748;
+            }
+            QPushButton {
+            background-color: #4299E1;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            font-size: 14px;
+            }
+            QPushButton:hover {
+            background-color: #3182CE;
+            }
+            QLineEdit {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E3E7;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 14px;
+            }
+            QComboBox {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E3E7;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 14px;
+            }
+            QTableWidget {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E3E7;
+            border-radius: 5px;
+            gridline-color: #E0E3E7;
+            selection-background-color: #0c3157;
+            }
+            QTableWidget::item {
+            padding: 10px;
+            color: #2D3748;
+            }
+            QHeaderView::section {
+            background-color: #F7FAFC;
+            padding: 10px;
+            border: none;
+            border-bottom: 1px solid #E0E3E7;
+            font-weight: bold;
+            color: #4A5568;
+            }
+            QTableWidget QPushButton {
+            background-color: transparent;
+            color: #4299E1;
+            padding: 5px 10px;
+            border: 1px solid #4299E1;
+            border-radius: 3px;
+            font-size: 12px;
+            }
+            QTableWidget QPushButton:hover {
+            background-color: #EDF2F7;
+            }
+            QTableWidget QPushButton#delete {
+            color: #E53E3E;
+            border: 1px solid #E53E3E;
+            }
+            QTableWidget QPushButton#delete:hover {
+            background-color: #FED7D7;
+            }
+        """)
+
         layout = QVBoxLayout(self)
-        layout.addStretch()
-        label = QLabel("Class Page")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("font-size: 28px; font-weight: bold; color: #2D3748;")
-        layout.addWidget(label)
-        layout.addStretch()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(15)
+
+        # Header row
+        header_layout = QHBoxLayout()
+        title = QLabel("Class Management")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        add_class_btn = QPushButton("Add Class")
+        add_class_btn.clicked.connect(self.addClass)
+        header_layout.addWidget(add_class_btn)
+        layout.addLayout(header_layout)
+
+        # Filter row
+        filter_layout = QHBoxLayout()
+        self.Search_Input = QLineEdit()
+        self.Search_Input.setPlaceholderText("Search...")
+        self.Search_Input.setClearButtonEnabled(True)
+        self.Search_Input.setMaximumWidth(200)
+        self.year_filter = QComboBox()
+        self.year_filter.addItem("All Years", None)
+        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+        years = c.fetchall()
+        for year in years:
+            self.year_filter.addItem(year[1], year[0])
+        self.year_filter.setCurrentIndex(0)
+        self.year_filter.setMaximumWidth(150)
+        filter_layout.addWidget(self.Search_Input)
+        filter_layout.addWidget(self.year_filter)
+        filter_layout.addStretch()
+        self.results_label = QLabel("0 results")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+        filter_layout.addWidget(self.results_label)
+        layout.addLayout(filter_layout)
+
+        self.Search_Input.textChanged.connect(self.Load_Data)
+        self.year_filter.currentIndexChanged.connect(self.Load_Data)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Class Name", "Academic Year", "Action"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table)
+
+        self.Load_Data()
+        self.update_results_count()
+
+    def Load_Data(self):
+        self.table.setRowCount(0)
+        selected_year_id = self.year_filter.currentData()
+        query = """
+            SELECT Class.ClassID, Class.ClassName, AcademicYear.Year
+            FROM Class
+            JOIN AcademicYear ON Class.AcademicYear = AcademicYear.AcademicYearID
+        """
+        params = ()
+        search_text = self.Search_Input.text().strip()
+        filters = []
+        if selected_year_id:
+            filters.append("Class.AcademicYear = ?")
+            params += (selected_year_id,)
+        if search_text:
+            filters.append("(Class.ClassName LIKE ?)")
+            params += (f"%{search_text}%",)
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        c.execute(query, params)
+        results = c.fetchall()
+        for row_data in results:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setRowHeight(row, 50)
+            # ClassName, Year
+            self.table.setItem(row, 0, QTableWidgetItem(str(row_data[1])))
+            self.table.setItem(row, 1, QTableWidgetItem(str(row_data[2])))
+            action_widget = QWidget()
+            action_layout = QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(5, 0, 5, 0)
+            action_layout.setSpacing(5)
+            edit_btn = QPushButton("Edit")
+            edit_btn.clicked.connect(lambda _, cid=row_data[0]: self.editClass(cid))
+            delete_btn = QPushButton("Delete")
+            delete_btn.clicked.connect(lambda _, cid=row_data[0]: self.deleteClass(cid))
+            delete_btn.setObjectName("delete")
+            action_layout.addWidget(edit_btn)
+            action_layout.addWidget(delete_btn)
+            action_layout.addStretch()
+            self.table.setCellWidget(row, 2, action_widget)
+        self.table.resizeColumnsToContents()
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.update_results_count()
+
+    def update_results_count(self):
+        count = self.table.rowCount()
+        self.results_label.setText(f"{count} results")
+
+    def addClass(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Class")
+        dialog.setFixedSize(350, 220)
+        dialog.setStyleSheet("""
+            QDialog {
+            background-color: #FFFFFF;
+            border-radius: 10px;
+            }
+            QLabel {
+            font-size: 16px;
+            color: #2D3748;
+            }
+            QComboBox, QLineEdit {
+            background-color: #F7FAFC;
+            border: 1px solid #E0E3E7;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 15px;
+            }
+            QPushButton {
+            background-color: #4299E1;
+            color: white;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 5px;
+            font-size: 15px;
+            }
+            QPushButton#cancel {
+            background-color: #EDF2F7;
+            color: #2D3748;
+            border: 1px solid #E0E3E7;
+            }
+            QPushButton:hover {
+            background-color: #3182CE;
+            }
+            QPushButton#cancel:hover {
+            background-color: #E2E8F0;
+            }
+            QLabel#error {
+            color: #E53E3E;
+            font-size: 13px;
+            }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Academic Year
+        year_label = QLabel("Academic Year")
+        layout.addWidget(year_label)
+        year_combo = QComboBox()
+        year_combo.addItem("Select Year", None)
+        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+        years = c.fetchall()
+        for year in years:
+            year_combo.addItem(year[1], year[0])
+        layout.addWidget(year_combo)
+
+        # Class Name
+        class_label = QLabel("Class Name")
+        layout.addWidget(class_label)
+        class_input = QLineEdit()
+        class_input.setPlaceholderText("e.g. Form 1A")
+        layout.addWidget(class_input)
+
+        error_label = QLabel("")
+        error_label.setObjectName("error")
+        layout.addWidget(error_label)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancel")
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def save_class():
+            year_id = year_combo.currentData()
+            class_name = class_input.text().strip()
+            if not year_id or not class_name:
+                error_label.setText("Year and Class Name are required.")
+                return
+            c.execute("SELECT 1 FROM Class WHERE ClassName=? AND AcademicYear=?", (class_name, year_id))
+            if c.fetchone():
+                error_label.setText("This class already exists for the selected year.")
+                return
+            try:
+                c.execute(
+                    "INSERT INTO Class (ClassName, AcademicYear) VALUES (?, ?)",
+                    (class_name, year_id)
+                )
+                conn.commit()
+                dialog.accept()
+                QMessageBox.information(self, "Success", f"Class '{class_name}' added successfully.")
+                self.Load_Data()
+            except Exception as e:
+                error_label.setText("Error saving class.")
+
+        save_btn.clicked.connect(save_class)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def editClass(self, class_id):
+        c.execute("SELECT ClassName, AcademicYear FROM Class WHERE ClassID=?", (class_id,))
+        result = c.fetchone()
+        if not result:
+            QMessageBox.warning(self, "Error", "Could not find the selected class in the database.")
+            return
+        class_name, year_id = result
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Class")
+        dialog.setFixedSize(350, 220)
+        dialog.setStyleSheet("""
+            QDialog {
+            background-color: #FFFFFF;
+            border-radius: 10px;
+            }
+            QLabel {
+            font-size: 16px;
+            color: #2D3748;
+            }
+            QComboBox, QLineEdit {
+            background-color: #F7FAFC;
+            border: 1px solid #E0E3E7;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 15px;
+            }
+            QPushButton {
+            background-color: #4299E1;
+            color: white;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 5px;
+            font-size: 15px;
+            }
+            QPushButton#cancel {
+            background-color: #EDF2F7;
+            color: #2D3748;
+            border: 1px solid #E0E3E7;
+            }
+            QPushButton:hover {
+            background-color: #3182CE;
+            }
+            QPushButton#cancel:hover {
+            background-color: #E2E8F0;
+            }
+            QLabel#error {
+            color: #E53E3E;
+            font-size: 13px;
+            }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Academic Year
+        year_label = QLabel("Academic Year")
+        layout.addWidget(year_label)
+        year_combo = QComboBox()
+        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+        years = c.fetchall()
+        for y in years:
+            year_combo.addItem(y[1], y[0])
+        idx = [y[0] for y in years].index(year_id) if year_id in [y[0] for y in years] else 0
+        year_combo.setCurrentIndex(idx)
+        layout.addWidget(year_combo)
+
+        # Class Name
+        class_label = QLabel("Class Name")
+        layout.addWidget(class_label)
+        class_input = QLineEdit(class_name)
+        layout.addWidget(class_input)
+
+        error_label = QLabel("")
+        error_label.setObjectName("error")
+        layout.addWidget(error_label)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancel")
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def save_edit():
+            new_year_id = year_combo.currentData()
+            new_class_name = class_input.text().strip()
+            if not new_year_id or not new_class_name:
+                error_label.setText("Year and Class Name are required.")
+                return
+            c.execute(
+                "SELECT 1 FROM Class WHERE ClassName=? AND AcademicYear=? AND ClassID<>?",
+                (new_class_name, new_year_id, class_id)
+            )
+            if c.fetchone():
+                error_label.setText("This class already exists for the selected year.")
+                return
+            try:
+                c.execute(
+                    "UPDATE Class SET ClassName=?, AcademicYear=? WHERE ClassID=?",
+                    (new_class_name, new_year_id, class_id)
+                )
+                conn.commit()
+                dialog.accept()
+                QMessageBox.information(self, "Success", f"Class updated successfully.")
+                self.Load_Data()
+            except Exception as e:
+                error_label.setText("Error updating class.")
+
+        save_btn.clicked.connect(save_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def deleteClass(self, class_id):
+        # Check for child relations (e.g., students assigned to this class)
+        c.execute("SELECT 1 FROM StudentTerm WHERE ClassID = ?", (class_id,))
+        if c.fetchone():
+            QMessageBox.critical(self, "Restricted", "This class cannot be deleted because it is linked to one or more students.")
+            return
+
+        # Get class name for message
+        c.execute("SELECT ClassName FROM Class WHERE ClassID = ?", (class_id,))
+        row = c.fetchone()
+        class_name = row[0] if row else "the class"
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Delete Class")
+        msg.setText(
+            f"Are you sure you want to delete '{class_name}'?\n\n"
+            "This action cannot be undone.\n\n"
+            "Note:\n"
+            "- If this class is linked to any students, deletion is not allowed."
+        )
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        ret = msg.exec_()
+        if ret != QMessageBox.Yes:
+            return
+
+        try:
+            c.execute("DELETE FROM Class WHERE ClassID = ?", (class_id,))
+            conn.commit()
+            QMessageBox.information(self, "Deleted", f"Class '{class_name}' has been deleted successfully.")
+            self.Load_Data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", "An error occurred while deleting the class.")
 
 class Fees(QWidget):
     def __init__(self):
