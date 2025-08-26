@@ -4,18 +4,35 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 import sqlite3
 import pandas as pd
+from contextlib import contextmanager
 
-# Connect to the SQLite database
+# Enhanced connection function with context manager
+@contextmanager
 def get_db_connection():
-    conn = sqlite3.connect("Database.db")
-    return conn, conn.cursor()
-conn, c = get_db_connection()
-
- # Assuming get_db_connection() is defined elsewhere, e.g.:
-    # def get_db_connection():
-    #     global conn, c
-    #     conn = sqlite3.connect('school.db')
-    #     c = conn.cursor()
+    """Context manager for database connections that handles opening and closing automatically"""
+    conn = None
+    try:
+        conn = sqlite3.connect("Database.db")
+        conn.row_factory = sqlite3.Row  # Optional: for named column access
+        c = conn.cursor()
+        yield conn, c
+    except sqlite3.Error as e:
+        print(f"Database connection error: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+            
+# Alternative: Simple function that always returns a fresh connection
+def get_db_connection_simple():
+    """Simple function that always returns a fresh connection"""
+    try:
+        conn = sqlite3.connect("Database.db")
+        c = conn.cursor()
+        return conn, c
+    except sqlite3.Error as e:
+        print(f"Database connection error: {e}")
+        raise
 
 class Student(QWidget):
     def __init__(self):
@@ -97,7 +114,7 @@ class Student(QWidget):
         add_student_btn = QPushButton("Add Student")
         add_student_btn.clicked.connect(self.show_add_student_dialog)
         import_btn = QPushButton("Import Excel")
-        import_btn.clicked.connect(self.show_import_excel_wizard)
+        import_btn.clicked.connect(lambda: self.show_import_wizard())
         header_layout.addWidget(add_student_btn)
         header_layout.addWidget(import_btn)
         layout.addLayout(header_layout)
@@ -108,21 +125,21 @@ class Student(QWidget):
         self.search_input.setPlaceholderText("Search...")
         self.search_input.setMaximumWidth(200)
         self.search_input.textChanged.connect(self.load_data)
-        
-        get_db_connection()  # Open connection for populating combos
-        
+                
         self.class_filter = QComboBox()
         self.class_filter.addItem("All Classes", None)
-        c.execute("SELECT ClassID, ClassName FROM Class")
-        for cl in c.fetchall():
-            self.class_filter.addItem(cl[1], cl[0])
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT ClassID, ClassName FROM Class")
+            for cl in c.fetchall():
+                self.class_filter.addItem(cl[1], cl[0])
         self.class_filter.currentIndexChanged.connect(self.load_data)
         
         self.term_filter = QComboBox()
         self.term_filter.addItem("All Terms", None)
-        c.execute("SELECT TermID, TermName FROM Term")
-        for t in c.fetchall():
-            self.term_filter.addItem(t[1], t[0])
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT TermID, TermName FROM Term")
+            for t in c.fetchall():
+                self.term_filter.addItem(t[1], t[0])
         self.term_filter.currentIndexChanged.connect(self.load_data)
         
         self.filterbyStatus = QComboBox()
@@ -134,9 +151,10 @@ class Student(QWidget):
         
         self.Filter_FeePayer = QComboBox()
         self.Filter_FeePayer.addItem("All Fee Payers")
-        c.execute("SELECT DISTINCT Feepayer From Students")
-        for fp in c.fetchall():
-            self.Filter_FeePayer.addItem(fp[0])
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT DISTINCT Feepayer From Students")
+            for fp in c.fetchall():
+                self.Filter_FeePayer.addItem(fp[0])
         self.Filter_FeePayer.currentIndexChanged.connect(self.load_data)
         
         #conn.close()  # Close connection after populating combos
@@ -153,52 +171,84 @@ class Student(QWidget):
         filter_layout.addWidget(self.results_label)
         layout.addLayout(filter_layout)
 
-        # Table
+        # Table setup
         self.table = QTableWidget()
         self.table.setColumnCount(10)  # Added columns for actions
         self.table.setHorizontalHeaderLabels(["StudentID", "Name", "Fee Payer", "Status", "Parent Name", "Contact", "Contact2", "Class", "Term", "Actions"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        # Set resize mode for all columns except Actions
+        header = self.table.horizontalHeader()
+        for col in range(9):  # First 9 columns
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+
+        # Set fixed width for Actions column
+        header.setSectionResizeMode(9, QHeaderView.Fixed)
+        header.resizeSection(9, 120)  # Width for action buttons
+
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
-        
+
         layout.addWidget(self.table)
         self.load_data()
 
+    def show_import_wizard(self):
+        wizard = ImportWizard(self)
+        wizard.exec_()
+
     def populate_combos(self, class_combo, term_combo):
-        get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT ClassID, ClassName FROM Class")
-        classes = c.fetchall()
-        for cl in classes:
-            class_combo.addItem(cl[1], cl[0])
-        c.execute("SELECT TermID, TermName FROM Term")
-        terms = c.fetchall()
-        for t in terms:
-            term_combo.addItem(t[1], t[0])
+        
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT ClassID, ClassName FROM Class")
+            classes = c.fetchall()
+            for cl in classes:
+                class_combo.addItem(cl[1], cl[0])
+            c.execute("SELECT TermID, TermName FROM Term")
+            terms = c.fetchall()
+            for t in terms:
+                term_combo.addItem(t[1], t[0])
 
     def load_data(self):
-        get_db_connection()
-        c = conn.cursor()
         
-        # Determine which table to query based on Student Only checkbox
-        if self.StudentOnlycheck.isChecked():
-            # Query only Students table
-            query = """SELECT s.StudentID, s.Student_Name, s.FeePayer, s.Status, 
-                            s.Parent_Name, s.Parent_Contact, s.Parent_Contact2,
-                            'N/A' as ClassName, 'N/A' as TermName
-                    FROM Students s"""
-        else:
-            # Query joined tables
-            query = """SELECT s.StudentID, s.Student_Name, s.FeePayer, s.Status, 
-                            s.Parent_Name, s.Parent_Contact, s.Parent_Contact2,
-                            cl.ClassName, t.TermName
-                    FROM Students s
-                    LEFT JOIN StudentTerm st ON s.StudentID = st.StudentID
-                    LEFT JOIN Class cl ON st.ClassID = cl.ClassID
-                    LEFT JOIN Term t ON st.TermID = t.TermID"""
-        
+        with get_db_connection() as (conn, c):
+            # Determine which table to query based on Student Only checkbox
+            if self.StudentOnlycheck.isChecked():
+                # Query only Students table
+                query = """SELECT s.StudentID, s.Student_Name, s.FeePayer, s.Status, 
+                                s.Parent_Name, s.Parent_Contact, s.Parent_Contact2,
+                                'N/A' as ClassName, 'N/A' as TermName
+                        FROM Students s"""
+            else:
+                # Query joined tables
+                query = """SELECT s.StudentID, s.Student_Name, s.FeePayer, s.Status, 
+                                s.Parent_Name, s.Parent_Contact, s.Parent_Contact2,
+                                cl.ClassName, t.TermName
+                        FROM Students s
+                        LEFT JOIN StudentTerm st ON s.StudentID = st.StudentID
+                        LEFT JOIN Class cl ON st.ClassID = cl.ClassID
+                        LEFT JOIN Term t ON st.TermID = t.TermID"""
+            
+            # Build filters
+            filters, params = self.build_filters()
+            
+            # Apply filters if any
+            if filters:
+                query += " WHERE " + " AND ".join(filters)
+            
+            # Execute query
+            c.execute(query, params)
+            rows = c.fetchall()
+            
+            # Populate table
+            self.populate_table(rows)
+            
+            # Update results count
+            count = self.table.rowCount()
+            self.results_label.setText(f"{count} results")
+
+    def build_filters(self):
+        """Build filter conditions and parameters"""
         filters = []
         params = ()
         
@@ -234,285 +284,116 @@ class Student(QWidget):
             filters.append("s.FeePayer = ?")
             params += (fee_payer_filter,)
         
-        # Apply filters if any
-        if filters:
-            query += " WHERE " + " AND ".join(filters)
-        
-        # Execute query
-        c.execute(query, params)
-        rows = c.fetchall()
-        
-        # Populate table
+        return filters, params
+
+    def populate_table(self, rows):
+        """Populate table with data and action buttons"""
         self.table.setRowCount(0)
+        
         for row_data in rows:
             row = self.table.rowCount()
             self.table.insertRow(row)
+            self.table.setRowHeight(row,50)
             
             # Add data columns
             for col, data in enumerate(row_data):
-                self.table.setItem(row, col, QTableWidgetItem(str(data) if data else ""))
+                item = QTableWidgetItem(str(data) if data else "")
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make non-editable
+                self.table.setItem(row, col, item)
             
             # Add action buttons
-            actions_widget = QWidget()
-            actions_layout = QHBoxLayout(actions_widget)
-            actions_layout.setContentsMargins(5, 5, 5, 5)
-            actions_layout.setSpacing(5)
-            
-            edit_btn = QPushButton("Edit")
-            edit_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #48BB78;
-                    color: white;
-                    border: none;
-                    padding: 5px;
-                    border-radius: 3px;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #38A169;
-                }
-            """)
-            edit_btn.clicked.connect(lambda checked, student_id=row_data[0]: self.edit_student(student_id))
-            
-            delete_btn = QPushButton("Delete")
-            delete_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #F56565;
-                    color: white;
-                    border: none;
-                    padding: 5px;
-                    border-radius: 3px;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #E53E3E;
-                }
-            """)
-            delete_btn.clicked.connect(lambda checked, student_id=row_data[0]: self.delete_student(student_id))
-            
-            actions_layout.addWidget(edit_btn)
-            actions_layout.addWidget(delete_btn)
-            actions_layout.addStretch()
-            
-            self.table.setCellWidget(row, 9, actions_widget)
+            self.add_action_buttons(row, row_data[0])
+
+    def add_action_buttons(self, row, student_id):
+        """Add edit and delete buttons to table row"""
+        actions_widget = QWidget()
+        actions_layout = QHBoxLayout(actions_widget)
+        # actions_layout.setContentsMargins(5, 5, 5, 5)
+        # actions_layout.setSpacing(5)
         
-        # Update results count
-        count = self.table.rowCount()
-        self.results_label.setText(f"{count} results")
+        # Edit button
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedSize(50, 25)
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #48BB78;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #38A169;
+            }
+            QPushButton:pressed {
+                background-color: #2F855A;
+            }
+        """)
+        edit_btn.clicked.connect(lambda: self.edit_student(student_id))
         
-        # #conn.close()  # Close connection after loading data
+        # Delete button
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedSize(50, 25)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F56565;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #E53E3E;
+            }
+            QPushButton:pressed {
+                background-color: #C53030;
+            }
+        """)
+        delete_btn.clicked.connect(lambda: self.delete_student(student_id))
+        
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+        
+        # Set the widget in the table
+        self.table.setCellWidget(row, 9, actions_widget)
 
     def edit_student(self, student_id):
-        # Check if we're in Student Only mode
+        """Edit student based on current mode"""
         if self.StudentOnlycheck.isChecked():
-            # Edit only student information
             self.edit_student_info(student_id)
         else:
-            # Edit both student and student term information
             self.edit_student_and_term(student_id)
 
     def delete_student(self, student_id):
-        # Confirm deletion
-        reply = QMessageBox.question(self, 'Confirm Deletion', 
-                                    f'Are you sure you want to delete student {student_id}?',
-                                    QMessageBox.Yes | QMessageBox.No, 
-                                    QMessageBox.No)
+        """Delete student with confirmation dialog"""
+        reply = QMessageBox.question(
+            self, 
+            'Confirm Deletion', 
+            f'Are you sure you want to delete student #{student_id}?',
+            QMessageBox.Yes | QMessageBox.No, 
+            QMessageBox.No
+        )
         
         if reply == QMessageBox.Yes:
-            get_db_connection()
-            c = conn.cursor()
-            
+
             try:
-                # Check if we're in Student Only mode
-                if self.StudentOnlycheck.isChecked():
-                    # Delete only from Students table
-                    c.execute("DELETE FROM Students WHERE StudentID = ?", (student_id,))
-                else:
-                    # Delete from both StudentTerm and Students tables
-                    c.execute("DELETE FROM StudentTerm WHERE StudentID = ?", (student_id,))
-                    c.execute("DELETE FROM Students WHERE StudentID = ?", (student_id,))
-                
-                conn.commit()
-                QMessageBox.information(self, "Success", "Student deleted successfully")
-                self.load_data()  # Refresh the table
-                
+                with get_db_connection() as (conn, c):
+                    if self.StudentOnlycheck.isChecked():
+                        # Delete only from Students table
+                        c.execute("DELETE FROM Students WHERE StudentID = ?", (student_id,))
+                    else:
+                        # Delete from both StudentTerm and Students tables
+                        c.execute("DELETE FROM StudentTerm WHERE StudentID = ?", (student_id,))                    
+                    conn.commit()
+                    QMessageBox.information(self, "Success", "Student deleted successfully")
+                    self.load_data()  # Refresh the table
+                    
             except Exception as e:
                 conn.rollback()
                 QMessageBox.critical(self, "Error", f"Failed to delete student: {str(e)}")
             finally:
                 conn.close()
-
-    def edit_student_info(self, student_id):
-        get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT * FROM Students WHERE StudentID = ?", (student_id,))
-        student_data = c.fetchone()
-        #conn.close()
-        
-        if student_data:
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Edit Student")
-            dialog.setModal(True)
-            dialog.setMinimumWidth(500)
-            
-            layout = QVBoxLayout(dialog)
-            
-            form_layout = QFormLayout()
-            
-            name_edit = QLineEdit(student_data[1])
-            fee_payer_combo = QComboBox()
-            fee_payer_combo.addItems(["School", "Parents", "Sponsor"])
-            fee_payer_combo.setCurrentText(student_data[2])
-            status_combo = QComboBox()
-            status_combo.addItems(["Full Scholarship", "75% Scholarship", "No Scholarship"])
-            status_combo.setCurrentText(student_data[3])
-            parent_name_edit = QLineEdit(student_data[4])
-            parent_contact_edit = QLineEdit(student_data[5])
-            parent_contact2_edit = QLineEdit(student_data[6] if student_data[6] else "")
-            
-            form_layout.addRow("Student Name:", name_edit)
-            form_layout.addRow("Fee Payer:", fee_payer_combo)
-            form_layout.addRow("Status:", status_combo)
-            form_layout.addRow("Parent Name:", parent_name_edit)
-            form_layout.addRow("Parent Contact:", parent_contact_edit)
-            form_layout.addRow("Parent Contact 2:", parent_contact2_edit)
-            
-            layout.addLayout(form_layout)
-            
-            button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-            button_box.accepted.connect(dialog.accept)
-            button_box.rejected.connect(dialog.reject)
-            layout.addWidget(button_box)
-            
-            if dialog.exec_() == QDialog.Accepted:
-                get_db_connection()
-                c = conn.cursor()
-                try:
-                    c.execute("""UPDATE Students 
-                                SET Student_Name=?, FeePayer=?, Status=?, 
-                                    Parent_Name=?, Parent_Contact=?, Parent_Contact2=?
-                                WHERE StudentID=?""",
-                            (name_edit.text(), fee_payer_combo.currentText(), status_combo.currentText(),
-                            parent_name_edit.text(), parent_contact_edit.text(), parent_contact2_edit.text(),
-                            student_id))
-                    conn.commit()
-                    QMessageBox.information(self, "Success", "Student updated successfully")
-                    self.load_data()
-                except Exception as e:
-                    conn.rollback()
-                    QMessageBox.critical(self, "Error", f"Failed to update student: {str(e)}")
-                finally:
-                    conn.close()
-
-    def edit_student_and_term(self, student_id):
-        get_db_connection()
-        c = conn.cursor()
-        
-        c.execute("SELECT * FROM Students WHERE StudentID = ?", (student_id,))
-        student_data = c.fetchone()
-        
-        c.execute("""SELECT st.ClassID, st.TermID, cl.ClassName, t.TermName 
-                    FROM StudentTerm st
-                    LEFT JOIN Class cl ON st.ClassID = cl.ClassID
-                    LEFT JOIN Term t ON st.TermID = t.TermID
-                    WHERE st.StudentID = ?""", (student_id,))
-        term_data = c.fetchone()
-        
-        #conn.close()
-        
-        if student_data:
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Edit Student and Term")
-            dialog.setModal(True)
-            dialog.setMinimumWidth(500)
-            
-            layout = QVBoxLayout(dialog)
-            
-            student_group = QGroupBox("Student Information")
-            student_layout = QFormLayout(student_group)
-            
-            name_edit = QLineEdit(student_data[1])
-            fee_payer_combo = QComboBox()
-            fee_payer_combo.addItems(["School", "Parents", "Sponsor"])
-            fee_payer_combo.setCurrentText(student_data[2])
-            status_combo = QComboBox()
-            status_combo.addItems(["Full Scholarship", "75% Scholarship", "No Scholarship"])
-            status_combo.setCurrentText(student_data[3])
-            parent_name_edit = QLineEdit(student_data[4])
-            parent_contact_edit = QLineEdit(student_data[5])
-            parent_contact2_edit = QLineEdit(student_data[6] if student_data[6] else "")
-            
-            student_layout.addRow("Student Name:", name_edit)
-            student_layout.addRow("Fee Payer:", fee_payer_combo)
-            student_layout.addRow("Status:", status_combo)
-            student_layout.addRow("Parent Name:", parent_name_edit)
-            student_layout.addRow("Parent Contact:", parent_contact_edit)
-            student_layout.addRow("Parent Contact 2:", parent_contact2_edit)
-            
-            layout.addWidget(student_group)
-            
-            term_group = QGroupBox("Term Information")
-            term_layout = QFormLayout(term_group)
-            
-            class_combo = QComboBox()
-            class_combo.addItem("Select Class", None)
-            get_db_connection()
-            c.execute("SELECT ClassID, ClassName FROM Class")
-            for cl in c.fetchall():
-                class_combo.addItem(cl[1], cl[0])
-            c.execute("SELECT TermID, TermName FROM Term")
-            term_combo = QComboBox()
-            term_combo.addItem("Select Term", None)
-            for t in c.fetchall():
-                term_combo.addItem(t[1], t[0])
-            #conn.close()
-            
-            if term_data:
-                class_combo.setCurrentIndex(class_combo.findData(term_data[0]))
-                term_combo.setCurrentIndex(term_combo.findData(term_data[1]))
-            
-            term_layout.addRow("Class:", class_combo)
-            term_layout.addRow("Term:", term_combo)
-            
-            layout.addWidget(term_group)
-            
-            button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-            button_box.accepted.connect(dialog.accept)
-            button_box.rejected.connect(dialog.reject)
-            layout.addWidget(button_box)
-            
-            if dialog.exec_() == QDialog.Accepted:
-                get_db_connection()
-                c = conn.cursor()
-                try:
-                    c.execute("""UPDATE Students 
-                                SET Student_Name=?, FeePayer=?, Status=?, 
-                                    Parent_Name=?, Parent_Contact=?, Parent_Contact2=?
-                                WHERE StudentID=?""",
-                            (name_edit.text(), fee_payer_combo.currentText(), status_combo.currentText(),
-                            parent_name_edit.text(), parent_contact_edit.text(), parent_contact2_edit.text(),
-                            student_id))
-                    
-                    class_id = class_combo.currentData()
-                    term_id = term_combo.currentData()
-                    
-                    if class_id and term_id:
-                        c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ?", (student_id,))
-                        if c.fetchone()[0] > 0:
-                            c.execute("UPDATE StudentTerm SET ClassID = ?, TermID = ? WHERE StudentID = ?",
-                                      (class_id, term_id, student_id))
-                        else:
-                            c.execute("INSERT INTO StudentTerm (StudentID, ClassID, TermID) VALUES (?, ?, ?)",
-                                      (student_id, class_id, term_id))
-                    
-                    conn.commit()
-                    QMessageBox.information(self, "Success", "Student and term updated successfully")
-                    self.load_data()
-                except Exception as e:
-                    conn.rollback()
-                    QMessageBox.critical(self, "Error", f"Failed to update student: {str(e)}")
-                finally:
-                    conn.close()
 
     def show_add_student_dialog(self):
         dialog = QDialog(self)
@@ -564,180 +445,508 @@ class Student(QWidget):
         if not all([student_id, name, feepayer, status, parent_name, contact, class_id, term_id]):
             QMessageBox.warning(dialog, "Error", "Required fields are missing")
             return
-        get_db_connection()
-        c = conn.cursor()
+        
+        
         try:
-            c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
-            if c.fetchone()[0] > 0:
-                QMessageBox.warning(dialog, "Error", "Duplicate Student ID")
-                return
-            c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ?", (student_id, class_id, term_id))
-            if c.fetchone()[0] > 0:
-                QMessageBox.warning(dialog, "Error", f"Student is already enrolled in {class_combo.currentText()} for {term_combo.currentText()}")
-                return
-            c.execute("""INSERT INTO Students (StudentID, Student_Name, FeePayer, Status, Parent_Name, Parent_Contact, Parent_Contact2)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)""", (student_id, name, feepayer, status, parent_name, contact, contact2))
-            c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID)
-                         VALUES (?, ?, ?)""", (student_id, class_id, term_id))
-            conn.commit()
-            QMessageBox.information(dialog, "Success", "Student added successfully")
-            id_edit.clear()
-            name_edit.clear()
-            feepayer_edit.clear()
-            parent_name_edit.clear()
-            contact_edit.clear()
-            contact2_edit.clear()
-            class_combo.setCurrentIndex(0)
-            term_combo.setCurrentIndex(0)
-            status_combo.setCurrentIndex(0)
-            self.load_data()
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
+                if c.fetchone()[0] > 0:
+                    QMessageBox.warning(dialog, "Error", "Duplicate Student ID")
+                    return
+                c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ?", (student_id, class_id, term_id))
+                if c.fetchone()[0] > 0:
+                    QMessageBox.warning(dialog, "Error", f"Student is already enrolled in {class_combo.currentText()} for {term_combo.currentText()}")
+                    return
+                c.execute("""INSERT INTO Students (StudentID, Student_Name, FeePayer, Status, Parent_Name, Parent_Contact, Parent_Contact2)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)""", (student_id, name, feepayer, status, parent_name, contact, contact2))
+                c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID)
+                            VALUES (?, ?, ?)""", (student_id, class_id, term_id))
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Student added successfully")
+                id_edit.clear()
+                name_edit.clear()
+                feepayer_edit.clear()
+                parent_name_edit.clear()
+                contact_edit.clear()
+                contact2_edit.clear()
+                class_combo.setCurrentIndex(0)
+                term_combo.setCurrentIndex(0)
+                status_combo.setCurrentIndex(0)
+                self.load_data()
         except Exception as e:
             conn.rollback()
             QMessageBox.warning(dialog, "Error", f"Failed to add student: {str(e)}")
         finally:
             conn.close()
+    
+    def edit_student(self, student_id):
+        # Check if we're in Student Only mode
+        if self.StudentOnlycheck.isChecked():
+            # Edit only student information
+            self.edit_student_info(student_id)
+        else:
+            # Edit both student and student term information
+            self.edit_student_and_term(student_id)
 
-    def show_import_excel_wizard(self):
-        wizard = QWizard(self)
-        wizard.setWindowTitle("Import Students from Excel")
-        page1 = self.create_select_class_term_page()
-        page2 = self.create_select_file_page(wizard)
-        wizard.addPage(page1)
-        wizard.addPage(page2)
-        wizard.setOption(QWizard.NoBackButtonOnStartPage, True)
-        if wizard.exec_():
-            self.load_data()
+    def edit_student_info(self, student_id):
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT * FROM Students WHERE StudentID = ?", (student_id,))
+            student_data = c.fetchone()
+            conn.close()
+        
+        if student_data:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Student")
+            dialog.setModal(True)
+            dialog.setMinimumWidth(500)
+            
+            layout = QVBoxLayout(dialog)
+            
+            form_layout = QFormLayout()
+            
+            name_edit = QLineEdit(student_data[1])
+            fee_payer_combo = QComboBox()
+            fee_payer_combo.addItems(["School", "Parents", "Sponsor"])
+            fee_payer_combo.setCurrentText(student_data[2])
+            status_combo = QComboBox()
+            status_combo.addItems(["Full Scholarship", "75% Scholarship", "No Scholarship"])
+            status_combo.setCurrentText(student_data[3])
+            parent_name_edit = QLineEdit(student_data[4])
+            parent_contact_edit = QLineEdit(student_data[5])
+            parent_contact2_edit = QLineEdit(student_data[6] if student_data[6] else "")
+            
+            form_layout.addRow("Student Name:", name_edit)
+            form_layout.addRow("Fee Payer:", fee_payer_combo)
+            form_layout.addRow("Status:", status_combo)
+            form_layout.addRow("Parent Name:", parent_name_edit)
+            form_layout.addRow("Parent Contact:", parent_contact_edit)
+            form_layout.addRow("Parent Contact 2:", parent_contact2_edit)
+            
+            layout.addLayout(form_layout)
+            
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+            
+            if dialog.exec_() == QDialog.Accepted:
+                with get_db_connection() as (conn, c):
+                    c = conn.cursor()
+                try:
+                    c.execute("""UPDATE Students 
+                                SET Student_Name=?, FeePayer=?, Status=?, 
+                                    Parent_Name=?, Parent_Contact=?, Parent_Contact2=?
+                                WHERE StudentID=?""",
+                            (name_edit.text(), fee_payer_combo.currentText(), status_combo.currentText(),
+                            parent_name_edit.text(), parent_contact_edit.text(), parent_contact2_edit.text(),
+                            student_id))
+                    conn.commit()
+                    QMessageBox.information(self, "Success", "Student updated successfully")
+                    self.load_data()
+                except Exception as e:
+                    conn.rollback()
+                    QMessageBox.critical(self, "Error", f"Failed to update student: {str(e)}")
+                finally:
+                    conn.close()
 
-    def create_select_class_term_page(self):
+    def edit_student_and_term(self, student_id):
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT * FROM Students WHERE StudentID = ?", (student_id,))
+            student_data = c.fetchone()
+            
+            c.execute("""SELECT st.ClassID, st.TermID, cl.ClassName, t.TermName 
+                        FROM StudentTerm st
+                        LEFT JOIN Class cl ON st.ClassID = cl.ClassID
+                        LEFT JOIN Term t ON st.TermID = t.TermID
+                        WHERE st.StudentID = ?""", (student_id,))
+            term_data = c.fetchone()
+            
+            conn.close()
+        
+        if student_data:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Student and Term")
+            dialog.setModal(True)
+            dialog.setMinimumWidth(500)
+            
+            layout = QVBoxLayout(dialog)
+            
+            student_group = QGroupBox("Student Information")
+            student_layout = QFormLayout(student_group)
+            
+            name_edit = QLineEdit(student_data[1])
+            fee_payer_combo = QComboBox()
+            fee_payer_combo.addItems(["School", "Parents", "Sponsor"])
+            fee_payer_combo.setCurrentText(student_data[2])
+            status_combo = QComboBox()
+            status_combo.addItems(["Full Scholarship", "75% Scholarship", "No Scholarship"])
+            status_combo.setCurrentText(student_data[3])
+            parent_name_edit = QLineEdit(student_data[4])
+            parent_contact_edit = QLineEdit(student_data[5])
+            parent_contact2_edit = QLineEdit(student_data[6] if student_data[6] else "")
+            
+            student_layout.addRow("Student Name:", name_edit)
+            student_layout.addRow("Fee Payer:", fee_payer_combo)
+            student_layout.addRow("Status:", status_combo)
+            student_layout.addRow("Parent Name:", parent_name_edit)
+            student_layout.addRow("Parent Contact:", parent_contact_edit)
+            student_layout.addRow("Parent Contact 2:", parent_contact2_edit)
+            
+            layout.addWidget(student_group)
+            
+            term_group = QGroupBox("Term Information")
+            term_layout = QFormLayout(term_group)
+            
+            class_combo = QComboBox()
+            class_combo.addItem("Select Class", None)
+            with get_db_connection() as (conn, c):    
+                c.execute("SELECT ClassID, ClassName FROM Class")
+                for cl in c.fetchall():
+                    class_combo.addItem(cl[1], cl[0])
+                c.execute("SELECT TermID, TermName FROM Term")
+                term_combo = QComboBox()
+                term_combo.addItem("Select Term", None)
+                for t in c.fetchall():
+                    term_combo.addItem(t[1], t[0])
+                conn.close()
+            
+            if term_data:
+                class_combo.setCurrentIndex(class_combo.findData(term_data[0]))
+                term_combo.setCurrentIndex(term_combo.findData(term_data[1]))
+            
+            term_layout.addRow("Class:", class_combo)
+            term_layout.addRow("Term:", term_combo)
+            
+            layout.addWidget(term_group)
+            
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+            
+            if dialog.exec_() == QDialog.Accepted:
+                with get_db_connection() as (conn, c): 
+                    c = conn.cursor()
+                try:
+                    with get_db_connection() as (conn, c):
+                        c.execute("""UPDATE Students 
+                                    SET Student_Name=?, FeePayer=?, Status=?, 
+                                        Parent_Name=?, Parent_Contact=?, Parent_Contact2=?
+                                    WHERE StudentID=?""",
+                                (name_edit.text(), fee_payer_combo.currentText(), status_combo.currentText(),
+                                parent_name_edit.text(), parent_contact_edit.text(), parent_contact2_edit.text(),
+                                student_id))
+                        
+                        class_id = class_combo.currentData()
+                        term_id = term_combo.currentData()
+                        
+                        if class_id and term_id:
+                            c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ?", (student_id,))
+                            if c.fetchone()[0] > 0:
+                                c.execute("UPDATE StudentTerm SET ClassID = ?, TermID = ? WHERE StudentID = ?",
+                                        (class_id, term_id, student_id))
+                            else:
+                                c.execute("INSERT INTO StudentTerm (StudentID, ClassID, TermID) VALUES (?, ?, ?)",
+                                        (student_id, class_id, term_id))
+                        
+                        conn.commit()
+                        QMessageBox.information(self, "Success", "Student and term updated successfully")
+                        self.load_data()
+                except Exception as e:
+                    conn.rollback()
+                    QMessageBox.critical(self, "Error", f"Failed to update student: {str(e)}")
+                finally:
+                    conn.close()
+
+class ImportWizard(QWizard):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Student Import Wizard")
+        
+        # Light theme stylesheet for a modern, web-like light tone
+        light_style = """
+        QWizard {
+            background-color: #f8f9fa;
+            color: #212529;
+        }
+        QLabel {
+            color: #495057;
+        }
+        QPushButton {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+        }
+        QPushButton:hover {
+            background-color: #0056b3;
+        }
+        QComboBox {
+            background-color: white;
+            border: 1px solid #ced4da;
+            padding: 4px;
+            border-radius: 4px;
+        }
+        QRadioButton {
+            color: #495057;
+        }
+        QTableView {
+            background-color: white;
+            border: 1px solid #dee2e6;
+            gridline-color: #dee2e6;
+        }
+        """
+        self.setStyleSheet(light_style)
+        
+        # Initialize variables
+        self.mode = None
+        self.excel_file = None
+        self.term_id = None
+        self.class_id = None
+        self.data = None
+        
+        # Add pages
+        self.intro_page_id = self.addPage(self.create_intro_page())
+        self.file_page_id = self.addPage(self.create_file_page())
+        self.config_page_id = self.addPage(self.create_config_page())
+        self.preview_page_id = self.addPage(self.create_preview_page())
+        self.finish_page_id = self.addPage(self.create_finish_page())
+
+    def create_intro_page(self):
         page = QWizardPage()
-        page.setTitle("Select Import Mode, Class, and Term")
+        page.setTitle("Choose Import Mode")
         layout = QVBoxLayout()
-        mode_combo = QComboBox()
-        mode_combo.addItems(["Register and Enroll New Students", "Enroll Existing Students Only"])
-        class_combo = QComboBox()
-        class_combo.addItem("Select Class", None)
-        term_combo = QComboBox()
-        term_combo.addItem("Select Term", None)
-        self.populate_combos(class_combo, term_combo)
-        layout.addWidget(QLabel("Import Mode:"))
-        layout.addWidget(mode_combo)
-        layout.addWidget(QLabel("Select Class:"))
-        layout.addWidget(class_combo)
-        layout.addWidget(QLabel("Select Term:"))
-        layout.addWidget(term_combo)
+        label = QLabel("Select the import method:")
+        layout.addWidget(label)
+        self.mode_group = QButtonGroup()
+        radio1 = QRadioButton("Insert new students with initial term enrollment")
+        radio2 = QRadioButton("Enrollment only")
+        self.mode_group.addButton(radio1, 1)
+        self.mode_group.addButton(radio2, 2)
+        layout.addWidget(radio1)
+        layout.addWidget(radio2)
         page.setLayout(layout)
-        page.registerField("mode*", mode_combo)
-        page.registerField("class_id*", class_combo, "currentData")
-        page.registerField("term_id*", term_combo, "currentData")
-        def is_complete():
-            return (mode_combo.currentIndex() >= 0 and
-                    class_combo.currentData() is not None and
-                    term_combo.currentData() is not None)
-        page.isComplete = is_complete
-        mode_combo.currentIndexChanged.connect(page.completeChanged.emit)
-        class_combo.currentIndexChanged.connect(page.completeChanged.emit)
-        term_combo.currentIndexChanged.connect(page.completeChanged.emit)
         return page
 
-    def create_select_file_page(self, wizard):
+    def create_file_page(self):
         page = QWizardPage()
         page.setTitle("Select Excel File")
         layout = QVBoxLayout()
-        file_label = QLabel("No file selected")
-        select_btn = QPushButton("Select Excel File")
-        layout.addWidget(QLabel("Choose an Excel file to import:"))
-        layout.addWidget(select_btn)
-        layout.addWidget(file_label)
-        layout.addStretch()
+        self.file_label = QLabel("No file selected")
+        layout.addWidget(self.file_label)
+        btn = QPushButton("Browse")
+        btn.clicked.connect(self.browse_file)
+        layout.addWidget(btn)
         page.setLayout(layout)
-        page.file_path = None
-        def select_file():
-            file_path, _ = QFileDialog.getOpenFileName(page, "Select Excel File", "", "Excel Files (*.xlsx *.xls)")
-            if file_path:
-                page.file_path = file_path
-                file_label.setText(file_path.split('/')[-1])
-                page.completeChanged.emit()
-        select_btn.clicked.connect(select_file)
-        def is_complete():
-            return page.file_path is not None
-        def validate_page():
-            mode = wizard.field("mode")
-            class_id = wizard.field("class_id")
-            term_id = wizard.field("term_id")
-            try:
-                df = pd.read_excel(page.file_path)
-                get_db_connection()
-                c = conn.cursor()
-                if mode == "Register and Enroll New Students":
-                    required_cols = ["StudentID", "Student_Name", "FeePayer", "Status", "Parent_Name", "Parent_Contact"]
-                    if not all(col in df.columns for col in required_cols):
-                        QMessageBox.warning(page, "Error", "Excel missing required columns: StudentID, Student_Name, FeePayer, Status, Parent_Name, Parent_Contact")
-                        return False
-                    duplicates = []
-                    duplicate_terms = []
-                    inserted = 0
-                    for _, row in df.iterrows():
-                        student_id = str(row["StudentID"])
-                        c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
-                        if c.fetchone()[0] > 0:
-                            duplicates.append(student_id)
-                            continue
-                        c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ?", (student_id, class_id, term_id))
-                        if c.fetchone()[0] > 0:
-                            duplicate_terms.append(student_id)
-                            continue
-                        parent_contact2 = str(row.get("Parent_Contact2", ""))
-                        c.execute("""INSERT INTO Students (StudentID, Student_Name, FeePayer, Status, Parent_Name, Parent_Contact, Parent_Contact2)
-                                     VALUES (?, ?, ?, ?, ?, ?, ?)""", (student_id, str(row["Student_Name"]), str(row["FeePayer"]), str(row["Status"]), str(row["Parent_Name"]), str(row["Parent_Contact"]), parent_contact2))
-                        c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID)
-                                     VALUES (?, ?, ?)""", (student_id, class_id, term_id))
-                        inserted += 1
-                    conn.commit()
-                    msg = f"Inserted {inserted} new students and enrollments."
-                    if duplicates:
-                        msg += f"\nDuplicate StudentIDs skipped: {', '.join(duplicates)}"
-                    if duplicate_terms:
-                        msg += f"\nDuplicate Term-Class enrollments skipped: {', '.join(duplicate_terms)}"
-                    QMessageBox.information(page, "Import Complete", msg)
-                else:  # Enroll Existing Students Only
-                    if "StudentID" not in df.columns:
-                        QMessageBox.warning(page, "Error", "Excel must contain StudentID column")
-                        return False
-                    invalid_ids = []
-                    duplicate_terms = []
-                    inserted = 0
-                    for _, row in df.iterrows():
-                        student_id = str(row["StudentID"])
-                        c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
-                        if c.fetchone()[0] == 0:
-                            invalid_ids.append(student_id)
-                            continue
-                        c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ?", (student_id, class_id, term_id))
-                        if c.fetchone()[0] > 0:
-                            duplicate_terms.append(student_id)
-                            continue
-                        c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID)
-                                     VALUES (?, ?, ?)""", (student_id, class_id, term_id))
-                        inserted += 1
-                    conn.commit()
-                    msg = f"Inserted {inserted} StudentTerm enrollments."
-                    if invalid_ids:
-                        msg += f"\nInvalid StudentIDs (not in Students table): {', '.join(invalid_ids)}"
-                    if duplicate_terms:
-                        msg += f"\nDuplicate Term-Class enrollments skipped: {', '.join(duplicate_terms)}"
-                    QMessageBox.information(page, "Import Complete", msg)
-                return True
-            except Exception as e:
-                if 'conn' in locals():
-                    conn.rollback()
-                QMessageBox.warning(page, "Error", f"Import failed: {str(e)}")
-                return False
-            finally:
-                if 'conn' in locals():
-                    conn.close()
-        page.isComplete = is_complete
-        page.validatePage = validate_page
         return page
+
+    def browse_file(self):
+        file, _ = QFileDialog.getOpenFileName(self, "Select Excel File", "", "Excel Files (*.xlsx *.xls)")
+        if file:
+            self.excel_file = file
+            self.file_label.setText(file)
+
+    def create_config_page(self):
+        page = QWizardPage()
+        page.setTitle("Configure Enrollment")
+        layout = QVBoxLayout()
+        
+        # Term selection
+        term_label = QLabel("Select Term:")
+        self.term_combo = QComboBox()
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT TermID, TermName FROM Term")
+                terms = c.fetchall()
+                for tid, tname in terms:
+                    self.term_combo.addItem(tname if tname else f"Term {tid}", tid)
+        except sqlite3.Error as e:
+            QMessageBox.warning(self, "Database Error", f"Failed to load terms: {str(e)}")
+        
+        layout.addWidget(term_label)
+        layout.addWidget(self.term_combo)
+        
+        # Class selection
+        class_label = QLabel("Select Class:")
+        self.class_combo = QComboBox()
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ClassID, ClassName FROM Class")
+                classes = c.fetchall()
+                for cid, cname in classes:
+                    self.class_combo.addItem(cname if cname else f"Class {cid}", cid)
+        except sqlite3.Error as e:
+            QMessageBox.warning(self, "Database Error", f"Failed to load classes: {str(e)}")
+        
+        layout.addWidget(class_label)
+        layout.addWidget(self.class_combo)
+        
+        page.setLayout(layout)
+        return page
+
+    def create_preview_page(self):
+        page = QWizardPage()
+        page.setTitle("Preview Data")
+        layout = QVBoxLayout()
+        self.table_view = QTableView()
+        layout.addWidget(self.table_view)
+        page.setLayout(layout)
+        return page
+
+    def create_finish_page(self):
+        page = QWizardPage()
+        page.setTitle("Finish Import")
+        layout = QVBoxLayout()
+        label = QLabel("Review the preview and click Finish to import the data.")
+        layout.addWidget(label)
+        page.setLayout(layout)
+        return page
+
+    def initializePage(self, page_id):
+        super().initializePage(page_id)
+        if page_id == self.preview_page_id:
+            self.load_data()
+
+    def load_data(self):
+        if not self.excel_file:
+            QMessageBox.warning(self, "Error", "No Excel file selected.")
+            return
+        
+        try:
+            self.data = pd.read_excel(self.excel_file)
+            self.mode = self.mode_group.checkedId()
+            
+            if self.mode == 1:  # New students
+                required_cols = ['StudentID', 'Student_Name', 'FeePayer', 'Status', 'Parent_Name', 'Parent_Contact']
+                if not all(col in self.data.columns for col in required_cols):
+                    raise ValueError("Missing required columns for new students: " + ", ".join(required_cols))
+            elif self.mode == 2:  # Enrollment only
+                if 'StudentID' not in self.data.columns:
+                    raise ValueError("Missing 'StudentID' column for enrollment only.")
+            else:
+                raise ValueError("No mode selected.")
+            
+            # Display in table
+            model = QStandardItemModel()
+            model.setHorizontalHeaderLabels(self.data.columns)
+            for _, row in self.data.iterrows():
+                items = [QStandardItem(str(row.get(col, ''))) for col in self.data.columns]
+                model.appendRow(items)
+            self.table_view.setModel(model)
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
+            self.data = None
+
+    def accept(self):
+        if self.data is None or self.data.empty:
+            QMessageBox.warning(self, "Error", "No data to import.")
+            return
+        
+        self.term_id = self.term_combo.currentData()
+        self.class_id = self.class_combo.currentData()
+        
+        if not self.term_id or not self.class_id:
+            QMessageBox.warning(self, "Error", "Term and Class must be selected.")
+            return
+        
+        success_count = 0
+        error_count = 0
+        error_messages = []
+        
+        try:
+            with get_db_connection() as (conn, c):
+                for index, row in self.data.iterrows():
+                    try:
+                        sid = str(row.get('StudentID', '')).strip()
+                        if not sid:
+                            raise ValueError("Invalid or missing StudentID.")
+                        
+                        if self.mode == 1:  # New students with enrollment
+                            # Validation: Check required fields not null/empty
+                            required_cols_new = ['StudentID', 'Student_Name', 'FeePayer', 'Status', 'Parent_Name', 'Parent_Contact']
+                            if any(pd.isnull(row.get(col)) or not str(row.get(col)).strip() for col in required_cols_new):
+                                raise ValueError("Missing or empty required field.")
+                            
+                            # Check if StudentID already exists
+                            c.execute("SELECT StudentID FROM Students WHERE StudentID = ?", (sid,))
+                            if c.fetchone():
+                                raise ValueError("StudentID already exists.")
+                            
+                            # Insert into Students
+                            values = (
+                                sid,
+                                str(row['Student_Name']).strip(),
+                                str(row['FeePayer']).strip(),
+                                str(row['Status']).strip(),
+                                str(row['Parent_Name']).strip(),
+                                str(row['Parent_Contact']).strip(),
+                                str(row.get('Parent_Contact2', '')).strip() or None
+                            )
+                            c.execute("""
+                                INSERT INTO Students (StudentID, Student_Name, FeePayer, Status, Parent_Name, Parent_Contact, Parent_Contact2)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, values)
+                            
+                            # Insert into StudentTerm
+                            c.execute("""
+                                INSERT INTO StudentTerm (StudentID, ClassID, TermID)
+                                VALUES (?, ?, ?)
+                            """, (sid, self.class_id, self.term_id))
+                        
+                        elif self.mode == 2:  # Enrollment only
+                            # Check if StudentID exists
+                            c.execute("SELECT StudentID FROM Students WHERE StudentID = ?", (sid,))
+                            if not c.fetchone():
+                                raise ValueError("StudentID does not exist.")
+                            
+                            # Check if already enrolled in this term/class
+                            c.execute("""
+                                SELECT StudentTermID FROM StudentTerm 
+                                WHERE StudentID = ? AND ClassID = ? AND TermID = ?
+                            """, (sid, self.class_id, self.term_id))
+                            if c.fetchone():
+                                raise ValueError("Already enrolled in this term/class.")
+                            
+                            # Insert into StudentTerm
+                            c.execute("""
+                                INSERT INTO StudentTerm (StudentID, ClassID, TermID)
+                                VALUES (?, ?, ?)
+                            """, (sid, self.class_id, self.term_id))
+                        
+                        success_count += 1
+                        
+                    except Exception as e:
+                        error_count += 1
+                        error_messages.append(f"Row {index + 2}: {str(e)}")  # +2 because Excel rows start at 1 + header
+                
+                # Commit only if there were successful operations
+                if success_count > 0:
+                    conn.commit()
+                else:
+                    conn.rollback()
+                    
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to connect to database: {str(e)}")
+            return
+        
+        # Show results
+        if error_messages and error_count > 0:
+            error_details = "\n".join(error_messages[:10])  # Show first 10 errors
+            if error_count > 10:
+                error_details += f"\n... and {error_count - 10} more errors"
+            
+            QMessageBox.warning(self, "Import Completed with Errors", 
+                               f"Successfully imported {success_count} records.\n"
+                               f"Failed to import {error_count} records.\n\n"
+                               f"Errors:\n{error_details}")
+        else:
+            QMessageBox.information(self, "Import Complete", 
+                                   f"Successfully imported {success_count} records.")
+        
+        super().accept()
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1080,26 +1289,32 @@ class AcademicYearTerm(QWidget):
         self.Search_Input.setPlaceholderText("Search...")
         self.Search_Input.setClearButtonEnabled(True)
         self.Search_Input.setMaximumWidth(200)
-        year_filter = QComboBox()
-        year_filter.addItem("All Years")
-        c.execute("SELECT * FROM AcademicYear")
-        years = c.fetchall()
-        for year in years:
-            year_filter.addItem(year[1], year[0])
-        year_filter.setCurrentIndex(0)
         
-        year_filter.setMaximumWidth(150)
+        self.year_filter = QComboBox()
+        self.year_filter.addItem("All Years")
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT * FROM AcademicYear")
+                years = c.fetchall()
+                for year in years:
+                    self.year_filter.addItem(year[1], year[0])
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load academic years: {str(e)}")
+        
+        self.year_filter.setCurrentIndex(0)
+        self.year_filter.setMaximumWidth(150)
         filter_layout.addWidget(self.Search_Input)
-        filter_layout.addWidget(year_filter)
+        filter_layout.addWidget(self.year_filter)
         filter_layout.addStretch()
-        results_label = QLabel("0 results")
-        results_label.setStyleSheet("font-size: 14px; color: #718096;")
-        filter_layout.addWidget(results_label)
+        
+        self.results_label = QLabel("0 results")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+        filter_layout.addWidget(self.results_label)
         layout.addLayout(filter_layout)
 
         # Connect search input and year filter to reload data
         self.Search_Input.textChanged.connect(self.Load_Data)
-        year_filter.currentIndexChanged.connect(self.Load_Data)
+        self.year_filter.currentIndexChanged.connect(self.Load_Data)
 
         # Table
         self.table = QTableWidget()
@@ -1119,75 +1334,85 @@ class AcademicYearTerm(QWidget):
     
         
     def Load_Data(self):
-        self.table.setRowCount(0)
-        # Get selected year filter
-        year_filter = self.layout().itemAt(1).layout().itemAt(1).widget()
-        selected_year_id = year_filter.currentData()
-        query = """
-            SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate
-            FROM Term
-            JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
-        """
-        # Add search filter
-        search_text = self.Search_Input.text().strip()
-        params = ()
-        if search_text:
-            if "WHERE" not in query:
-                query += " WHERE"
-            else:
-                query += " AND"
-            query += " (AcademicYear.Year LIKE ? OR Term.TermName LIKE ?)"
-            params += (f"%{search_text}%", f"%{search_text}%")
-        c.execute(query, params)
-        results = c.fetchall()
-
-        if selected_year_id and selected_year_id != "All Years":
-            # Check if year exists and has no terms
-            c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (selected_year_id,))
-            year_row = c.fetchone()
-            if year_row and not results:
+        try:
+            with get_db_connection() as (conn, c):
                 self.table.setRowCount(0)
+                # Get selected year filter
+                selected_year_id = self.year_filter.currentData()
+                
+                query = """
+                    SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate
+                    FROM Term
+                    JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
+                """
+                
+                # Add search filter
+                search_text = self.Search_Input.text().strip()
+                params = ()
+                if search_text:
+                    query += " WHERE (AcademicYear.Year LIKE ? OR Term.TermName LIKE ?)"
+                    params += (f"%{search_text}%", f"%{search_text}%")
+                
+                # Add year filter if selected
+                if selected_year_id and selected_year_id != "All Years":
+                    if "WHERE" in query:
+                        query += " AND AcademicYear.AcademicYearID = ?"
+                    else:
+                        query += " WHERE AcademicYear.AcademicYearID = ?"
+                    params += (selected_year_id,)
+                
+                c.execute(query, params)
+                results = c.fetchall()
+
+                # Check if year exists and has no terms
+                if selected_year_id and selected_year_id != "All Years":
+                    c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (selected_year_id,))
+                    year_row = c.fetchone()
+                    if year_row and not results:
+                        self.table.setRowCount(0)
+                        self.update_results_count()
+                        msg_box = QMessageBox(self)
+                        msg_box.setIcon(QMessageBox.Information)
+                        msg_box.setWindowTitle("No Terms")
+                        msg_box.setText(f"The year '{year_row[0]}' does not have any terms.")
+                        msg_box.setStandardButtons(QMessageBox.Ok)
+                        msg_box.setModal(False)
+                        msg_box.show()
+                        return
+
+                for row_data in results:
+                    row = self.table.rowCount()
+                    self.table.insertRow(row)
+                    self.table.setRowHeight(row, 50)
+                    for col, data in enumerate(row_data):
+                        self.table.setItem(row, col, QTableWidgetItem(str(data)))
+                    
+                    action_widget = QWidget()
+                    action_layout = QHBoxLayout(action_widget)
+                    action_layout.setContentsMargins(5, 0, 5, 0)
+                    action_layout.setSpacing(5)
+                    
+                    edit_btn = QPushButton("Edit")
+                    edit_btn.clicked.connect(lambda _, r=row: self.editTerm(r))
+                    delete_btn = QPushButton("Delete")
+                    delete_btn.clicked.connect(lambda _, r=row: self.deleteTerm(r))
+                    delete_btn.setObjectName("delete")
+                    
+                    action_layout.addWidget(edit_btn)
+                    action_layout.addWidget(delete_btn)
+                    action_layout.addStretch()
+                    self.table.setCellWidget(row, 4, action_widget)
+
+                # Ensure header stretches after data reload
+                self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
                 self.update_results_count()
-                msg_box = QMessageBox(self)
-                msg_box.setIcon(QMessageBox.Information)
-                msg_box.setWindowTitle("No Terms")
-                msg_box.setText(f"The year '{year_row[0]}' does not have any terms.")
-                msg_box.setStandardButtons(QMessageBox.Ok)
-                msg_box.setModal(False)
-                msg_box.show()
-                return
-
-        for row_data in results:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            self.table.setRowHeight(row, 50)
-            for col, data in enumerate(row_data):
-                self.table.setItem(row, col, QTableWidgetItem(str(data)))
-            action_widget = QWidget()
-            action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(5, 0, 5, 0)
-            action_layout.setSpacing(5)
-            edit_btn = QPushButton("Edit")
-            edit_btn.clicked.connect(lambda _, r=row: self.editTerm(r))
-            delete_btn = QPushButton("Delete")
-            delete_btn.clicked.connect(lambda _, r=row: self.deleteTerm(r))
-            delete_btn.setObjectName("delete")
-            action_layout.addWidget(edit_btn)
-            action_layout.addWidget(delete_btn)
-            action_layout.addStretch()
-            self.table.setCellWidget(row, 4, action_widget)
-
-        # self.table.resizeColumnsToContents()
-        # Ensure header stretches after data reload
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.update_results_count()
-
-        # Connect filter to reload data
-        year_filter.currentIndexChanged.connect(self.Load_Data)
+                
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load data: {str(e)}")
 
     def update_results_count(self):
         count = self.table.rowCount()
-        self.layout().itemAt(1).layout().itemAt(3).widget().setText(f"{count} results")
+        self.results_label.setText(f"{count} results")
     
     def addYear(self):
         dialog = QDialog(self)
@@ -1263,23 +1488,24 @@ class AcademicYearTerm(QWidget):
                 error_label.setText("Year name cannot be empty.")
                 return
 
-            
-            c.execute("SELECT 1 FROM AcademicYear WHERE Year = ?", (year_name,))
-            if c.fetchone():
-                error_label.setText("This academic year already exists.")
-                return
             try:
-                c.execute("INSERT INTO AcademicYear (Year) VALUES (?)", (year_name,))
-                conn.commit()
-                dialog.accept()
-                # Optionally, refresh the table or notify user
-                QMessageBox.information(self, "Success", f"Academic Year '{year_name}' added successfully.")
-            except Exception as e:
-                error_label.setText("Error saving year.")
+                with get_db_connection() as (conn, c):
+                    c.execute("SELECT 1 FROM AcademicYear WHERE Year = ?", (year_name,))
+                    if c.fetchone():
+                        error_label.setText("This academic year already exists.")
+                        return
+                    
+                    c.execute("INSERT INTO AcademicYear (Year) VALUES (?)", (year_name,))
+                    conn.commit()
+                    dialog.accept()
+                    QMessageBox.information(self, "Success", f"Academic Year '{year_name}' added successfully.")
+                    self.Load_Data()
+                    
+            except sqlite3.Error as e:
+                error_label.setText(f"Error saving year: {str(e)}")
 
         save_btn.clicked.connect(save_year)
         cancel_btn.clicked.connect(dialog.reject)
-
         dialog.exec_()
 
     def addTerm(self):
@@ -1335,10 +1561,16 @@ class AcademicYearTerm(QWidget):
         layout.addWidget(year_label)
         year_combo = QComboBox()
         year_combo.addItem("Select Year", None)
-        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-        years = c.fetchall()
-        for year in years:
-            year_combo.addItem(year[1], year[0])
+        
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+                years = c.fetchall()
+                for year in years:
+                    year_combo.addItem(year[1], year[0])
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load academic years: {str(e)}")
+            
         layout.addWidget(year_combo)
 
         # Term
@@ -1396,28 +1628,28 @@ class AcademicYearTerm(QWidget):
                 error_label.setText("Start date must be before end date.")
                 return
 
-            # Check for duplicate term in the same year
-            c.execute("SELECT 1 FROM Term WHERE TermName=? AND AcademicYear=?",
-                    (term, year_id))
-            if c.fetchone():
-                error_label.setText("This term already exists for the selected year.")
-                return
-
             try:
-                c.execute(
-                    "INSERT INTO Term (TermName, AcademicYear, StartDate, EndDate) VALUES (?, ?, ?, ?)",
-                    (term, year_id, start, end)
-                )
-                conn.commit()
-                dialog.accept()
-                QMessageBox.information(self, "Success", f"{term} added successfully.")
-                # Optionally, refresh the table or notify user
-            except Exception as e:
-                error_label.setText("Error saving term.")
+                with get_db_connection() as (conn, c):
+                    # Check for duplicate term in the same year
+                    c.execute("SELECT 1 FROM Term WHERE TermName=? AND AcademicYear=?", (term, year_id))
+                    if c.fetchone():
+                        error_label.setText("This term already exists for the selected year.")
+                        return
+
+                    c.execute(
+                        "INSERT INTO Term (TermName, AcademicYear, StartDate, EndDate) VALUES (?, ?, ?, ?)",
+                        (term, year_id, start, end)
+                    )
+                    conn.commit()
+                    dialog.accept()
+                    QMessageBox.information(self, "Success", f"{term} added successfully.")
+                    self.Load_Data()
+                    
+            except sqlite3.Error as e:
+                error_label.setText(f"Error saving term: {str(e)}")
 
         save_btn.clicked.connect(save_term)
         cancel_btn.clicked.connect(dialog.reject)
-
         dialog.exec_()
     
     def editTerm(self, row):
@@ -1426,164 +1658,175 @@ class AcademicYearTerm(QWidget):
         term = self.table.item(row, 1).text()
         start = self.table.item(row, 2).text()
         end = self.table.item(row, 3).text()
-
-        # Get the term's database ID
-        c.execute("""
-            SELECT Term.TermID, AcademicYear.AcademicYearID
-            FROM Term
-            JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
-            WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
-        """, (year, term, start, end))
-        result = c.fetchone()
-        if not result:
-            QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
-            return
-        term_id, year_id = result
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Edit Term")
-        dialog.setFixedSize(400, 500)
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #FFFFFF;
-                border-radius: 10px;
-            }
-            QLabel {
-                font-size: 16px;
-                color: #2D3748;
-            }
-            QComboBox, QDateEdit {
-                background-color: #F7FAFC;
-                border: 1px solid #E0E3E7;
-                padding: 5px;
-                border-radius: 5px;
-                font-size: 15px;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 18px;
-                border-radius: 5px;
-                font-size: 15px;
-            }
-            QPushButton#cancel {
-                background-color: #EDF2F7;
-                color: #2D3748;
-                border: 1px solid #E0E3E7;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QPushButton#cancel:hover {
-                background-color: #E2E8F0;
-            }
-            QLabel#error {
-                color: #E53E3E;
-                font-size: 13px;
-            }
-        """)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        # Academic Year
-        year_label = QLabel("Academic Year")
-        layout.addWidget(year_label)
-        year_combo = QComboBox()
-        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-        years = c.fetchall()
-        for y in years:
-            year_combo.addItem(y[1], y[0])
-        # Set current year
-        idx = [y[0] for y in years].index(year_id) if year_id in [y[0] for y in years] else 0
-        year_combo.setCurrentIndex(idx)
-        layout.addWidget(year_combo)
-
-        # Term
-        term_label = QLabel("Term")
-        layout.addWidget(term_label)
-        term_combo = QComboBox()
-        term_combo.addItem("Term 1", "Term 1")
-        term_combo.addItem("Term 2", "Term 2")
-        term_combo.addItem("Term 3", "Term 3")
-        # Set current term
-        idx = ["Term 1", "Term 2", "Term 3"].index(term) if term in ["Term 1", "Term 2", "Term 3"] else 0
-        term_combo.setCurrentIndex(idx)
-        layout.addWidget(term_combo)
-
-        # Start Date
-        start_label = QLabel("Starting Date")
-        layout.addWidget(start_label)
-        start_date = QDateEdit()
-        start_date.setCalendarPopup(True)
-        start_date.setDisplayFormat("yyyy-MM-dd")
-        start_date.setDate(QDate.fromString(start, "yyyy-MM-dd"))
-        layout.addWidget(start_date)
-
-        # End Date
-        end_label = QLabel("Ending Date")
-        layout.addWidget(end_label)
-        end_date = QDateEdit()
-        end_date.setCalendarPopup(True)
-        end_date.setDisplayFormat("yyyy-MM-dd")
-        end_date.setDate(QDate.fromString(end, "yyyy-MM-dd"))
-        layout.addWidget(end_date)
-
-        # Error label
-        error_label = QLabel("")
-        error_label.setObjectName("error")
-        layout.addWidget(error_label)
-
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        save_btn = QPushButton("Save")
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("cancel")
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-
-        def save_edit():
-            new_year_id = year_combo.currentData()
-            new_term = term_combo.currentData()
-            new_start = start_date.date().toString("yyyy-MM-dd")
-            new_end = end_date.date().toString("yyyy-MM-dd")
-
-            if not new_year_id or not new_term or not new_start or not new_end:
-                error_label.setText("All fields are required.")
-                return
-
-            if new_start > new_end:
-                error_label.setText("Start date must be before end date.")
-                return
-
-            # Check for duplicate term in the same year (excluding current term)
-            c.execute("""
-                SELECT 1 FROM Term 
-                WHERE TermName=? AND AcademicYear=? AND TermID<>?
-            """, (new_term, new_year_id, term_id))
-            if c.fetchone():
-                error_label.setText("This term already exists for the selected year.")
-                return
-
-            try:
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Get the term's database ID
                 c.execute("""
-                    UPDATE Term SET TermName=?, AcademicYear=?, StartDate=?, EndDate=?
-                    WHERE TermID=?
-                """, (new_term, new_year_id, new_start, new_end, term_id))
-                conn.commit()
-                dialog.accept()
-                QMessageBox.information(self, "Success", f"{new_term} updated successfully.")
-                self.Load_Data()
-            except Exception as e:
-                error_label.setText("Error updating term.")
+                    SELECT Term.TermID, AcademicYear.AcademicYearID
+                    FROM Term
+                    JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
+                    WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
+                """, (year, term, start, end))
+                result = c.fetchone()
+                
+            if not result:
+                QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
+                return
+                
+            term_id, year_id = result
 
-        save_btn.clicked.connect(save_edit)
-        cancel_btn.clicked.connect(dialog.reject)
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Term")
+            dialog.setFixedSize(400, 500)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #FFFFFF;
+                    border-radius: 10px;
+                }
+                QLabel {
+                    font-size: 16px;
+                    color: #2D3748;
+                }
+                QComboBox, QDateEdit {
+                    background-color: #F7FAFC;
+                    border: 1px solid #E0E3E7;
+                    padding: 5px;
+                    border-radius: 5px;
+                    font-size: 15px;
+                }
+                QPushButton {
+                    background-color: #4299E1;
+                    color: white;
+                    border: none;
+                    padding: 8px 18px;
+                    border-radius: 5px;
+                    font-size: 15px;
+                }
+                QPushButton#cancel {
+                    background-color: #EDF2F7;
+                    color: #2D3748;
+                    border: 1px solid #E0E3E7;
+                }
+                QPushButton:hover {
+                    background-color: #3182CE;
+                }
+                QPushButton#cancel:hover {
+                    background-color: #E2E8F0;
+                }
+                QLabel#error {
+                    color: #E53E3E;
+                    font-size: 13px;
+                }
+            """)
 
-        dialog.exec_()
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(20, 20, 20, 20)
+
+            # Academic Year
+            year_label = QLabel("Academic Year")
+            layout.addWidget(year_label)
+            year_combo = QComboBox()
+            
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+                years = c.fetchall()
+                for y in years:
+                    year_combo.addItem(y[1], y[0])
+            
+            # Set current year
+            idx = [y[0] for y in years].index(year_id) if year_id in [y[0] for y in years] else 0
+            year_combo.setCurrentIndex(idx)
+            layout.addWidget(year_combo)
+
+            # Term
+            term_label = QLabel("Term")
+            layout.addWidget(term_label)
+            term_combo = QComboBox()
+            term_combo.addItem("Term 1", "Term 1")
+            term_combo.addItem("Term 2", "Term 2")
+            term_combo.addItem("Term 3", "Term 3")
+            # Set current term
+            idx = ["Term 1", "Term 2", "Term 3"].index(term) if term in ["Term 1", "Term 2", "Term 3"] else 0
+            term_combo.setCurrentIndex(idx)
+            layout.addWidget(term_combo)
+
+            # Start Date
+            start_label = QLabel("Starting Date")
+            layout.addWidget(start_label)
+            start_date = QDateEdit()
+            start_date.setCalendarPopup(True)
+            start_date.setDisplayFormat("yyyy-MM-dd")
+            start_date.setDate(QDate.fromString(start, "yyyy-MM-dd"))
+            layout.addWidget(start_date)
+
+            # End Date
+            end_label = QLabel("Ending Date")
+            layout.addWidget(end_label)
+            end_date = QDateEdit()
+            end_date.setCalendarPopup(True)
+            end_date.setDisplayFormat("yyyy-MM-dd")
+            end_date.setDate(QDate.fromString(end, "yyyy-MM-dd"))
+            layout.addWidget(end_date)
+
+            # Error label
+            error_label = QLabel("")
+            error_label.setObjectName("error")
+            layout.addWidget(error_label)
+
+            # Buttons
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+            save_btn = QPushButton("Save")
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.setObjectName("cancel")
+            btn_layout.addWidget(save_btn)
+            btn_layout.addWidget(cancel_btn)
+            layout.addLayout(btn_layout)
+
+            def save_edit():
+                new_year_id = year_combo.currentData()
+                new_term = term_combo.currentData()
+                new_start = start_date.date().toString("yyyy-MM-dd")
+                new_end = end_date.date().toString("yyyy-MM-dd")
+
+                if not new_year_id or not new_term or not new_start or not new_end:
+                    error_label.setText("All fields are required.")
+                    return
+
+                if new_start > new_end:
+                    error_label.setText("Start date must be before end date.")
+                    return
+
+                try:
+                    with get_db_connection() as (conn, c):
+                        # Check for duplicate term in the same year (excluding current term)
+                        c.execute("""
+                            SELECT 1 FROM Term 
+                            WHERE TermName=? AND AcademicYear=? AND TermID<>?
+                        """, (new_term, new_year_id, term_id))
+                        if c.fetchone():
+                            error_label.setText("This term already exists for the selected year.")
+                            return
+
+                        c.execute("""
+                            UPDATE Term SET TermName=?, AcademicYear=?, StartDate=?, EndDate=?
+                            WHERE TermID=?
+                        """, (new_term, new_year_id, new_start, new_end, term_id))
+                        conn.commit()
+                        dialog.accept()
+                        QMessageBox.information(self, "Success", f"{new_term} updated successfully.")
+                        self.Load_Data()
+                        
+                except sqlite3.Error as e:
+                    error_label.setText(f"Error updating term: {str(e)}")
+
+            save_btn.clicked.connect(save_edit)
+            cancel_btn.clicked.connect(dialog.reject)
+            dialog.exec_()
+            
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load term data: {str(e)}")
     
     def deleteTerm(self, row):
         # Get current term data from the table
@@ -1591,53 +1834,62 @@ class AcademicYearTerm(QWidget):
         term = self.table.item(row, 1).text()
         start = self.table.item(row, 2).text()
         end = self.table.item(row, 3).text()
-
-        # Get the term's database ID
-        c.execute("""
-            SELECT Term.TermID
-            FROM Term
-            JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
-            WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
-        """, (year, term, start, end))
-        result = c.fetchone()
-        if not result:
-            QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
-            return
-        term_id = result[0]
-
-        # Precaution message
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Delete Term")
-        msg.setText(
-            f"Are you sure you want to delete the term '{term}' for academic year '{year}'?\n\n"
-            "This action cannot be undone.\n\n"
-            "Note:\n"
-            "- If this term is linked to any fees, deletion is not allowed.\n"
-            "- If students are assigned to this term, their term assignment will be set to 'None'."
-        )
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        ret = msg.exec_()
-        if ret != QMessageBox.Yes:
-            return
-
-        # Check for Fees relation
-        c.execute("SELECT 1 FROM Fees WHERE TermID = ?", (term_id,))
-        if c.fetchone():
-            QMessageBox.critical(self, "Restricted", "This term cannot be deleted because it is linked to one or more fees records.")
-            return
-
-        # Set Student.TermID to NULL for students assigned to this term
-        c.execute("UPDATE Student SET TermID = NULL WHERE TermID = ?", (term_id,))
-        # Now delete the term
+        
         try:
-            c.execute("DELETE FROM Term WHERE TermID = ?", (term_id,))
-            conn.commit()
-            QMessageBox.information(self, "Deleted", f"Term '{term}' for academic year '{year}' has been deleted.\n\n"
-                                                     "Any students previously assigned to this term now have no term assigned.")
-            self.Load_Data()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", "An error occurred while deleting the term.")
+            with get_db_connection() as (conn, c):
+                # Get the term's database ID
+                c.execute("""
+                    SELECT Term.TermID
+                    FROM Term
+                    JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
+                    WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
+                """, (year, term, start, end))
+                result = c.fetchone()
+                
+            if not result:
+                QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
+                return
+                
+            term_id = result[0]
+
+            # Precaution message
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("Delete Term")
+            msg.setText(
+                f"Are you sure you want to delete the term '{term}' for academic year '{year}'?\n\n"
+                "This action cannot be undone.\n\n"
+                "Note:\n"
+                "- If this term is linked to any fees, deletion is not allowed.\n"
+                "- If students are assigned to this term, their term assignment will be set to 'None'."
+            )
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            ret = msg.exec_()
+            if ret != QMessageBox.Yes:
+                return
+
+            try:
+                with get_db_connection() as (conn, c):
+                    # Check for Fees relation
+                    c.execute("SELECT 1 FROM Fees WHERE TermID = ?", (term_id,))
+                    if c.fetchone():
+                        QMessageBox.critical(self, "Restricted", "This term cannot be deleted because it is linked to one or more fees records.")
+                        return
+
+                    # Set Student.TermID to NULL for students assigned to this term
+                    c.execute("UPDATE Student SET TermID = NULL WHERE TermID = ?", (term_id,))
+                    # Now delete the term
+                    c.execute("DELETE FROM Term WHERE TermID = ?", (term_id,))
+                    conn.commit()
+                    QMessageBox.information(self, "Deleted", f"Term '{term}' for academic year '{year}' has been deleted.\n\n"
+                                                             "Any students previously assigned to this term now have no term assigned.")
+                    self.Load_Data()
+                    
+            except sqlite3.Error as e:
+                QMessageBox.critical(self, "Error", f"An error occurred while deleting the term: {str(e)}")
+                
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load term data: {str(e)}")
     
     def editYear(self):
         dialog = QDialog(self)
@@ -1691,11 +1943,17 @@ class AcademicYearTerm(QWidget):
         layout.addWidget(label)
 
         year_combo = QComboBox()
-        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-        years = c.fetchall()
-        year_combo.addItem("Select Year", None)
-        for y in years:
-            year_combo.addItem(y[1], y[0])
+        
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+                years = c.fetchall()
+                year_combo.addItem("Select Year", None)
+                for y in years:
+                    year_combo.addItem(y[1], y[0])
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load academic years: {str(e)}")
+            
         layout.addWidget(year_combo)
 
         new_label = QLabel("New Year Name")
@@ -1727,22 +1985,25 @@ class AcademicYearTerm(QWidget):
             if not new_year_name:
                 error_label.setText("Year name cannot be empty.")
                 return
-            c.execute("SELECT 1 FROM AcademicYear WHERE Year = ? AND AcademicYearID != ?", (new_year_name, year_id))
-            if c.fetchone():
-                error_label.setText("This academic year already exists.")
-                return
+            
             try:
-                c.execute("UPDATE AcademicYear SET Year = ? WHERE AcademicYearID = ?", (new_year_name, year_id))
-                conn.commit()
-                dialog.accept()
-                QMessageBox.information(self, "Success", f"Academic Year updated successfully.")
-                self.Load_Data()
-            except Exception as e:
-                error_label.setText("Error updating year.")
+                with get_db_connection() as (conn, c):
+                    c.execute("SELECT 1 FROM AcademicYear WHERE Year = ? AND AcademicYearID != ?", (new_year_name, year_id))
+                    if c.fetchone():
+                        error_label.setText("This academic year already exists.")
+                        return
+                    
+                    c.execute("UPDATE AcademicYear SET Year = ? WHERE AcademicYearID = ?", (new_year_name, year_id))
+                    conn.commit()
+                    dialog.accept()
+                    QMessageBox.information(self, "Success", f"Academic Year updated successfully.")
+                    self.Load_Data()
+                    
+            except sqlite3.Error as e:
+                error_label.setText(f"Error updating year: {str(e)}")
 
         save_btn.clicked.connect(save_edit)
         cancel_btn.clicked.connect(dialog.reject)
-
         dialog.exec_()
 
     def deleteYear(self):
@@ -1797,11 +2058,17 @@ class AcademicYearTerm(QWidget):
         layout.addWidget(label)
 
         year_combo = QComboBox()
-        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-        years = c.fetchall()
-        year_combo.addItem("Select Year", None)
-        for y in years:
-            year_combo.addItem(y[1], y[0])
+        
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+                years = c.fetchall()
+                year_combo.addItem("Select Year", None)
+                for y in years:
+                    year_combo.addItem(y[1], y[0])
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load academic years: {str(e)}")
+            
         layout.addWidget(year_combo)
 
         error_label = QLabel("")
@@ -1822,41 +2089,45 @@ class AcademicYearTerm(QWidget):
             if not year_id:
                 error_label.setText("Please select a year to delete.")
                 return
-            # Check for child relations in Term
-            c.execute("SELECT 1 FROM Term WHERE AcademicYear = ?", (year_id,))
-            if c.fetchone():
-                error_label.setText("Cannot delete: This year has related terms.")
-                return
-            # Check for child relations in Class
-            c.execute("SELECT 1 FROM Class WHERE AcademicYear = ?", (year_id,))
-            if c.fetchone():
-                error_label.setText("Cannot delete: This year has related classes.")
-                return
-
-            # Get year name for message
-            year_name = year_combo.currentText()
-            msg = QMessageBox(self)
-            msg.setIcon(QMessageBox.Warning)
-            msg.setWindowTitle("Delete Academic Year")
-            msg.setText(
-                f"Are you sure you want to delete the academic year '{year_name}'?\n\n"
-                "This action cannot be undone.\n\n"
-                "Note:\n"
-                "- If this year is linked to any terms or classes, deletion is not allowed."
-            )
-            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            ret = msg.exec_()
-            if ret != QMessageBox.Yes:
-                return
-
+            
             try:
-                c.execute("DELETE FROM AcademicYear WHERE AcademicYearID = ?", (year_id,))
-                conn.commit()
-                dialog.accept()
-                QMessageBox.information(self, "Deleted", f"Academic Year '{year_name}' has been deleted successfully.")
-                self.Load_Data()
-            except Exception as e:
-                error_label.setText("Error deleting year.")
+                with get_db_connection() as (conn, c):
+                    # Check for child relations in Term
+                    c.execute("SELECT 1 FROM Term WHERE AcademicYear = ?", (year_id,))
+                    if c.fetchone():
+                        error_label.setText("Cannot delete: This year has related terms.")
+                        return
+                    
+                    # Check for child relations in Class
+                    c.execute("SELECT 1 FROM Class WHERE AcademicYear = ?", (year_id,))
+                    if c.fetchone():
+                        error_label.setText("Cannot delete: This year has related classes.")
+                        return
+
+                    # Get year name for message
+                    year_name = year_combo.currentText()
+                    msg = QMessageBox(self)
+                    msg.setIcon(QMessageBox.Warning)
+                    msg.setWindowTitle("Delete Academic Year")
+                    msg.setText(
+                        f"Are you sure you want to delete the academic year '{year_name}'?\n\n"
+                        "This action cannot be undone.\n\n"
+                        "Note:\n"
+                        "- If this year is linked to any terms or classes, deletion is not allowed."
+                    )
+                    msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                    ret = msg.exec_()
+                    if ret != QMessageBox.Yes:
+                        return
+
+                    c.execute("DELETE FROM AcademicYear WHERE AcademicYearID = ?", (year_id,))
+                    conn.commit()
+                    dialog.accept()
+                    QMessageBox.information(self, "Deleted", f"Academic Year '{year_name}' has been deleted successfully.")
+                    self.Load_Data()
+                    
+            except sqlite3.Error as e:
+                error_label.setText(f"Error deleting year: {str(e)}")
 
         delete_btn.clicked.connect(do_delete)
         cancel_btn.clicked.connect(dialog.reject)
@@ -1866,12 +2137,12 @@ class AcademicYearTerm(QWidget):
         action = self.year_action_combo.itemData(index)
         if action == "add":
             self.addYear()
-            self.Load_Data()
         elif action == "edit":
             self.editYear()
         elif action == "delete":
             self.deleteYear()
         self.year_action_combo.setCurrentIndex(0)
+
 
 class Dashboard(QWidget):
     def __init__(self):
@@ -1979,8 +2250,9 @@ class Class(QWidget):
         self.Search_Input.setMaximumWidth(200)
         self.year_filter = QComboBox()
         self.year_filter.addItem("All Years", None)
-        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-        years = c.fetchall()
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+            years = c.fetchall()
         for year in years:
             self.year_filter.addItem(year[1], year[0])
         self.year_filter.setCurrentIndex(0)
@@ -2030,8 +2302,9 @@ class Class(QWidget):
             params += (f"%{search_text}%",)
         if filters:
             query += " WHERE " + " AND ".join(filters)
-        c.execute(query, params)
-        results = c.fetchall()
+        with get_db_connection() as (conn, c):
+            c.execute(query, params)
+            results = c.fetchall()
         for row_data in results:
             row = self.table.rowCount()
             self.table.insertRow(row)
@@ -2112,8 +2385,9 @@ class Class(QWidget):
         layout.addWidget(year_label)
         year_combo = QComboBox()
         year_combo.addItem("Select Year", None)
-        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-        years = c.fetchall()
+        with get_db_connection() as (conn, c): 
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+            years = c.fetchall()
         for year in years:
             year_combo.addItem(year[1], year[0])
         layout.addWidget(year_combo)
@@ -2144,29 +2418,31 @@ class Class(QWidget):
             if not year_id or not class_name:
                 error_label.setText("Year and Class Name are required.")
                 return
-            c.execute("SELECT 1 FROM Class WHERE ClassName=? AND AcademicYear=?", (class_name, year_id))
-            if c.fetchone():
-                error_label.setText("This class already exists for the selected year.")
-                return
-            try:
-                c.execute(
-                    "INSERT INTO Class (ClassName, AcademicYear) VALUES (?, ?)",
-                    (class_name, year_id)
-                )
-                conn.commit()
-                dialog.accept()
-                QMessageBox.information(self, "Success", f"Class '{class_name}' added successfully.")
-                self.Load_Data()
-            except Exception as e:
-                error_label.setText("Error saving class.")
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT 1 FROM Class WHERE ClassName=? AND AcademicYear=?", (class_name, year_id))
+                if c.fetchone():
+                    error_label.setText("This class already exists for the selected year.")
+                    return
+                try:
+                    c.execute(
+                        "INSERT INTO Class (ClassName, AcademicYear) VALUES (?, ?)",
+                        (class_name, year_id)
+                    )
+                    conn.commit()
+                    dialog.accept()
+                    QMessageBox.information(self, "Success", f"Class '{class_name}' added successfully.")
+                    self.Load_Data()
+                except Exception as e:
+                    error_label.setText("Error saving class.")
 
         save_btn.clicked.connect(save_class)
         cancel_btn.clicked.connect(dialog.reject)
         dialog.exec_()
 
     def editClass(self, class_id):
-        c.execute("SELECT ClassName, AcademicYear FROM Class WHERE ClassID=?", (class_id,))
-        result = c.fetchone()
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT ClassName, AcademicYear FROM Class WHERE ClassID=?", (class_id,))
+            result = c.fetchone()
         if not result:
             QMessageBox.warning(self, "Error", "Could not find the selected class in the database.")
             return
@@ -2222,8 +2498,9 @@ class Class(QWidget):
         year_label = QLabel("Academic Year")
         layout.addWidget(year_label)
         year_combo = QComboBox()
-        c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-        years = c.fetchall()
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+            years = c.fetchall()
         for y in years:
             year_combo.addItem(y[1], y[0])
         idx = [y[0] for y in years].index(year_id) if year_id in [y[0] for y in years] else 0
@@ -2255,24 +2532,25 @@ class Class(QWidget):
             if not new_year_id or not new_class_name:
                 error_label.setText("Year and Class Name are required.")
                 return
-            c.execute(
-                "SELECT 1 FROM Class WHERE ClassName=? AND AcademicYear=? AND ClassID<>?",
-                (new_class_name, new_year_id, class_id)
-            )
-            if c.fetchone():
-                error_label.setText("This class already exists for the selected year.")
-                return
-            try:
+            with get_db_connection() as (conn, c):
                 c.execute(
-                    "UPDATE Class SET ClassName=?, AcademicYear=? WHERE ClassID=?",
+                    "SELECT 1 FROM Class WHERE ClassName=? AND AcademicYear=? AND ClassID<>?",
                     (new_class_name, new_year_id, class_id)
                 )
-                conn.commit()
-                dialog.accept()
-                QMessageBox.information(self, "Success", f"Class updated successfully.")
-                self.Load_Data()
-            except Exception as e:
-                error_label.setText("Error updating class.")
+                if c.fetchone():
+                    error_label.setText("This class already exists for the selected year.")
+                    return
+                try:
+                    c.execute(
+                        "UPDATE Class SET ClassName=?, AcademicYear=? WHERE ClassID=?",
+                        (new_class_name, new_year_id, class_id)
+                    )
+                    conn.commit()
+                    dialog.accept()
+                    QMessageBox.information(self, "Success", f"Class updated successfully.")
+                    self.Load_Data()
+                except Exception as e:
+                    error_label.setText("Error updating class.")
 
         save_btn.clicked.connect(save_edit)
         cancel_btn.clicked.connect(dialog.reject)
@@ -2280,15 +2558,16 @@ class Class(QWidget):
 
     def deleteClass(self, class_id):
         # Check for child relations (e.g., students assigned to this class)
-        c.execute("SELECT 1 FROM StudentTerm WHERE ClassID = ?", (class_id,))
-        if c.fetchone():
-            QMessageBox.critical(self, "Restricted", "This class cannot be deleted because it is linked to one or more students.")
-            return
+        with get_db_connection() as (conn, c): 
+            c.execute("SELECT 1 FROM StudentTerm WHERE ClassID = ?", (class_id,))
+            if c.fetchone():
+                QMessageBox.critical(self, "Restricted", "This class cannot be deleted because it is linked to one or more students.")
+                return
 
-        # Get class name for message
-        c.execute("SELECT ClassName FROM Class WHERE ClassID = ?", (class_id,))
-        row = c.fetchone()
-        class_name = row[0] if row else "the class"
+            # Get class name for message
+            c.execute("SELECT ClassName FROM Class WHERE ClassID = ?", (class_id,))
+            row = c.fetchone()
+            class_name = row[0] if row else "the class"
 
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
@@ -2305,10 +2584,11 @@ class Class(QWidget):
             return
 
         try:
-            c.execute("DELETE FROM Class WHERE ClassID = ?", (class_id,))
-            conn.commit()
-            QMessageBox.information(self, "Deleted", f"Class '{class_name}' has been deleted successfully.")
-            self.Load_Data()
+            with get_db_connection() as (conn, c):
+                c.execute("DELETE FROM Class WHERE ClassID = ?", (class_id,))
+                conn.commit()
+                QMessageBox.information(self, "Deleted", f"Class '{class_name}' has been deleted successfully.")
+                self.Load_Data()
         except Exception as e:
             QMessageBox.critical(self, "Error", "An error occurred while deleting the class.")
 
