@@ -5,6 +5,7 @@ from PyQt5.QtGui import *
 import sqlite3
 import pandas as pd
 from contextlib import contextmanager
+from datetime import datetime
 
 # Enhanced connection function with context manager
 @contextmanager
@@ -33,8 +34,48 @@ def get_db_connection_simple():
     except sqlite3.Error as e:
         print(f"Database connection error: {e}")
         raise
+### Student Management Initial Start ###
+class StudentManagement(QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(15)
 
-class Student(QWidget):
+        # Header for the entire page
+        header_layout = QHBoxLayout()
+        title = QLabel("Students Management")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+
+        # Tab widget to separate Students and Enrollments
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+            }
+            QTabBar::tab {
+                background: #F7FAFC;
+                border: 1px solid #E0E3E7;
+                border-bottom: none;
+                padding: 10px 20px;
+                min-width: 100px;
+            }
+            QTabBar::tab:selected {
+                background: #FFFFFF;
+                font-weight: bold;
+            }
+        """)
+        self.students_tab = StudentsTab()
+        self.enrollments_tab = EnrollmentsTab()
+        self.tabs.addTab(self.students_tab, "Students Info")
+        self.tabs.addTab(self.enrollments_tab, "Student Enrollments")
+        layout.addWidget(self.tabs)
+
+class StudentsTab(QWidget):
     def __init__(self):
         super().__init__()
         self.setStyleSheet("""
@@ -102,30 +143,387 @@ class Student(QWidget):
             }
         """)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
 
-        # Header row
-        header_layout = QHBoxLayout()
-        title = QLabel("Students")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        add_student_btn = QPushButton("Add Student")
-        add_student_btn.clicked.connect(self.show_add_student_dialog)
-        import_btn = QPushButton("Import Excel")
-        import_btn.clicked.connect(lambda: self.show_import_wizard())
-        header_layout.addWidget(add_student_btn)
-        header_layout.addWidget(import_btn)
-        layout.addLayout(header_layout)
-
-        # Filter row
+        # Filters and add buttons
         filter_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.setMaximumWidth(200)
         self.search_input.textChanged.connect(self.load_data)
+
+        self.filterbyStatus = QComboBox()
+        self.filterbyStatus.addItem("All PayRate",None)
+        self.filterbyStatus.addItem("Full Scholarship",0)
+        self.filterbyStatus.addItem("25% Scholarship",75)
+        self.filterbyStatus.addItem("No Scholarship",100)
+        self.filterbyStatus.currentIndexChanged.connect(self.load_data)
+
+        self.Filter_FeePayer = QComboBox()
+        self.Filter_FeePayer.addItem("All Fee Payers")
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT DISTINCT FeePayer From Students")
+            for fp in c.fetchall():
+                self.Filter_FeePayer.addItem(fp[0])
+        self.Filter_FeePayer.currentIndexChanged.connect(self.load_data)
+
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(self.filterbyStatus)
+        filter_layout.addWidget(self.Filter_FeePayer)
+        filter_layout.addStretch()
+        add_student_btn = QPushButton("Add Student")
+        add_student_btn.clicked.connect(self.show_add_student_dialog)
+        Import_btn = QPushButton("Import")
+        Import_btn.clicked.connect(show_import_wizard)
+        filter_layout.addWidget(add_student_btn)
+        filter_layout.addWidget(Import_btn)
+        layout.addLayout(filter_layout)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(8)  # StudentID, Name, Fee Payer, Status, Parent Name, Contact, Contact2, Actions
+        self.table.setHorizontalHeaderLabels(["StudentID", "Name", "Fee Payer", "Scholarship", "Parent Name", "Contact", "Contact2", "Actions"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        for col in range(7):
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+        header.setSectionResizeMode(7, QHeaderView.Fixed)
+        header.resizeSection(7, 120)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        self.results_label = QLabel("0 results")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+        filter_layout.addWidget(self.results_label)
+
+        self.load_data()
+
+    def show_add_student_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Student")
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        id_edit = QLineEdit()
+        name_edit = QLineEdit()
+        feepayer_edit = QLineEdit()
+        status_combo = QComboBox()
+        status_combo.addItem("Select PayRate",None)
+        status_combo.addItem("Full Scholarship",0)
+        status_combo.addItem("25% Scholarship",75)
+        status_combo.addItem("No Scholarship",100)
+        parent_name_edit = QLineEdit()
+        contact_edit = QLineEdit()
+        contact2_edit = QLineEdit()
+        form_layout.addRow("Student ID:", id_edit)
+        form_layout.addRow("Name:", name_edit)
+        form_layout.addRow("Fee Payer:", feepayer_edit)
+        form_layout.addRow("PayRate:", status_combo)
+        form_layout.addRow("Parent Name:", parent_name_edit)
+        form_layout.addRow("Parent Contact:", contact_edit)
+        form_layout.addRow("Parent Contact 2:", contact2_edit)
+        layout.addLayout(form_layout)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(lambda: self.save_student(dialog, id_edit, name_edit, feepayer_edit, status_combo, parent_name_edit, contact_edit, contact2_edit))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def save_student(self, dialog, id_edit, name_edit, feepayer_edit, status_combo, parent_name_edit, contact_edit, contact2_edit):
+        student_id = id_edit.text().strip()
+        name = name_edit.text().strip()
+        feepayer = feepayer_edit.text().strip()
+        status = status_combo.currentData()
+        parent_name = parent_name_edit.text().strip()
+        contact = contact_edit.text().strip()
+        contact2 = contact2_edit.text().strip()
+        if not all([student_id, name, feepayer, status, parent_name, contact]):
+            QMessageBox.warning(dialog, "Error", "Required fields are missing")
+            return
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
+                if c.fetchone()[0] > 0:
+                    QMessageBox.warning(dialog, "Error", "Duplicate Student ID")
+                    return
+                c.execute("""INSERT INTO Students (StudentID, Student_Name, FeePayer, PayRate, Parent_Name, Parent_Contact, Parent_Contact2)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)""", (student_id, name, feepayer, status, parent_name, contact, contact2))
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Student registered successfully")
+                id_edit.clear()
+                name_edit.clear()
+                feepayer_edit.clear()
+                parent_name_edit.clear()
+                contact_edit.clear()
+                contact2_edit.clear()
+                status_combo.setCurrentIndex(0)
+                self.load_data()
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to add student: {str(e)}")
+
+    def load_data(self):
+        try:
+            with get_db_connection() as (conn, c):
+                query = """SELECT StudentID, Student_Name, FeePayer, PayRate, Parent_Name, Parent_Contact, Parent_Contact2
+                        FROM Students"""
+                filters = []
+                params = ()
+                search_text = self.search_input.text().strip()
+                if search_text:
+                    filters.append("(StudentID LIKE ? OR Student_Name LIKE ? OR Parent_Name LIKE ? OR Parent_Contact LIKE ? OR Parent_Contact2 LIKE ?)")
+                    params += (f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%")
+                status_filter = self.filterbyStatus.currentData()
+                if status_filter != None:
+                    filters.append("PayRate = ?")
+                    params += (status_filter,)
+                fee_payer_filter = self.Filter_FeePayer.currentText()
+                if fee_payer_filter != "All Fee Payers":
+                    filters.append("FeePayer = ?")
+                    params += (fee_payer_filter,)
+                if filters:
+                    query += " WHERE " + " AND ".join(filters)
                 
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                # Set column headers including Actions column
+                self.table.setColumnCount(8)  # 7 data columns + 1 actions column
+                self.table.setHorizontalHeaderLabels([
+                    "Student ID", "Student Name", "Fee Payer", "PayRate", 
+                    "Parent Name", "Parent Contact", "Parent Contact2", "Actions"
+                ])
+                
+                # Configure column resize modes
+                header = self.table.horizontalHeader()
+                for col in range(7):  # First 7 columns are data
+                    header.setSectionResizeMode(col, QHeaderView.Stretch)
+                header.setSectionResizeMode(7, QHeaderView.Fixed)  # Actions column fixed width
+                header.resizeSection(7, 150)  # Wider width for action buttons
+                
+                self.table.setRowCount(0)
+                for row_data in rows:
+                    row = self.table.rowCount()
+                    self.table.insertRow(row)
+                    
+                    # Add data columns
+                    for col, data in enumerate(row_data):
+                        item = QTableWidgetItem(str(data) if data else "")
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make non-editable
+                        self.table.setItem(row, col, item)
+                    
+                    # Create actions widget with proper sizing
+                    actions_widget = QWidget()
+                    actions_widget.setFixedWidth(140)  # Fixed width for the widget
+                    actions_layout = QHBoxLayout(actions_widget)
+                    actions_layout.setContentsMargins(5, 2, 5, 2)  # Reduced margins
+                    actions_layout.setSpacing(8)  # Slightly more spacing
+                    
+                    # Edit button with fixed size
+                    edit_btn = QPushButton("Edit")
+                    edit_btn.setFixedSize(60, 28)  # Larger size for better visibility
+                    edit_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #48BB78;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-size: 11px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #38A169;
+                        }
+                        QPushButton:pressed {
+                            background-color: #2F855A;
+                        }
+                    """)
+                    edit_btn.clicked.connect(lambda checked, sid=row_data[0]: self.edit_student(sid))
+                    
+                    # Delete button with fixed size
+                    delete_btn = QPushButton("Delete")
+                    delete_btn.setFixedSize(60, 28)  # Larger size for better visibility
+                    delete_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #F56565;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-size: 11px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #E53E3E;
+                        }
+                        QPushButton:pressed {
+                            background-color: #C53030;
+                        }
+                    """)
+                    delete_btn.clicked.connect(lambda checked, sid=row_data[0]: self.delete_student(sid))
+                    
+                    actions_layout.addWidget(edit_btn)
+                    actions_layout.addWidget(delete_btn)
+                    actions_layout.addStretch()
+                    
+                    # Set the widget in the Actions column (column 7)
+                    self.table.setCellWidget(row, 7, actions_widget)
+                    
+                    # Set row height to accommodate buttons
+                    self.table.setRowHeight(row, 40)
+                
+                count = self.table.rowCount()
+                self.results_label.setText(f"{count} results")
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
+
+    def edit_student(self, student_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT * FROM Students WHERE StudentID = ?", (student_id,))
+                student_data = c.fetchone()
+            if student_data:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Edit Student")
+                layout = QVBoxLayout()
+                form_layout = QFormLayout()
+                name_edit = QLineEdit(student_data[1])
+                feepayer_edit = QLineEdit(student_data[2])
+                status_combo = QComboBox()
+                status_combo.addItem("Select PayRate",None)
+                status_combo.addItem("Full Scholarship",0)
+                status_combo.addItem("25% Scholarship",75)
+                status_combo.addItem("No Scholarship",100)
+                status_combo.setCurrentText(status_combo.itemText(status_combo.findData(student_data[3])))
+                parent_name_edit = QLineEdit(student_data[4])
+                contact_edit = QLineEdit(student_data[5])
+                contact2_edit = QLineEdit(student_data[6] if student_data[6] else "")
+                form_layout.addRow("Name:", name_edit)
+                form_layout.addRow("Fee Payer:", feepayer_edit)
+                form_layout.addRow("PayRate:", status_combo)
+                form_layout.addRow("Parent Name:", parent_name_edit)
+                form_layout.addRow("Parent Contact:", contact_edit)
+                form_layout.addRow("Parent Contact 2:", contact2_edit)
+                layout.addLayout(form_layout)
+                buttons = QHBoxLayout()
+                save_btn = QPushButton("Save")
+                save_btn.clicked.connect(lambda: self.save_edited_student(dialog, student_id, name_edit, feepayer_edit, status_combo, parent_name_edit, contact_edit, contact2_edit))
+                close_btn = QPushButton("Close")
+                close_btn.clicked.connect(dialog.close)
+                buttons.addWidget(save_btn)
+                buttons.addWidget(close_btn)
+                layout.addLayout(buttons)
+                dialog.setLayout(layout)
+                dialog.exec_()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load student: {str(e)}")
+
+    def save_edited_student(self, dialog, student_id, name_edit, feepayer_edit, status_combo, parent_name_edit, contact_edit, contact2_edit):
+        name = name_edit.text().strip()
+        feepayer = feepayer_edit.text().strip()
+        status = status_combo.currentData()
+        parent_name = parent_name_edit.text().strip()
+        contact = contact_edit.text().strip()
+        contact2 = contact2_edit.text().strip()
+        if not all([name, feepayer, status, parent_name, contact]):
+            QMessageBox.warning(dialog, "Error", "Required fields are missing")
+            return
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""UPDATE Students 
+                             SET Student_Name = ?, FeePayer = ?, PayRate = ?, 
+                                 Parent_Name = ?, Parent_Contact = ?, Parent_Contact2 = ?
+                             WHERE StudentID = ?""", (name, feepayer, status, parent_name, contact, contact2, student_id))
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Student updated successfully")
+                dialog.close()
+                self.load_data()
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to update student: {str(e)}")
+
+    def delete_student(self, student_id):
+        reply = QMessageBox.question(self, 'Confirm Deletion', 
+                                     f'Are you sure you want to delete student {student_id}? This will also delete all enrollments.',
+                                     QMessageBox.Yes | QMessageBox.No, 
+                                     QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM StudentTerm WHERE StudentID = ?", (student_id,))
+                    c.execute("DELETE FROM Students WHERE StudentID = ?", (student_id,))
+                    conn.commit()
+                    QMessageBox.information(self, "Success", "Student deleted successfully")
+                    self.load_data()
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to delete student: {str(e)}")
+
+class EnrollmentsTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Filters and add buttons
+        filter_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search...")
+        self.search_input.setMaximumWidth(200)
+        self.search_input.textChanged.connect(self.load_data)
+
         self.class_filter = QComboBox()
         self.class_filter.addItem("All Classes", None)
         with get_db_connection() as (conn, c):
@@ -133,7 +531,7 @@ class Student(QWidget):
             for cl in c.fetchall():
                 self.class_filter.addItem(cl[1], cl[0])
         self.class_filter.currentIndexChanged.connect(self.load_data)
-        
+
         self.term_filter = QComboBox()
         self.term_filter.addItem("All Terms", None)
         with get_db_connection() as (conn, c):
@@ -141,61 +539,325 @@ class Student(QWidget):
             for t in c.fetchall():
                 self.term_filter.addItem(t[1], t[0])
         self.term_filter.currentIndexChanged.connect(self.load_data)
-        
-        self.filterbyStatus = QComboBox()
-        self.filterbyStatus.addItems(["All Status", "Full Scholarship", "75% Scholarship", "No Scholarship"])
-        self.filterbyStatus.currentIndexChanged.connect(self.load_data)
-        
-        self.StudentOnlycheck = QCheckBox("Student Only")
-        self.StudentOnlycheck.stateChanged.connect(self.load_data)
-        
-        self.Filter_FeePayer = QComboBox()
-        self.Filter_FeePayer.addItem("All Fee Payers")
-        with get_db_connection() as (conn, c):
-            c.execute("SELECT DISTINCT Feepayer From Students")
-            for fp in c.fetchall():
-                self.Filter_FeePayer.addItem(fp[0])
-        self.Filter_FeePayer.currentIndexChanged.connect(self.load_data)
-        
-        #conn.close()  # Close connection after populating combos
-        
+
         filter_layout.addWidget(self.search_input)
         filter_layout.addWidget(self.class_filter)
         filter_layout.addWidget(self.term_filter)
-        filter_layout.addWidget(self.filterbyStatus)
-        filter_layout.addWidget(self.StudentOnlycheck)
-        filter_layout.addWidget(self.Filter_FeePayer)
         filter_layout.addStretch()
-        self.results_label = QLabel("0 results")
-        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
-        filter_layout.addWidget(self.results_label)
+        add_enrollment_btn = QPushButton("Add Enrollment")
+        add_enrollment_btn.clicked.connect(self.show_add_enrollment_dialog)
+        import_btn = QPushButton("Import")
+        import_btn.clicked.connect(show_import_wizard)
+        filter_layout.addWidget(add_enrollment_btn)
+        filter_layout.addWidget(import_btn)
         layout.addLayout(filter_layout)
 
-        # Table setup
+        # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(10)  # Added columns for actions
-        self.table.setHorizontalHeaderLabels(["StudentID", "Name", "Fee Payer", "Status", "Parent Name", "Contact", "Contact2", "Class", "Term", "Actions"])
+        self.table.setColumnCount(6)  # StudentID, Name, Class, Term, Actions
+        self.table.setHorizontalHeaderLabels(["StudentID", "Name", "Class", "Term", "PayRate", "Actions"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-
-        # Set resize mode for all columns except Actions
         header = self.table.horizontalHeader()
-        for col in range(9):  # First 9 columns
+        for col in range(4):
             header.setSectionResizeMode(col, QHeaderView.Stretch)
-
-        # Set fixed width for Actions column
-        header.setSectionResizeMode(9, QHeaderView.Fixed)
-        header.resizeSection(9, 120)  # Width for action buttons
-
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+        header.resizeSection(4, 120)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
-
         layout.addWidget(self.table)
+
+        self.results_label = QLabel("0 results")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+        filter_layout.addWidget(self.results_label)
+
         self.load_data()
 
-    def show_import_wizard(self):
-        wizard = ImportWizard(self)
-        wizard.exec_()
+    def show_add_enrollment_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Enrollment")
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        student_id_edit = QLineEdit()
+        class_combo = QComboBox()
+        term_combo = QComboBox()
+        self.populate_combos(class_combo, term_combo)
+        form_layout.addRow("Student ID:", student_id_edit)
+        form_layout.addRow("Class:", class_combo)
+        form_layout.addRow("Term:", term_combo)
+        layout.addLayout(form_layout)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(lambda: self.save_enrollment(dialog, student_id_edit, class_combo, term_combo))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def save_enrollment(self, dialog, student_id_edit, class_combo, term_combo):
+        student_id = student_id_edit.text().strip()
+        class_id = class_combo.currentData()
+        term_id = term_combo.currentData()
+
+        if not all([student_id, class_id, term_id]):
+            QMessageBox.warning(dialog, "Error", "Required fields are missing")
+            return
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
+                if c.fetchone()[0] == 0:
+                    QMessageBox.warning(dialog, "Error", "Student ID does not exist")
+                    return
+                c.execute("SELECT PayRate FROM Students WHERE StudentID = ?",(student_id,))
+                Payrate = c.fetchone()[0]
+                print(Payrate)
+                c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ?", (student_id, class_id, term_id))
+                if c.fetchone()[0] > 0:
+                    QMessageBox.warning(dialog, "Error", "Duplicate enrollment for this class and term")
+                    return
+                c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID, PayRate)
+                             VALUES (?, ?, ?, ?)""", (student_id, class_id, term_id,Payrate))
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Enrollment added successfully")
+                student_id_edit.clear()
+                class_combo.setCurrentIndex(0)
+                term_combo.setCurrentIndex(0)
+                self.load_data()
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to add enrollment: {str(e)}")
+
+    def load_data(self):
+        try:
+            with get_db_connection() as (conn, c):
+                query = """SELECT st.StudentTermID, s.StudentID, s.Student_Name, 
+                                cl.ClassName, t.TermName, s.FeePayer, st.PayRate
+                        FROM StudentTerm st
+                        LEFT JOIN Students s ON st.StudentID = s.StudentID
+                        LEFT JOIN Class cl ON st.ClassID = cl.ClassID
+                        LEFT JOIN Term t ON st.TermID = t.TermID"""
+                filters = []
+                params = ()
+                search_text = self.search_input.text().strip()
+                if search_text:
+                    filters.append("(s.StudentID LIKE ? OR s.Student_Name LIKE ?)")
+                    params += (f"%{search_text}%", f"%{search_text}%")
+                class_id = self.class_filter.currentData()
+                if class_id:
+                    filters.append("cl.ClassID = ?")
+                    params += (class_id,)
+                term_id = self.term_filter.currentData()
+                if term_id:
+                    filters.append("t.TermID = ?")
+                    params += (term_id,)
+                if filters:
+                    query += " WHERE " + " AND ".join(filters)
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                # Set column headers including Actions column
+                self.table.setColumnCount(7)  # Increased to 7 columns for Fee Payer
+                self.table.setHorizontalHeaderLabels(["Student ID", "Student Name", "Class", "Term", "Fee Payer", "PayRate", "Actions"])
+                
+                # Configure column resize modes
+                header = self.table.horizontalHeader()
+                for col in range(6):  # First 5 columns are data
+                    header.setSectionResizeMode(col, QHeaderView.Stretch)
+                header.setSectionResizeMode(6, QHeaderView.Fixed)  # Actions column fixed width
+                header.resizeSection(6, 220)  # Wider width for action buttons (3 buttons now)
+                
+                self.table.setRowCount(0)
+                for row_data in rows:
+                    row = self.table.rowCount()
+                    self.table.insertRow(row)
+                    self.table.setRowHeight(row, 75)
+                    
+                    # Add data columns (skip StudentTermID at index 0)
+                    for col, data in enumerate(row_data[1:7]):  # Columns 1-5: StudentID, Name, Class, Term, FeePayer
+                        item = QTableWidgetItem(str(data) if data else "")
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make non-editable
+                        self.table.setItem(row, col, item)
+                    
+                    student_term_id = row_data[0]  # StudentTermID for actions
+                    student_id = row_data[1]       # StudentID
+                    class_name = row_data[3]       # ClassName
+                    term_name = row_data[4]        # TermName
+                    
+                    # Create actions widget with proper sizing (now includes Pay Fee button)
+                    actions_widget = QWidget()
+                    actions_widget.setFixedWidth(210)  # Increased width for 3 buttons
+                    actions_layout = QHBoxLayout(actions_widget)
+                    actions_layout.setContentsMargins(5, 2, 5, 2)
+                    actions_layout.setSpacing(5)
+                    
+                    # Pay Fee button
+                    pay_btn = QPushButton("Pay Fee")
+                    pay_btn.setFixedSize(60, 28)
+                    pay_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #4299E1;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-size: 11px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #3182CE;
+                        }
+                        QPushButton:pressed {
+                            background-color: #2B6CB0;
+                        }
+                    """)
+                    pay_btn.clicked.connect(lambda checked, stid=student_term_id: self.pay_fee(stid))
+                    
+                    # Edit button
+                    edit_btn = QPushButton("Edit")
+                    edit_btn.setFixedSize(60, 28)
+                    edit_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #48BB78;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-size: 11px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #38A169;
+                        }
+                        QPushButton:pressed {
+                            background-color: #2F855A;
+                        }
+                    """)
+                    edit_btn.clicked.connect(lambda checked, tid=student_term_id: self.edit_enrollment(tid))
+                    
+                    # Delete button
+                    delete_btn = QPushButton("Delete")
+                    delete_btn.setFixedSize(60, 28)
+                    delete_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #F56565;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-size: 11px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #E53E3E;
+                        }
+                        QPushButton:pressed {
+                            background-color: #C53030;
+                        }
+                    """)
+                    delete_btn.clicked.connect(lambda checked, tid=student_term_id: self.delete_enrollment(tid))
+                    
+                    actions_layout.addWidget(pay_btn)
+                    actions_layout.addWidget(edit_btn)
+                    actions_layout.addWidget(delete_btn)
+                    actions_layout.addStretch()
+                    
+                    # Set the widget in the Actions column (column 5)
+                    self.table.setCellWidget(row, 5, actions_widget)
+                    
+                    # Set row height to accommodate buttons
+                    self.table.setRowHeight(row, 40)
+                
+                count = self.table.rowCount()
+                self.results_label.setText(f"{count} results")
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")    
+    
+    def edit_enrollment(self, student_term_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""SELECT st.StudentID, st.ClassID, st.TermID, s.Student_Name, cl.ClassName, t.TermName, st.PayRate
+                             FROM StudentTerm st
+                             LEFT JOIN Students s ON st.StudentID = s.StudentID
+                             LEFT JOIN Class cl ON st.ClassID = cl.ClassID
+                             LEFT JOIN Term t ON st.TermID = t.TermID
+                             WHERE st.StudentTermID = ?""", (student_term_id,))
+                data = c.fetchone()
+            if data:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Edit Enrollment")
+                layout = QVBoxLayout()
+                form_layout = QFormLayout()
+                student_id_label = QLabel(str(data[0]))
+                class_combo = QComboBox()
+                term_combo = QComboBox()
+                payrate_combo = QComboBox()
+                payrate_combo.addItem("Select PayRate",None)
+                payrate_combo.addItem("Full Scholarship",0)
+                payrate_combo.addItem("25% Scholarship",75)
+                payrate_combo.addItem("No Scholarship",100)
+                self.populate_combos(class_combo, term_combo)
+                class_combo.setCurrentIndex(class_combo.findData(data[1]))
+                term_combo.setCurrentIndex(term_combo.findData(data[2]))
+                payrate_combo.setCurrentIndex(payrate_combo.findData(data[6]))
+                form_layout.addRow("Student ID:", student_id_label)
+                form_layout.addRow("Class:", class_combo)
+                form_layout.addRow("Term:", term_combo)
+                form_layout.addRow("PayRate:",payrate_combo )
+                layout.addLayout(form_layout)
+                buttons = QHBoxLayout()
+                save_btn = QPushButton("Save")
+                save_btn.clicked.connect(lambda: self.save_edited_enrollment(dialog, student_term_id, class_combo, term_combo,payrate_combo))
+                close_btn = QPushButton("Close")
+                close_btn.clicked.connect(dialog.close)
+                buttons.addWidget(save_btn)
+                buttons.addWidget(close_btn)
+                layout.addLayout(buttons)
+                dialog.setLayout(layout)
+                dialog.exec_()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load enrollment: {str(e)}")
+
+    def save_edited_enrollment(self, dialog, student_term_id, class_combo, term_combo,payrate_combo):
+        class_id = class_combo.currentData()
+        term_id = term_combo.currentData()
+        payrate = payrate_combo.currentData()
+        if not all([class_id, term_id, payrate]):
+            QMessageBox.warning(dialog, "Error", "Required fields are missing")
+            return
+        try:
+            with get_db_connection() as (conn, c):
+                # Get student_id for duplicate check
+                c.execute("SELECT StudentID FROM StudentTerm WHERE StudentTermID = ?", (student_term_id,))
+                student_id = c.fetchone()[0]
+                # Check for duplicate
+                c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ? AND StudentTermID != ?", (student_id, class_id, term_id, student_term_id))
+                if c.fetchone()[0] > 0:
+                    QMessageBox.warning(dialog, "Error", "Duplicate enrollment for this class and term")
+                    return
+                c.execute("""UPDATE StudentTerm 
+                             SET ClassID = ?, TermID = ?, PayRate = ?
+                             WHERE StudentTermID = ?""", (class_id, term_id, payrate,student_term_id))
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Enrollment updated successfully")
+                dialog.close()
+                self.load_data()
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to update enrollment: {str(e)}")
+
+    def delete_enrollment(self, student_term_id):
+        reply = QMessageBox.question(self, 'Confirm Deletion', 
+                                     'Are you sure you want to delete this enrollment?',
+                                     QMessageBox.Yes | QMessageBox.No, 
+                                     QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM StudentTerm WHERE StudentTermID = ?", (student_term_id,))
+                    conn.commit()
+                    QMessageBox.information(self, "Success", "Enrollment deleted successfully")
+                    self.load_data()
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to delete enrollment: {str(e)}")
 
     def populate_combos(self, class_combo, term_combo):
         
@@ -208,474 +870,319 @@ class Student(QWidget):
             terms = c.fetchall()
             for t in terms:
                 term_combo.addItem(t[1], t[0])
-
-    def load_data(self):
-        try:
-            with get_db_connection() as (conn, c):
-                self.table.setRowCount(0)
-                
-                # Determine which table to query based on Student Only checkbox
-                if self.StudentOnlycheck.isChecked():
-                    # Query only Students table
-                    query = """SELECT s.StudentID, s.Student_Name, s.FeePayer, s.Status, 
-                                    s.Parent_Name, s.Parent_Contact, s.Parent_Contact2,
-                                    'N/A' as ClassName, 'N/A' as TermName, NULL as StudentTermID
-                            FROM Students s"""
-                else:
-                    # Query joined tables - include StudentTermID for deletion
-                    query = """SELECT s.StudentID, s.Student_Name, s.FeePayer, s.Status, 
-                                    s.Parent_Name, s.Parent_Contact, s.Parent_Contact2,
-                                    cl.ClassName, t.TermName, st.StudentTermID
-                            FROM Students s
-                            LEFT JOIN StudentTerm st ON s.StudentID = st.StudentID
-                            LEFT JOIN Class cl ON st.ClassID = cl.ClassID
-                            LEFT JOIN Term t ON st.TermID = t.TermID"""
-                
-                # Build filters
-                filters, params = self.build_filters()
-                
-                # Apply filters if any
-                if filters:
-                    query += " WHERE " + " AND ".join(filters)
-                
-                # Execute query
-                c.execute(query, params)
-                rows = c.fetchall()
-                
-                # Populate table
-                self.populate_table(rows)
-                
-                # Update results count
-                count = self.table.rowCount()
-                self.results_label.setText(f"{count} results")
-                
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Error loading data: {str(e)}")
-
-    def build_filters(self):
-        """Build filter conditions and parameters"""
-        filters = []
-        params = ()
-        
-        # Search filter
-        search_text = self.search_input.text().strip()
-        if search_text:
-            filters.append("(s.StudentID LIKE ? OR s.Student_Name LIKE ? OR s.Parent_Name LIKE ? OR s.Parent_Contact LIKE ? OR s.Parent_Contact2 LIKE ?)")
-            params += (f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%")
-        
-        # Class filter (only if not Student Only mode)
-        if not self.StudentOnlycheck.isChecked():
-            class_id = self.class_filter.currentData()
-            if class_id:
-                filters.append("cl.ClassID = ?")
-                params += (class_id,)
-        
-        # Term filter (only if not Student Only mode)
-        if not self.StudentOnlycheck.isChecked():
-            term_id = self.term_filter.currentData()
-            if term_id:
-                filters.append("t.TermID = ?")
-                params += (term_id,)
-        
-        # Status filter
-        status_filter = self.filterbyStatus.currentText()
-        if status_filter != "All Status":
-            filters.append("s.Status = ?")
-            params += (status_filter,)
-        
-        # Fee Payer filter
-        fee_payer_filter = self.Filter_FeePayer.currentText()
-        if fee_payer_filter != "All Fee Payers":
-            filters.append("s.FeePayer = ?")
-            params += (fee_payer_filter,)
-        
-        return filters, params
-
-    def populate_table(self, rows):
-        """Populate table with data and action buttons"""
-        self.table.setRowCount(0)
-        
-        for row_data in rows:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            
-            # Add data columns (skip the last column which is StudentTermID)
-            for col, data in enumerate(row_data[:9]):  # First 9 columns are data
-                item = QTableWidgetItem(str(data) if data else "")
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make non-editable
-                self.table.setItem(row, col, item)
-            
-            # Add action buttons - pass both StudentID and StudentTermID
-            student_id = row_data[0]  # First column is StudentID
-            student_term_id = row_data[9] if len(row_data) > 9 else None  # Tenth column is StudentTermID if exists
-            
-            self.add_action_buttons(row, student_id, student_term_id)
-
-    def add_action_buttons(self, row, student_id, student_term_id=None):
-        """Add edit and delete buttons to table row"""
+    
+    def add_action_buttons(self, row, student_term_id, student_id, class_name, term_name):
+        """Add action buttons including Pay Fee button"""
         actions_widget = QWidget()
+        actions_widget.setFixedWidth(220)  # Increased width for additional button
         actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(5, 5, 5, 5)
+        actions_layout.setContentsMargins(5, 2, 5, 2)
         actions_layout.setSpacing(5)
         
-        # Edit button - pass both IDs
+        # Pay Fee button
+        pay_btn = QPushButton("Pay Fee")
+        pay_btn.setFixedSize(60, 28)
+        pay_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QPushButton:pressed {
+                background-color: #2B6CB0;
+            }
+        """)
+        pay_btn.clicked.connect(lambda checked, stid=student_term_id: self.pay_fee(stid))
+        
+        # Edit button
         edit_btn = QPushButton("Edit")
-        edit_btn.setFixedSize(50, 25)
+        edit_btn.setFixedSize(60, 28)
         edit_btn.setStyleSheet("""
             QPushButton {
                 background-color: #48BB78;
                 color: white;
                 border: none;
-                border-radius: 3px;
+                border-radius: 4px;
                 font-size: 11px;
+                font-weight: bold;
             }
             QPushButton:hover {
                 background-color: #38A169;
             }
-            QPushButton:pressed {
-                background-color: #2F855A;
-            }
         """)
-        edit_btn.clicked.connect(lambda: self.edit_student(student_id, student_term_id))
+        edit_btn.clicked.connect(lambda checked, stid=student_term_id: self.edit_enrollment(stid))
         
-        # Delete button - pass both IDs
+        # Delete button
         delete_btn = QPushButton("Delete")
-        delete_btn.setFixedSize(50, 25)
+        delete_btn.setFixedSize(60, 28)
         delete_btn.setStyleSheet("""
             QPushButton {
                 background-color: #F56565;
                 color: white;
                 border: none;
-                border-radius: 3px;
+                border-radius: 4px;
                 font-size: 11px;
+                font-weight: bold;
             }
             QPushButton:hover {
                 background-color: #E53E3E;
             }
-            QPushButton:pressed {
-                background-color: #C53030;
-            }
         """)
-        delete_btn.clicked.connect(lambda: self.delete_student(student_id, student_term_id))
+        delete_btn.clicked.connect(lambda checked, stid=student_term_id: self.delete_enrollment(stid))
         
+        actions_layout.addWidget(pay_btn)
         actions_layout.addWidget(edit_btn)
         actions_layout.addWidget(delete_btn)
         actions_layout.addStretch()
         
-        # Set the widget in the table
-        self.table.setCellWidget(row, 9, actions_widget)
-    
-    def delete_student(self, student_id, student_term_id=None):
-        """Delete student with confirmation dialog"""
-        reply = QMessageBox.question(
-            self, 
-            'Confirm Deletion', 
-            f'Are you sure you want to delete student #{student_id}?',
-            QMessageBox.Yes | QMessageBox.No, 
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            try:
-                with get_db_connection() as (conn, c):
-                    if self.StudentOnlycheck.isChecked():
-                        # Delete only from Students table
-                        c.execute("DELETE FROM Students WHERE StudentID = ?", (student_id,))
-                        conn.commit()
-                        QMessageBox.information(self, "Success", "Student deleted successfully")
+        self.table.setCellWidget(row, 5, actions_widget)  # Adjust column index as needed
+
+    def pay_fee(self, student_term_id):
+        """Open fee payment dialog for a specific student term enrollment"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Get student term details including class and term
+                c.execute("""
+                    SELECT st.StudentTermID, st.ClassID, st.TermID, 
+                        s.StudentID, s.Student_Name, c.ClassName, t.TermName
+                    FROM StudentTerm st
+                    JOIN Students s ON st.StudentID = s.StudentID
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Term t ON st.TermID = t.TermID
+                    WHERE st.StudentTermID = ?
+                """, (student_term_id,))
+                enrollment_data = c.fetchone()
+                
+                if enrollment_data:
+                    # Get the fee amount for this class and term
+                    c.execute("""
+                        SELECT FeesID, Amount 
+                        FROM Fees 
+                        WHERE Class = ? AND Term = ?
+                    """, (enrollment_data[1], enrollment_data[2]))  # ClassID and TermID
+                    
+                    fee_data = c.fetchone()
+                    if fee_data:
+                        fees_id, amount_due = fee_data
+                        self.show_payment_dialog(student_term_id, fees_id, amount_due, enrollment_data)
                     else:
-                        # We're in joined view mode - need to determine what to delete
-                        if student_term_id:
-                            # Delete from StudentTerm table only (keep student record)
-                            c.execute("DELETE FROM StudentTerm WHERE StudentTermID = ?", (student_term_id,))
-                            conn.commit()
-                            QMessageBox.information(self, "Success", "Student term enrollment deleted successfully")
-                        else:
-                            # This student doesn't have a term enrollment, so delete the student
-                            c.execute("DELETE FROM Students WHERE StudentID = ?", (student_id,))
-                            conn.commit()
-                            QMessageBox.information(self, "Success", "Student deleted successfully")
+                        QMessageBox.warning(self, "Error", "No fee structure found for this class and term combination.")
+                else:
+                    QMessageBox.warning(self, "Error", "Enrollment record not found.")
                     
-                    self.load_data()  # Refresh the table
-                    
-            except sqlite3.Error as e:
-                if 'conn' in locals():
-                    conn.rollback()
-                QMessageBox.critical(self, "Error", f"Failed to delete: {str(e)}")
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load fee information: {str(e)}")
 
-    def show_add_student_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add Student")
-        layout = QVBoxLayout()
-        form_layout = QFormLayout()
-        id_edit = QLineEdit()
-        name_edit = QLineEdit()
-        feepayer_edit = QLineEdit()
-        status_combo = QComboBox()
-        status_combo.addItems(["Full Scholarship", "75% Scholarship", "No Scholarship"])
-        parent_name_edit = QLineEdit()
-        contact_edit = QLineEdit()
-        contact2_edit = QLineEdit()
-        class_combo = QComboBox()
-        term_combo = QComboBox()
-        self.populate_combos(class_combo, term_combo)
-        form_layout.addRow("Student ID:", id_edit)
-        form_layout.addRow("Name:", name_edit)
-        form_layout.addRow("Fee Payer:", feepayer_edit)
-        form_layout.addRow("Status:", status_combo)
-        form_layout.addRow("Parent Name:", parent_name_edit)
-        form_layout.addRow("Parent Contact:", contact_edit)
-        form_layout.addRow("Parent Contact 2:", contact2_edit)
-        form_layout.addRow("Class:", class_combo)
-        form_layout.addRow("Term:", term_combo)
-        layout.addLayout(form_layout)
-        buttons = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_student(dialog, id_edit, name_edit, feepayer_edit, status_combo, parent_name_edit, contact_edit, contact2_edit, class_combo, term_combo))
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
-        buttons.addWidget(save_btn)
-        buttons.addWidget(close_btn)
-        layout.addLayout(buttons)
-        dialog.setLayout(layout)
-        dialog.exec_()
-
-    def save_student(self, dialog, id_edit, name_edit, feepayer_edit, status_combo, parent_name_edit, contact_edit, contact2_edit, class_combo, term_combo):
-        student_id = id_edit.text().strip()
-        name = name_edit.text().strip()
-        feepayer = feepayer_edit.text().strip()
-        status = status_combo.currentText()
-        parent_name = parent_name_edit.text().strip()
-        contact = contact_edit.text().strip()
-        contact2 = contact2_edit.text().strip()
-        class_id = class_combo.currentData()
-        term_id = term_combo.currentData()
-        if not all([student_id, name, feepayer, status, parent_name, contact, class_id, term_id]):
-            QMessageBox.warning(dialog, "Error", "Required fields are missing")
-            return
-        
-        
+    def show_payment_dialog(self, student_term_id, fees_id, amount_due, enrollment_data):
+        """Show payment dialog with PayRate discount and validation"""
         try:
             with get_db_connection() as (conn, c):
-                c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
-                if c.fetchone()[0] > 0:
-                    QMessageBox.warning(dialog, "Error", "Duplicate Student ID")
-                    return
-                c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ?", (student_id, class_id, term_id))
-                if c.fetchone()[0] > 0:
-                    QMessageBox.warning(dialog, "Error", f"Student is already enrolled in {class_combo.currentText()} for {term_combo.currentText()}")
-                    return
-                c.execute("""INSERT INTO Students (StudentID, Student_Name, FeePayer, Status, Parent_Name, Parent_Contact, Parent_Contact2)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)""", (student_id, name, feepayer, status, parent_name, contact, contact2))
-                c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID)
-                            VALUES (?, ?, ?)""", (student_id, class_id, term_id))
+                # Get the PayRate for this student term
+                c.execute("SELECT PayRate FROM StudentTerm WHERE StudentTermID = ?", (student_term_id,))
+                pay_rate_result = c.fetchone()
+                pay_rate = pay_rate_result[0] if pay_rate_result else 100  # Default to 100% if not found
+                
+                # Calculate amount due after discount
+                amount_after_discount = amount_due * (pay_rate / 100)
+                
+                # Get already paid amount for this student term
+                c.execute("""
+                    SELECT COALESCE(SUM(AmountPaid), 0) 
+                    FROM FeesPayment 
+                    WHERE StudentTermID = ?
+                """, (student_term_id,))
+                already_paid = c.fetchone()[0]
+                
+                # Calculate remaining amount to pay
+                remaining_amount = max(0, amount_after_discount - already_paid)
+                
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Fee Payment")
+                dialog.setFixedSize(550, 500)
+                
+                layout = QVBoxLayout(dialog)
+                
+                # Student information (read-only)
+                info_group = QGroupBox("Student Information")
+                info_layout = QFormLayout(info_group)
+                
+                student_info = QLabel(f"{enrollment_data[4]} ({enrollment_data[3]})")
+                class_info = QLabel(enrollment_data[5])
+                term_info = QLabel(enrollment_data[6])
+                pay_rate_label = QLabel(f"{pay_rate}%")
+                
+                info_layout.addRow("Student:", student_info)
+                info_layout.addRow("Class:", class_info)
+                info_layout.addRow("Term:", term_info)
+                info_layout.addRow("Pay Rate:", pay_rate_label)
+                
+                layout.addWidget(info_group)
+                
+                # Fee information
+                fee_group = QGroupBox("Fee Details")
+                fee_layout = QFormLayout(fee_group)
+                
+                original_amount_label = QLabel(f"{amount_due:,.2f}")
+                discounted_amount_label = QLabel(f"{amount_after_discount:,.2f}")
+                already_paid_label = QLabel(f"{already_paid:,.2f}")
+                remaining_label = QLabel(f"{remaining_amount:,.2f}")
+                
+                # Style remaining amount based on value
+                if remaining_amount > 0:
+                    remaining_label.setStyleSheet("color: #E53E3E; font-weight: bold;")
+                else:
+                    remaining_label.setStyleSheet("color: #38A169; font-weight: bold;")
+                
+                fee_layout.addRow("Original Amount:", original_amount_label)
+                fee_layout.addRow("After Discount:", discounted_amount_label)
+                fee_layout.addRow("Already Paid:", already_paid_label)
+                fee_layout.addRow("Remaining to Pay:", remaining_label)
+                
+                layout.addWidget(fee_group)
+                
+                # Payment information
+                payment_group = QGroupBox("Payment Details")
+                payment_layout = QFormLayout(payment_group)
+                
+                amount_paid_input = QLineEdit()
+                amount_paid_input.setValidator(QDoubleValidator(0, remaining_amount, 2))
+                amount_paid_input.setPlaceholderText(f"Max: {remaining_amount:,.2f}")
+                
+                # Real-time validation
+                amount_paid_input.textChanged.connect(
+                    lambda: self.validate_payment_amount(amount_paid_input, remaining_amount)
+                )
+                
+                transaction_date = QDateEdit()
+                transaction_date.setDate(QDate.currentDate())
+                transaction_date.setCalendarPopup(True)
+                transaction_date.setDisplayFormat("yyyy-MM-dd")
+                
+                reference_input = QLineEdit()
+                reference_input.setPlaceholderText("Transaction reference number")
+                
+                payment_layout.addRow("Amount to Pay:", amount_paid_input)
+                payment_layout.addRow("Transaction Date:", transaction_date)
+                payment_layout.addRow("Reference Number:", reference_input)
+                
+                layout.addWidget(payment_group)
+                
+                # Buttons
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                button_box.accepted.connect(lambda: self.process_payment(
+                    dialog, student_term_id, fees_id, amount_paid_input.text(), 
+                    transaction_date.date().toString("yyyy-MM-dd"), reference_input.text(),
+                    remaining_amount
+                ))
+                button_box.rejected.connect(dialog.reject)
+                
+                layout.addWidget(button_box)
+                
+                # Disable OK button if no remaining amount
+                if remaining_amount <= 0:
+                    button_box.button(QDialogButtonBox.Ok).setEnabled(False)
+                    button_box.button(QDialogButtonBox.Ok).setToolTip("No remaining amount to pay")
+                
+                dialog.exec_()
+                
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load payment information: {str(e)}")
+
+    def validate_payment_amount(self, amount_input, max_amount):
+        """Validate that payment amount doesn't exceed remaining amount"""
+        try:
+            amount_text = amount_input.text().strip()
+            if not amount_text:
+                amount_input.setStyleSheet("")
+                return
+                
+            amount = float(amount_text)
+            
+            if amount > max_amount:
+                amount_input.setStyleSheet("color: red; border: 1px solid red;")
+                amount_input.setToolTip(f"Amount cannot exceed {max_amount:,.2f}")
+            elif amount <= 0:
+                amount_input.setStyleSheet("color: red; border: 1px solid red;")
+                amount_input.setToolTip("Amount must be greater than zero")
+            else:
+                amount_input.setStyleSheet("color: green;")
+                amount_input.setToolTip("")
+                
+        except ValueError:
+            amount_input.setStyleSheet("color: red; border: 1px solid red;")
+            amount_input.setToolTip("Please enter a valid number")
+
+    def process_payment(self, dialog, student_term_id, fees_id, amount_paid_str, 
+                    transaction_date, reference_number, max_amount):
+        """Process the fee payment with validation"""
+        try:
+            if not amount_paid_str.strip():
+                QMessageBox.warning(dialog, "Error", "Please enter the amount to pay.")
+                return
+                
+            amount_paid = float(amount_paid_str)
+            
+            if amount_paid <= 0:
+                QMessageBox.warning(dialog, "Error", "Amount paid must be greater than zero.")
+                return
+                
+            if amount_paid > max_amount:
+                QMessageBox.warning(dialog, "Error", 
+                                f"Amount paid ({amount_paid:,.2f}) cannot exceed remaining amount ({max_amount:,.2f}).")
+                return
+            
+            # Get current datetime for DoneOn field
+            done_on = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+            
+            with get_db_connection() as (conn, c):
+                # Insert payment record
+                c.execute("""
+                    INSERT INTO FeesPayment 
+                    (StudentTermID, FeesID, AmountPaid, TransactionDate, ReferenceNumber, DoneOn)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (student_term_id, fees_id, amount_paid, transaction_date, reference_number, done_on))
+                
                 conn.commit()
-                QMessageBox.information(dialog, "Success", "Student added successfully")
-                id_edit.clear()
-                name_edit.clear()
-                feepayer_edit.clear()
-                parent_name_edit.clear()
-                contact_edit.clear()
-                contact2_edit.clear()
-                class_combo.setCurrentIndex(0)
-                term_combo.setCurrentIndex(0)
-                status_combo.setCurrentIndex(0)
-                self.load_data()
-        except Exception as e:
-            conn.rollback()
-            QMessageBox.warning(dialog, "Error", f"Failed to add student: {str(e)}")
-        finally:
-            conn.close()
-    
-    def edit_student(self, student_id, student_term_id=None):
-        """Edit student - handles both Student Only and joined view modes"""
-        # Check if we're in Student Only mode or if no term enrollment exists
-        if self.StudentOnlycheck.isChecked() or student_term_id is None:
-            # Edit only student information
-            self.edit_student_info(student_id)
-        else:
-            # Edit both student and student term information
-            self.edit_student_and_term(student_id, student_term_id)
-
-    def edit_student_info(self, student_id):
-        """Edit only student information (no term enrollment)"""
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT * FROM Students WHERE StudentID = ?", (student_id,))
-                student_data = c.fetchone()
-            
-            if student_data:
-                dialog = QDialog(self)
-                dialog.setWindowTitle("Edit Student")
-                dialog.setModal(True)
-                dialog.setMinimumWidth(500)
                 
-                layout = QVBoxLayout(dialog)
+                # Check if fully paid
+                c.execute("""
+                    SELECT COALESCE(SUM(AmountPaid), 0) 
+                    FROM FeesPayment 
+                    WHERE StudentTermID = ?
+                """, (student_term_id,))
+                total_paid = c.fetchone()[0]
                 
-                form_layout = QFormLayout()
+                c.execute("SELECT Amount FROM Fees WHERE FeesID = ?", (fees_id,))
+                original_amount = c.fetchone()[0]
                 
-                name_edit = QLineEdit(student_data[1])
-                fee_payer_combo = QComboBox()
-                fee_payer_combo.addItems(["School", "Parents", "Sponsor"])
-                fee_payer_combo.setCurrentText(student_data[2])
-                status_combo = QComboBox()
-                status_combo.addItems(["Full Scholarship", "75% Scholarship", "No Scholarship"])
-                status_combo.setCurrentText(student_data[3])
-                parent_name_edit = QLineEdit(student_data[4])
-                parent_contact_edit = QLineEdit(student_data[5])
-                parent_contact2_edit = QLineEdit(student_data[6] if student_data[6] else "")
+                c.execute("SELECT PayRate FROM StudentTerm WHERE StudentTermID = ?", (student_term_id,))
+                pay_rate = c.fetchone()[0]
                 
-                form_layout.addRow("Student Name:", name_edit)
-                form_layout.addRow("Fee Payer:", fee_payer_combo)
-                form_layout.addRow("Status:", status_combo)
-                form_layout.addRow("Parent Name:", parent_name_edit)
-                form_layout.addRow("Parent Contact:", parent_contact_edit)
-                form_layout.addRow("Parent Contact 2:", parent_contact2_edit)
+                amount_after_discount = original_amount * (pay_rate / 100)
                 
-                layout.addLayout(form_layout)
+                if total_paid >= amount_after_discount:
+                    message = "Payment recorded successfully! ✅ Student has fully paid their fees."
+                else:
+                    remaining = amount_after_discount - total_paid
+                    message = f"Payment recorded successfully! Remaining balance: {remaining:,.2f}"
                 
-                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                button_box.accepted.connect(dialog.accept)
-                button_box.rejected.connect(dialog.reject)
-                layout.addWidget(button_box)
+                QMessageBox.information(dialog, "Success", message)
+                dialog.accept()
                 
-                if dialog.exec_() == QDialog.Accepted:
-                    try:
-                        with get_db_connection() as (conn, c):
-                            c.execute("""UPDATE Students 
-                                        SET Student_Name=?, FeePayer=?, Status=?, 
-                                            Parent_Name=?, Parent_Contact=?, Parent_Contact2=?
-                                        WHERE StudentID=?""",
-                                    (name_edit.text(), fee_payer_combo.currentText(), status_combo.currentText(),
-                                    parent_name_edit.text(), parent_contact_edit.text(), parent_contact2_edit.text(),
-                                    student_id))
-                            conn.commit()
-                            QMessageBox.information(self, "Success", "Student updated successfully")
-                            self.load_data()
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Failed to update student: {str(e)}")
-                        
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Please enter a valid amount.")
         except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to load student data: {str(e)}")
+            QMessageBox.critical(dialog, "Database Error", f"Failed to record payment: {str(e)}")
 
-    def edit_student_and_term(self, student_id, student_term_id):
-        """Edit both student information and term enrollment"""
-        try:
-            with get_db_connection() as (conn, c):
-                # Get student data
-                c.execute("SELECT * FROM Students WHERE StudentID = ?", (student_id,))
-                student_data = c.fetchone()
-                
-                # Get student term data using StudentTermID
-                c.execute("""SELECT st.ClassID, st.TermID, cl.ClassName, t.TermName 
-                            FROM StudentTerm st
-                            LEFT JOIN Class cl ON st.ClassID = cl.ClassID
-                            LEFT JOIN Term t ON st.TermID = t.TermID
-                            WHERE st.StudentTermID = ?""", (student_term_id,))
-                term_data = c.fetchone()
-            
-            if student_data:
-                dialog = QDialog(self)
-                dialog.setWindowTitle("Edit Student and Term Enrollment")
-                dialog.setModal(True)
-                dialog.setMinimumWidth(500)
-                
-                layout = QVBoxLayout(dialog)
-                
-                student_group = QGroupBox("Student Information")
-                student_layout = QFormLayout(student_group)
-                
-                name_edit = QLineEdit(student_data[1])
-                fee_payer_combo = QComboBox()
-                fee_payer_combo.addItems(["School", "Parents", "Sponsor"])
-                fee_payer_combo.setCurrentText(student_data[2])
-                status_combo = QComboBox()
-                status_combo.addItems(["Full Scholarship", "75% Scholarship", "No Scholarship"])
-                status_combo.setCurrentText(student_data[3])
-                parent_name_edit = QLineEdit(student_data[4])
-                parent_contact_edit = QLineEdit(student_data[5])
-                parent_contact2_edit = QLineEdit(student_data[6] if student_data[6] else "")
-                
-                student_layout.addRow("Student Name:", name_edit)
-                student_layout.addRow("Fee Payer:", fee_payer_combo)
-                student_layout.addRow("Status:", status_combo)
-                student_layout.addRow("Parent Name:", parent_name_edit)
-                student_layout.addRow("Parent Contact:", parent_contact_edit)
-                student_layout.addRow("Parent Contact 2:", parent_contact2_edit)
-                
-                layout.addWidget(student_group)
-                
-                term_group = QGroupBox("Term Enrollment Information")
-                term_layout = QFormLayout(term_group)
-                
-                class_combo = QComboBox()
-                class_combo.addItem("Select Class", None)
-                
-                term_combo = QComboBox()
-                term_combo.addItem("Select Term", None)
-                
-                # Load classes and terms
-                try:
-                    with get_db_connection() as (conn, c):
-                        c.execute("SELECT ClassID, ClassName FROM Class")
-                        classes = c.fetchall()
-                        for cl in classes:
-                            class_combo.addItem(cl[1], cl[0])
-                        
-                        c.execute("SELECT TermID, TermName FROM Term")
-                        terms = c.fetchall()
-                        for t in terms:
-                            term_combo.addItem(t[1], t[0])
-                except sqlite3.Error as e:
-                    QMessageBox.critical(self, "Database Error", f"Failed to load classes/terms: {str(e)}")
-                    return
-                
-                # Set current values if term data exists
-                if term_data:
-                    class_combo.setCurrentIndex(class_combo.findData(term_data[0]))
-                    term_combo.setCurrentIndex(term_combo.findData(term_data[1]))
-                
-                term_layout.addRow("Class:", class_combo)
-                term_layout.addRow("Term:", term_combo)
-                
-                layout.addWidget(term_group)
-                
-                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                button_box.accepted.connect(dialog.accept)
-                button_box.rejected.connect(dialog.reject)
-                layout.addWidget(button_box)
-                
-                if dialog.exec_() == QDialog.Accepted:
-                    try:
-                        with get_db_connection() as (conn, c):
-                            # Update student information
-                            c.execute("""UPDATE Students 
-                                        SET Student_Name=?, FeePayer=?, Status=?, 
-                                            Parent_Name=?, Parent_Contact=?, Parent_Contact2=?
-                                        WHERE StudentID=?""",
-                                    (name_edit.text(), fee_payer_combo.currentText(), status_combo.currentText(),
-                                    parent_name_edit.text(), parent_contact_edit.text(), parent_contact2_edit.text(),
-                                    student_id))
-                            
-                            # Update term enrollment
-                            class_id = class_combo.currentData()
-                            term_id = term_combo.currentData()
-                            
-                            if class_id and term_id:
-                                c.execute("""UPDATE StudentTerm 
-                                            SET ClassID = ?, TermID = ? 
-                                            WHERE StudentTermID = ?""",
-                                        (class_id, term_id, student_term_id))
-                            
-                            conn.commit()
-                            QMessageBox.information(self, "Success", "Student and term enrollment updated successfully")
-                            self.load_data()
-                            
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Failed to update: {str(e)}")
-                        
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to load student data: {str(e)}")
+def show_import_wizard(self):
+    wizard = ImportWizard(self)
+    wizard.exec_()
 
 class ImportWizard(QWizard):
     def __init__(self, parent=None):
@@ -771,39 +1278,67 @@ class ImportWizard(QWizard):
         page.setTitle("Configure Enrollment")
         layout = QVBoxLayout()
         
+        # Academic Year selection
+        year_label = QLabel("Select Academic Year:")
+        self.academic_combo = QComboBox()
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+                years = c.fetchall()
+                for yid, yname in years:
+                    self.academic_combo.addItem(yname if yname else f"Year {yid}", yid)
+        except sqlite3.Error as e:
+            QMessageBox.warning(self, "Database Error", f"Failed to load academic years: {str(e)}")
+        
+        self.academic_combo.currentIndexChanged.connect(self.load_terms_and_classes)
+        
+        layout.addWidget(year_label)
+        layout.addWidget(self.academic_combo)
+        
         # Term selection
         term_label = QLabel("Select Term:")
         self.term_combo = QComboBox()
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT TermID, TermName FROM Term")
-                terms = c.fetchall()
-                for tid, tname in terms:
-                    self.term_combo.addItem(tname if tname else f"Term {tid}", tid)
-        except sqlite3.Error as e:
-            QMessageBox.warning(self, "Database Error", f"Failed to load terms: {str(e)}")
-        
         layout.addWidget(term_label)
         layout.addWidget(self.term_combo)
         
         # Class selection
         class_label = QLabel("Select Class:")
         self.class_combo = QComboBox()
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT ClassID, ClassName FROM Class")
-                classes = c.fetchall()
-                for cid, cname in classes:
-                    self.class_combo.addItem(cname if cname else f"Class {cid}", cid)
-        except sqlite3.Error as e:
-            QMessageBox.warning(self, "Database Error", f"Failed to load classes: {str(e)}")
-        
         layout.addWidget(class_label)
         layout.addWidget(self.class_combo)
         
         page.setLayout(layout)
+        
+        # Preselect first year if available
+        if self.academic_combo.count() > 0:
+            self.academic_combo.setCurrentIndex(0)
+        
         return page
 
+    def load_terms_and_classes(self):
+        year_id = self.academic_combo.currentData()
+        if year_id is None:
+            return
+        
+        self.term_combo.clear()
+        self.class_combo.clear()
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Load terms for selected year
+                c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ?", (year_id,))
+                terms = c.fetchall()
+                for tid, tname in terms:
+                    self.term_combo.addItem(tname if tname else f"Term {tid}", tid)
+                
+                # Load classes for selected year
+                c.execute("SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ?", (year_id,))
+                classes = c.fetchall()
+                for cid, cname in classes:
+                    self.class_combo.addItem(cname if cname else f"Class {cid}", cid)
+        except sqlite3.Error as e:
+            QMessageBox.warning(self, "Database Error", f"Failed to load terms/classes: {str(e)}")
+    
     def create_preview_page(self):
         page = QWizardPage()
         page.setTitle("Preview Data")
@@ -837,7 +1372,7 @@ class ImportWizard(QWizard):
             self.mode = self.mode_group.checkedId()
             
             if self.mode == 1:  # New students
-                required_cols = ['StudentID', 'Student_Name', 'FeePayer', 'Status', 'Parent_Name', 'Parent_Contact']
+                required_cols = ['StudentID', 'Student_Name', 'FeePayer', 'PayRate', 'Parent_Name', 'Parent_Contact']
                 if not all(col in self.data.columns for col in required_cols):
                     raise ValueError("Missing required columns for new students: " + ", ".join(required_cols))
             elif self.mode == 2:  # Enrollment only
@@ -884,7 +1419,7 @@ class ImportWizard(QWizard):
                         
                         if self.mode == 1:  # New students with enrollment
                             # Validation: Check required fields not null/empty
-                            required_cols_new = ['StudentID', 'Student_Name', 'FeePayer', 'Status', 'Parent_Name', 'Parent_Contact']
+                            required_cols_new = ['StudentID', 'Student_Name', 'FeePayer', 'PayRate', 'Parent_Name', 'Parent_Contact']
                             if any(pd.isnull(row.get(col)) or not str(row.get(col)).strip() for col in required_cols_new):
                                 raise ValueError("Missing or empty required field.")
                             
@@ -898,13 +1433,13 @@ class ImportWizard(QWizard):
                                 sid,
                                 str(row['Student_Name']).strip(),
                                 str(row['FeePayer']).strip(),
-                                str(row['Status']).strip(),
+                                str(row['PayRate']).strip(),
                                 str(row['Parent_Name']).strip(),
                                 str(row['Parent_Contact']).strip(),
                                 str(row.get('Parent_Contact2', '')).strip() or None
                             )
                             c.execute("""
-                                INSERT INTO Students (StudentID, Student_Name, FeePayer, Status, Parent_Name, Parent_Contact, Parent_Contact2)
+                                INSERT INTO Students (StudentID, Student_Name, FeePayer, PayRate, Parent_Name, Parent_Contact, Parent_Contact2)
                                 VALUES (?, ?, ?, ?, ?, ?, ?)
                             """, values)
                             
@@ -965,6 +1500,8 @@ class ImportWizard(QWizard):
                                    f"Successfully imported {success_count} records.")
         
         super().accept()
+
+### Student Management End ###
 
 class Window(QMainWindow):
     def __init__(self):
@@ -1061,7 +1598,7 @@ class Window(QMainWindow):
         self.body = QStackedWidget()
         self.AcademicYearTermPage = AcademicYearTerm()
         self.DashboardPage = Dashboard()
-        self.StudentPage = Student()
+        self.StudentPage = StudentManagement()
         self.ClassPage = Class()
         self.FeesPage = Fees()
         self.UniformsPage = Uniforms()
@@ -2609,16 +3146,812 @@ class Class(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", "An error occurred while deleting the class.")
 
+#### Fees Management Pages #####
 class Fees(QWidget):
     def __init__(self):
         super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QPushButton#nav_btn {
+                background-color: transparent;
+                color: #4299E1;
+                padding: 5px 10px;
+                font-size: 16px;
+            }
+            QPushButton#nav_btn:selected {
+                background-color: #EDF2F7;
+                font-weight: bold;
+            }
+            QLineEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QCheckBox {
+                spacing: 5px;
+                font-size: 14px;
+                color: #2D3748;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1px solid #E0E3E7;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4299E1;
+                border: 1px solid #4299E1;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+        """)
         layout = QVBoxLayout(self)
-        layout.addStretch()
-        label = QLabel("Fees Page")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("font-size: 28px; font-weight: bold; color: #2D3748;")
-        layout.addWidget(label)
-        layout.addStretch()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(15)
+
+        # Navigation links
+        nav_layout = QHBoxLayout()
+        nav_layout.setSpacing(20)
+        self.management_btn = QPushButton("Fees Management")
+        self.management_btn.setObjectName("nav_btn")
+        self.management_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        self.payment_btn = QPushButton("Fees Payment")
+        self.payment_btn.setObjectName("nav_btn")
+        self.payment_btn.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        nav_layout.addWidget(self.management_btn)
+        nav_layout.addWidget(self.payment_btn)
+        nav_layout.addStretch()
+        layout.addLayout(nav_layout)
+
+        # Stacked widget for sub-pages
+        self.stack = QStackedWidget()
+        self.management_page = FeesManagementPage()
+        self.payment_page = FeesPaymentPage()
+        self.stack.addWidget(self.management_page)
+        self.stack.addWidget(self.payment_page)
+        layout.addWidget(self.stack)
+
+        # Initial selection
+        self.management_btn.setStyleSheet("font-weight: bold; background-color: #EDF2F7;")
+        self.stack.setCurrentIndex(0)
+
+class FeesManagementPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Fees Management")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+
+        # Filters and add buttons
+        filter_layout = QHBoxLayout()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Search...")
+        search_input.setMaximumWidth(200)
+        # Add more filters as needed, e.g., class_filter, term_filter
+        filter_layout.addWidget(search_input)
+        filter_layout.addStretch()
+        add_btn = QPushButton("Add Fee Structure")
+        add_btn.clicked.connect(self.show_add_fee_dialog)
+        import_btn = QPushButton("Import Fees")
+        # import_btn.clicked.connect(self.show_import_wizard)
+        filter_layout.addWidget(add_btn)
+        filter_layout.addWidget(import_btn)
+        layout.addLayout(filter_layout)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)  
+        self.table.setHorizontalHeaderLabels(["Year", "Term","Class","Amount", "Actions"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        # Load data (placeholder)
+        self.load_data()
+
+    def load_data(self):
+        try:
+            with get_db_connection() as (conn, c):
+                self.table.setRowCount(0)
+                
+                # Query to join all four tables and get the required information
+                query = """
+                    SELECT 
+                        f.FeesID,
+                        ay.Year AS AcademicYear,
+                        t.TermName AS Term,
+                        c.ClassName AS Class,
+                        f.Amount
+                    FROM Fees f
+                    JOIN Class c ON f.Class = c.ClassID
+                    JOIN Term t ON f.Term = t.TermID
+                    JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                """
+                
+                # Build filters if needed (you can add filter functionality later)
+                filters = []
+                params = []
+                
+                # Example: Add search filter if needed
+                search_text = self.Search_Input.text().strip() if hasattr(self, 'Search_Input') else ""
+                if search_text:
+                    filters.append("(ay.Year LIKE ? OR t.TermName LIKE ? OR c.ClassName LIKE ? OR f.Amount LIKE ?)")
+                    params.extend([f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%"])
+                
+                # Apply filters if any
+                if filters:
+                    query += " WHERE " + " AND ".join(filters)
+                
+                # Add ordering
+                query += " ORDER BY ay.Year, t.TermName, c.ClassName"
+                
+                # Execute query
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                # Set table columns
+                self.table.setColumnCount(5)  # Year, Term, Class, Amount, Actions
+                self.table.setHorizontalHeaderLabels(["Academic Year", "Term", "Class", "Amount", "Actions"])
+                
+                # Populate table
+                for row_data in rows:
+                    row = self.table.rowCount()
+                    self.table.insertRow(row)
+                    
+                    # Add data columns
+                    for col, data in enumerate(row_data[1:5]):  # Skip FeesID (index 0)
+                        item = QTableWidgetItem(str(data))
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        self.table.setItem(row, col, item)
+                    
+                    # Add action buttons - pass FeesID for edit/delete operations
+                    fees_id = row_data[0]  # First column is FeesID
+                    self.add_action_buttons(row, fees_id)
+                
+                # Update results count
+                count = self.table.rowCount()
+                if hasattr(self, 'results_label'):
+                    self.results_label.setText(f"{count} results")
+                
+                # Ensure proper column resizing
+                self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)  # Actions column fixed width
+                self.table.setColumnWidth(4, 120)  # Width for action buttons
+                
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Error loading fees data: {str(e)}")
+
+    def add_action_buttons(self, row, fees_id):
+        """Add edit and delete buttons to table row for fees"""
+        actions_widget = QWidget()
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(5, 5, 5, 5)
+        actions_layout.setSpacing(5)
+        
+        # Edit button
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedSize(50, 25)
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #48BB78;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #38A169;
+            }
+            QPushButton:pressed {
+                background-color: #2F855A;
+            }
+        """)
+        edit_btn.clicked.connect(lambda: self.edit_fee(fees_id))
+        
+        # Delete button
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedSize(50, 25)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F56565;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #E53E3E;
+            }
+            QPushButton:pressed {
+                background-color: #C53030;
+            }
+        """)
+        delete_btn.clicked.connect(lambda: self.delete_fee(fees_id))
+        
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+        
+        # Set the widget in the Actions column (column 4)
+        self.table.setCellWidget(row, 4, actions_widget)
+
+    def edit_fee(self, fees_id):
+        """Edit fee record"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Get current fee data
+                c.execute("""
+                    SELECT f.FeesID, f.Class, f.Term, f.Amount, 
+                        c.ClassName, t.TermName, ay.Year,ay.AcademicYearID
+                    FROM Fees f
+                    JOIN Class c ON f.Class = c.ClassID
+                    JOIN Term t ON f.Term = t.TermID
+                    JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                    WHERE f.FeesID = ?
+                """, (fees_id,))
+                fee_data = c.fetchone()
+            
+            if fee_data:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Edit Fee")
+                dialog.setModal(True)
+                dialog.setMinimumWidth(500)
+                
+                layout = QVBoxLayout(dialog)
+                form_layout = QFormLayout()
+                
+                # Academic Year (read-only since it's determined by Class)
+                year_label = QLabel(fee_data[6])  # Year from AcademicYear
+                form_layout.addRow("Academic Year:", year_label)
+                
+                # Class selection
+                class_combo = QComboBox()
+                class_combo.addItem("Select Class", None)
+                
+                # Term selection
+                term_combo = QComboBox()
+                term_combo.addItem("Select Term", None)
+                
+                # Amount input
+                amount_edit = QLineEdit(str(fee_data[3]))
+                amount_edit.setValidator(QDoubleValidator(0, 1000000, 2))  # Allow decimal values
+                
+                # Load classes and terms
+                with get_db_connection() as (conn, c):
+                    # Load classes
+                    c.execute(f"SELECT ClassID, ClassName FROM Class  WHERE AcademicYear ={fee_data[7]} ORDER BY ClassName")
+                    classes = c.fetchall()
+                    for class_id, class_name in classes:
+                        class_combo.addItem(class_name, class_id)
+                    
+                    # Load terms
+                    c.execute(f"SELECT TermID, TermName FROM Term  WHERE AcademicYear ={fee_data[7]} ORDER BY TermName")
+                    terms = c.fetchall()
+                    for term_id, term_name in terms:
+                        term_combo.addItem(term_name, term_id)
+                
+                # Set current values
+                class_combo.setCurrentIndex(class_combo.findData(fee_data[1]))
+                term_combo.setCurrentIndex(term_combo.findData(fee_data[2]))
+                
+                form_layout.addRow("Class:", class_combo)
+                form_layout.addRow("Term:", term_combo)
+                form_layout.addRow("Amount:", amount_edit)
+                
+                layout.addLayout(form_layout)
+                
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                button_box.accepted.connect(dialog.accept)
+                button_box.rejected.connect(dialog.reject)
+                layout.addWidget(button_box)
+                
+                if dialog.exec_() == QDialog.Accepted:
+                    try:
+                        with get_db_connection() as (conn, c):
+                            c.execute("""
+                                UPDATE Fees 
+                                SET Class = ?, Term = ?, Amount = ?
+                                WHERE FeesID = ?
+                            """, (
+                                class_combo.currentData(),
+                                term_combo.currentData(),
+                                float(amount_edit.text()),
+                                fees_id
+                            ))
+                            conn.commit()
+                            QMessageBox.information(self, "Success", "Fee updated successfully")
+                            self.load_data()
+                    except Exception as e:
+                        QMessageBox.critical(self, "Error", f"Failed to update fee: {str(e)}")
+                        
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load fee data: {str(e)}")
+
+    def delete_fee(self, fees_id):
+        """Delete fee record with confirmation"""
+        reply = QMessageBox.question(
+            self, 
+            'Confirm Deletion', 
+            'Are you sure you want to delete this fee record?',
+            QMessageBox.Yes | QMessageBox.No, 
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM Fees WHERE FeesID = ?", (fees_id,))
+                    conn.commit()
+                    QMessageBox.information(self, "Success", "Fee record deleted successfully")
+                    self.load_data()
+            except sqlite3.Error as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete fee: {str(e)}")
+            
+    def populate_combos(self, academic_year_combo, class_combo, term_combo):
+        """Populate academic year combo and set up signals to update class/term combos"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Clear existing items
+                academic_year_combo.clear()
+                class_combo.clear()
+                term_combo.clear()
+                
+                # Add default items
+                academic_year_combo.addItem("Select Academic Year", None)
+                class_combo.addItem("Select Class", None)
+                term_combo.addItem("Select Term", None)
+                
+                # Populate academic years
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year")
+                years = c.fetchall()
+                for year_id, year_name in years:
+                    academic_year_combo.addItem(year_name, year_id)
+                
+                # Connect signal to update class and term combos when year changes
+                academic_year_combo.currentIndexChanged.connect(
+                    lambda: self.update_class_term_combos(academic_year_combo, class_combo, term_combo)
+                )
+                
+        except sqlite3.Error as e:
+            print(f"Error populating academic years: {e}")
+
+    def update_class_term_combos(self, academic_year_combo, class_combo, term_combo):
+        """Update class and term combos based on selected academic year"""
+        selected_year_id = academic_year_combo.currentData()
+        
+        # Clear existing items (except the first "Select" item)
+        class_combo.clear()
+        term_combo.clear()
+        class_combo.addItem("Select Class", None)
+        term_combo.addItem("Select Term", None)
+        
+        if not selected_year_id:
+            return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Populate classes for selected academic year
+                c.execute("SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ? ORDER BY ClassName", 
+                        (selected_year_id,))
+                classes = c.fetchall()
+                for class_id, class_name in classes:
+                    class_combo.addItem(class_name, class_id)
+                
+                # Populate terms for selected academic year
+                c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ? ORDER BY TermName", 
+                        (selected_year_id,))
+                terms = c.fetchall()
+                for term_id, term_name in terms:
+                    term_combo.addItem(term_name, term_id)
+                    
+        except sqlite3.Error as e:
+            print(f"Error updating class/term combos: {e}")
+
+    def show_add_fee_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Fee Structure")
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        year_combo = QComboBox()
+        class_combo = QComboBox()
+        term_combo = QComboBox()
+        amount_edit = QLineEdit()
+        self.populate_combos(year_combo,class_combo, term_combo)  # Assume this populates with names and IDs as data
+        form_layout.addRow("Academic Year:", year_combo)
+        form_layout.addRow("Class:", class_combo)
+        form_layout.addRow("Term:", term_combo)
+        form_layout.addRow("Amount:", amount_edit)
+        layout.addLayout(form_layout)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(lambda: self.save_fee(dialog, class_combo, term_combo, amount_edit))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def save_fee(self, dialog, class_combo, term_combo, amount_edit):
+        class_id = class_combo.currentData()
+        term_id = term_combo.currentData()
+        amount_str = amount_edit.text().strip()
+        if not all([class_id, term_id, amount_str]):
+            QMessageBox.warning(dialog, "Error", "All fields are required")
+            return
+        try:
+            amount = float(amount_str)
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Amount must be a valid number")
+            return
+        with get_db_connection() as (conn, c):
+            try:
+                c.execute("SELECT COUNT(*) FROM Fees WHERE Class = ? AND Term = ?", (str(class_id), str(term_id)))
+                if c.fetchone()[0] > 0:
+                    QMessageBox.warning(dialog, "Error", "Duplicate fee structure for this class and term")
+                    return
+                c.execute("""INSERT INTO Fees (Class, Term, Amount)
+                            VALUES (?, ?, ?)""", (str(class_id), str(term_id), amount))
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Fee structure added successfully")
+                amount_edit.clear()
+                class_combo.setCurrentIndex(0)
+                term_combo.setCurrentIndex(0)
+                self.load_data()  # Refresh table if needed
+            except Exception as e:
+                conn.rollback()
+                QMessageBox.warning(dialog, "Error", f"Failed to add fee structure: {str(e)}")
+            finally:
+                conn.close()
+
+class FeesPaymentPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Fees Payment")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+
+        # Filters and add buttons
+        filter_layout = QHBoxLayout()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Search...")
+        search_input.setMaximumWidth(200)
+        # Add more filters, e.g., student_filter, status_filter
+        filter_layout.addWidget(search_input)
+        filter_layout.addStretch()
+        add_btn = QPushButton("Add Payment")
+        add_btn.clicked.connect(self.generate_fee_payment_template)
+        import_btn = QPushButton("Import Payments")
+        import_btn.clicked.connect(self.import_bulk_payments)
+        filter_layout.addWidget(add_btn)
+        filter_layout.addWidget(import_btn)
+        layout.addLayout(filter_layout)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)  # Example: ID, Student, Fee, Amount Paid, Date, Status, Actions
+        self.table.setHorizontalHeaderLabels(["Student Name", "Fee", "Amount Paid","PayRate","Last Transaction Date","Actions"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+    
+    def generate_fee_payment_template(self):
+        """Generate Excel template for bulk fee payments"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Get active enrollments with fee information
+                query = """
+                    SELECT st.StudentTermID, s.StudentID, s.Student_Name, 
+                        c.ClassName, t.TermName, f.Amount, st.PayRate,
+                        (f.Amount * (st.PayRate / 100)) as AmountDue,
+                        COALESCE(SUM(fp.AmountPaid), 0) as AlreadyPaid,
+                        (f.Amount * (st.PayRate / 100) - COALESCE(SUM(fp.AmountPaid), 0)) as RemainingAmount
+                    FROM StudentTerm st
+                    JOIN Students s ON st.StudentID = s.StudentID
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Term t ON st.TermID = t.TermID
+                    JOIN Fees f ON f.Class = c.ClassID AND f.Term = t.TermID
+                    LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
+                    GROUP BY st.StudentTermID
+                    HAVING RemainingAmount > 0
+                """
+                c.execute(query)
+                enrollments = c.fetchall()
+                
+                if not enrollments:
+                    QMessageBox.information(self, "Info", "No pending fee payments found.")
+                    return
+                
+                # Create DataFrame for Excel
+                data = []
+                for enrollment in enrollments:
+                    data.append({
+                        'StudentTermID': enrollment[0],
+                        'StudentID': enrollment[1],
+                        'StudentName': enrollment[2],
+                        'ClassName': enrollment[3],
+                        'TermName': enrollment[4],
+                        'OriginalAmount': enrollment[5],
+                        'PayRate': enrollment[6],
+                        'AmountDue': enrollment[7],
+                        'AlreadyPaid': enrollment[8],
+                        'RemainingAmount': enrollment[9],
+                        'AmountToPay': '',  # Empty for user input
+                        'TransactionDate': '',  # Empty for user input
+                        'ReferenceNumber': ''   # Empty for user input
+                    })
+                
+                df = pd.DataFrame(data)
+                
+                # Save to Excel with formatting
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "Save Fee Payment Template", 
+                    f"Fee_Payment_Template_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    "Excel Files (*.xlsx)"
+                )
+                
+                if file_path:
+                    with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
+                        df.to_excel(writer, sheet_name='Fee Payments', index=False)
+                        
+                        workbook = writer.book
+                        worksheet = writer.sheets['Fee Payments']
+                        
+                        # Format headers
+                        header_format = workbook.add_format({
+                            'bold': True,
+                            'bg_color': '#3498db',
+                            'font_color': 'white',
+                            'border': 1
+                        })
+                        
+                        # Format input columns
+                        input_format = workbook.add_format({
+                            'bg_color': '#FFF2CC',
+                            'border': 1
+                        })
+                        
+                        # Format read-only columns
+                        readonly_format = workbook.add_format({
+                            'bg_color': '#F0F0F0',
+                            'border': 1,
+                            'locked': True
+                        })
+                        
+                        # Apply formatting
+                        for col_num, value in enumerate(df.columns.values):
+                            worksheet.write(0, col_num, value, header_format)
+                            
+                            # Set column widths
+                            if value in ['StudentName', 'ClassName', 'TermName']:
+                                worksheet.set_column(col_num, col_num, 20)
+                            elif value in ['StudentID', 'ReferenceNumber']:
+                                worksheet.set_column(col_num, col_num, 15)
+                            else:
+                                worksheet.set_column(col_num, col_num, 12)
+                        
+                        # Format specific columns
+                        input_columns = ['AmountToPay', 'TransactionDate', 'ReferenceNumber']
+                        for col_num, col_name in enumerate(df.columns):
+                            if col_name in input_columns:
+                                worksheet.set_column(col_num, col_num, 15, input_format)
+                            else:
+                                worksheet.set_column(col_num, col_num, 15, readonly_format)
+                        
+                        # Add data validation for AmountToPay
+                        amount_validation = {
+                            'validate': 'decimal',
+                            'criteria': 'between',
+                            'minimum': 0,
+                            'maximum': 10000000,
+                            'input_title': 'Enter amount',
+                            'input_message': 'Amount must be between 0 and 10,000,000',
+                            'error_title': 'Invalid Amount',
+                            'error_message': 'Please enter a valid amount between 0 and 10,000,000'
+                        }
+                        
+                        # Find AmountToPay column index
+                        amount_col = df.columns.get_loc('AmountToPay')
+                        for row in range(1, len(df) + 1):
+                            remaining_amount = df.iloc[row-1]['RemainingAmount']
+                            amount_validation['maximum'] = remaining_amount
+                            worksheet.data_validation(row, amount_col, row, amount_col, amount_validation)
+                        
+                        # Add instructions sheet
+                        instructions = [
+                            ["INSTRUCTIONS FOR FEE PAYMENT TEMPLATE"],
+                            [""],
+                            ["1. Do not modify columns with gray background"],
+                            ["2. Fill only the yellow highlighted columns:"],
+                            ["   - AmountToPay: Enter the payment amount"],
+                            ["   - TransactionDate: Enter date in YYYY-MM-DD format"],
+                            ["   - ReferenceNumber: Enter transaction reference"],
+                            ["3. AmountToPay cannot exceed RemainingAmount"],
+                            ["4. Save the file after filling all required fields"],
+                            ["5. Use the Import button to process payments"]
+                        ]
+                        
+                        instructions_df = pd.DataFrame(instructions)
+                        instructions_df.to_excel(writer, sheet_name='Instructions', index=False, header=False)
+                        
+                        # Format instructions sheet
+                        instr_sheet = writer.sheets['Instructions']
+                        instr_sheet.set_column('A:A', 60)
+                        
+                    QMessageBox.information(self, "Success", 
+                                        f"Template generated successfully with {len(enrollments)} records!\n"
+                                        f"Saved to: {file_path}")
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate template: {str(e)}")
+
+    def import_bulk_payments(self):
+        """Import bulk payments from Excel file"""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Select Fee Payment File", "", "Excel Files (*.xlsx *.xls)"
+            )
+            
+            if not file_path:
+                return
+            
+            # Read Excel file
+            df = pd.read_excel(file_path, sheet_name='Fee Payments')
+            
+            # Validate required columns
+            required_columns = ['StudentTermID', 'AmountToPay', 'TransactionDate', 'ReferenceNumber']
+            if not all(col in df.columns for col in required_columns):
+                QMessageBox.warning(self, "Error", 
+                                "Excel file missing required columns. Please use the generated template.")
+                return
+            
+            success_count = 0
+            error_count = 0
+            error_messages = []
+            
+            with get_db_connection() as (conn, c):
+                for index, row in df.iterrows():
+                    try:
+                        # Validate data
+                        student_term_id = row['StudentTermID']
+                        amount_to_pay = row['AmountToPay']
+                        transaction_date = row['TransactionDate']
+                        reference_number = row['ReferenceNumber']
+                        
+                        # Skip empty rows
+                        if pd.isna(amount_to_pay) or pd.isna(transaction_date):
+                            continue
+                        
+                        # Convert date if it's a datetime object
+                        if isinstance(transaction_date, datetime):
+                            transaction_date = transaction_date.strftime('%Y-%m-%d')
+                        elif isinstance(transaction_date, str):
+                            # Validate date format
+                            datetime.strptime(transaction_date, '%Y-%m-%d')
+                        
+                        # Get fee information for validation
+                        c.execute("""
+                            SELECT st.PayRate, f.Amount, f.FeesID,
+                                COALESCE(SUM(fp.AmountPaid), 0) as AlreadyPaid
+                            FROM StudentTerm st
+                            JOIN Fees f ON f.Class = st.ClassID AND f.Term = st.TermID
+                            LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
+                            WHERE st.StudentTermID = ?
+                            GROUP BY st.StudentTermID
+                        """, (student_term_id,))
+                        
+                        fee_info = c.fetchone()
+                        if not fee_info:
+                            raise ValueError(f"StudentTermID {student_term_id} not found")
+                        
+                        pay_rate, original_amount, fees_id, already_paid = fee_info
+                        amount_due = original_amount * (pay_rate / 100)
+                        remaining_amount = amount_due - already_paid
+                        
+                        # Validate amount
+                        if amount_to_pay > remaining_amount:
+                            raise ValueError(f"Amount {amount_to_pay} exceeds remaining amount {remaining_amount}")
+                        
+                        if amount_to_pay <= 0:
+                            raise ValueError(f"Amount must be greater than zero")
+                        
+                        # Insert payment
+                        done_on = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        c.execute("""
+                            INSERT INTO FeesPayment 
+                            (StudentTermID, FeesID, AmountPaid, TransactionDate, ReferenceNumber, DoneOn)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (student_term_id, fees_id, amount_to_pay, transaction_date, reference_number, done_on))
+                        
+                        success_count += 1
+                        
+                    except Exception as e:
+                        error_count += 1
+                        error_messages.append(f"Row {index + 2}: {str(e)}")
+                
+                if success_count > 0:
+                    conn.commit()
+                
+                # Show results
+                if error_count == 0:
+                    QMessageBox.information(self, "Success", 
+                                        f"Successfully processed {success_count} payments!")
+                else:
+                    error_details = "\n".join(error_messages[:10])  # Show first 10 errors
+                    if error_count > 10:
+                        error_details += f"\n... and {error_count - 10} more errors"
+                    
+                    QMessageBox.warning(self, "Import Completed with Errors",
+                                    f"Successfully processed {success_count} payments.\n"
+                                    f"Failed to process {error_count} payments.\n\n"
+                                    f"Errors:\n{error_details}")
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to import payments: {str(e)}")
+
+
+#### End Of Fees Management ######
 
 class Uniforms(QWidget):
     def __init__(self):
@@ -2678,5 +4011,7 @@ class Account(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = Window()
+    print("Application opened.")
     window.show()
     sys.exit(app.exec_())
+    
