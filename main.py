@@ -4,6 +4,8 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 import sqlite3
 import pandas as pd
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from xlsxwriter import *
 from contextlib import contextmanager
 from datetime import datetime
@@ -1181,7 +1183,7 @@ class EnrollmentsTab(QWidget):
             QMessageBox.critical(dialog, "Database Error", f"Failed to record payment: {str(e)}")
 
 def show_import_wizard(self):
-    wizard = ImportWizard(self)
+    wizard = ImportWizard()
     wizard.exec_()
 
 class ImportWizard(QWizard):
@@ -3234,11 +3236,15 @@ class Fees(QWidget):
         self.management_btn = QPushButton("Fees Management")
         self.management_btn.setObjectName("nav_btn")
         self.management_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
-        self.payment_btn = QPushButton("Fees Payment")
+        self.payment_btn = QPushButton("Fees Payment Insight")
         self.payment_btn.setObjectName("nav_btn")
         self.payment_btn.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        self.rawFeePayments = QPushButton("Payments History")
+        self.rawFeePayments.setObjectName("nav_btn")
+        self.rawFeePayments.clicked.connect(lambda: self.stack.setCurrentIndex(2))
         nav_layout.addWidget(self.management_btn)
         nav_layout.addWidget(self.payment_btn)
+        nav_layout.addWidget(self.rawFeePayments)
         nav_layout.addStretch()
         layout.addLayout(nav_layout)
 
@@ -3246,8 +3252,10 @@ class Fees(QWidget):
         self.stack = QStackedWidget()
         self.management_page = FeesManagementPage()
         self.payment_page = FeesPaymentPage()
+        self.PaymentHistoryPage = PaymentHistoryPage()
         self.stack.addWidget(self.management_page)
         self.stack.addWidget(self.payment_page)
+        self.stack.addWidget(self.PaymentHistoryPage)
         layout.addWidget(self.stack)
 
         # Initial selection
@@ -3668,23 +3676,63 @@ class FeesPaymentPage(QWidget):
         header_layout.addStretch()
         layout.addLayout(header_layout)
 
+        # Filters
+        filter_layout = QHBoxLayout()
+        
+        # Search
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search students...")
+        self.search_input.setMaximumWidth(200)
+        self.search_input.textChanged.connect(self.load_data)
+        
+        # Year filter
+        self.year_combo = QComboBox()
+        self.year_combo.addItem("All Years", None)
+        self.year_combo.currentIndexChanged.connect(self.load_data)
+        
+        # Term filter
+        self.term_combo = QComboBox()
+        self.term_combo.addItem("All Terms", None)
+        self.term_combo.currentIndexChanged.connect(self.load_data)
+        
+        # Class filter
+        self.class_combo = QComboBox()
+        self.class_combo.addItem("All Classes", None)
+        self.class_combo.currentIndexChanged.connect(self.load_data)
+        
+        # Load filter options
+        self.load_filter_options()
+        
+        filter_layout.addWidget(QLabel("Search:"))
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(QLabel("Year:"))
+        filter_layout.addWidget(self.year_combo)
+        filter_layout.addWidget(QLabel("Term:"))
+        filter_layout.addWidget(self.term_combo)
+        filter_layout.addWidget(QLabel("Class:"))
+        filter_layout.addWidget(self.class_combo)
+        filter_layout.addStretch()
+        
+        layout.addLayout(filter_layout)
+
         # Action buttons
         action_layout = QHBoxLayout()
+        
         generate_btn = QPushButton("Generate Template")
-        generate_btn.clicked.connect(self.generate_fee_payment_template)
+        generate_btn.clicked.connect(self.generate_payment_template_dialog)
         import_btn = QPushButton("Import Payments")
-        import_btn.clicked.connect(self.import_fee_payments)
+        import_btn.clicked.connect(self.import_payments_dialog)
         action_layout.addWidget(generate_btn)
         action_layout.addWidget(import_btn)
         action_layout.addStretch()
         layout.addLayout(action_layout)
 
-        # Table - Updated columns
+        # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
+        self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
-            "StudentTermID", "Name", "FeesID", "AmountDue", 
-            "AmountPaid", "TransactionDate", "Reference"
+            "Name", "Term", "Class", "Fee", 
+            "Amount Paid", "UnPaid", "Status", "Payment History"
         ])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -3693,363 +3741,966 @@ class FeesPaymentPage(QWidget):
         # Load initial data
         self.load_data()
 
-    def generate_fee_payment_template(self):
-        """Open wizard to generate fee payment template"""
-        wizard = FeePaymentWizard(self)
-        wizard.exec_()
-
-    def import_fee_payments(self):
-        """Simple import function"""
+    def load_filter_options(self):
+        """Load filter options from database"""
         try:
-            file_path, _ = QFileDialog.getOpenFileName(
-                self, "Select Fee Payment Template", "", "Excel Files (*.xlsx *.xls)"
-            )
-            
-            if file_path:
-                # Use the simple import function I provided earlier
-                self.simple_import_payments(file_path)
+            with get_db_connection() as (conn, c):
+                # Load years
+                c.execute("SELECT DISTINCT ay.Year FROM AcademicYear ay ORDER BY ay.Year DESC")
+                years = c.fetchall()
+                for year in years:
+                    self.year_combo.addItem(year[0], year[0])
                 
+                # Load terms
+                c.execute("SELECT DISTINCT t.TermName FROM Term t ORDER BY t.TermName")
+                terms = c.fetchall()
+                for term in terms:
+                    self.term_combo.addItem(term[0], term[0])
+                
+                # Load classes
+                c.execute("SELECT DISTINCT c.ClassName FROM Class c ORDER BY c.ClassName")
+                classes = c.fetchall()
+                for class_ in classes:
+                    self.class_combo.addItem(class_[0], class_[0])
+                    
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to import payments: {str(e)}")
+            print(f"Error loading filter options: {e}")
 
     def load_data(self):
-            """Load payment data for display"""
-            # Implement based on your needs
-            pass
-
-class FeePaymentWizard(QWizard):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Generate Fee Payment Template")
-        self.setMinimumSize(800, 600)
-        
-        self.selected_data = None
-        self.filtered_students = []
-        
-        # Add pages
-        self.addPage(self.create_selection_page())
-        self.addPage(self.create_preview_page())
-        self.addPage(self.create_generation_page())
-        
-    def create_selection_page(self):
-        page = QWizardPage()
-        page.setTitle("Step 1: Select Filters")
-        page.setSubTitle("Choose Academic Year, Class, and Term to include ALL students")
-        
-        layout = QVBoxLayout()
-        
-        # Academic Year selection
-        year_group = QGroupBox("Academic Year")
-        year_layout = QVBoxLayout()
-        self.year_combo = QComboBox()
-        self.year_combo.currentIndexChanged.connect(self.on_year_changed)
-        year_layout.addWidget(self.year_combo)
-        year_group.setLayout(year_layout)
-        layout.addWidget(year_group)
-        
-        # Class and Term selection
-        filter_group = QGroupBox("Class and Term")
-        filter_layout = QGridLayout()
-        
-        filter_layout.addWidget(QLabel("Class:"), 0, 0)
-        self.class_combo = QComboBox()
-        filter_layout.addWidget(self.class_combo, 0, 1)
-        
-        filter_layout.addWidget(QLabel("Term:"), 1, 0)
-        self.term_combo = QComboBox()
-        filter_layout.addWidget(self.term_combo, 1, 1)
-        
-        filter_group.setLayout(filter_layout)
-        layout.addWidget(filter_group)
-        
-        # Information label
-        info_label = QLabel("This will include ALL students in the selected class and term, regardless of payment status.")
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #666; font-style: italic;")
-        layout.addWidget(info_label)
-        
-        # Load initial data
-        self.load_academic_years()
-        
-        # Connect signals
-        self.class_combo.currentIndexChanged.connect(self.load_students)
-        self.term_combo.currentIndexChanged.connect(self.load_students)
-        
-        page.setLayout(layout)
-        return page
-    
-    def create_preview_page(self):
-        page = QWizardPage()
-        page.setTitle("Step 2: Preview Students")
-        page.setSubTitle("Review ALL students who will be included in the template")
-        
-        layout = QVBoxLayout()
-        
-        self.preview_label = QLabel("Select filters in Step 1 to see students")
-        self.preview_label.setWordWrap(True)
-        
-        self.preview_table = QTableWidget()
-        self.preview_table.setColumnCount(8)  # Added PaymentStatus column
-        self.preview_table.setHorizontalHeaderLabels([
-            "StudentTermID", "Name", "FeesID", "AmountDue", "AmountPaid", 
-            "PaymentStatus", "TransactionDate", "Reference"
-        ])
-        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        
-        layout.addWidget(self.preview_label)
-        layout.addWidget(self.preview_table)
-        
-        page.setLayout(layout)
-        return page
-    
-    def create_generation_page(self):
-        page = QWizardPage()
-        page.setTitle("Step 3: Generate Template")
-        page.setSubTitle("Ready to generate the Excel template with ALL students")
-        
-        layout = QVBoxLayout()
-        
-        info_label = QLabel(
-            "Click 'Generate' to create the Excel template with ALL students in the selected class and term. "
-            "The template will include payment status information and columns for payment details."
-        )
-        info_label.setWordWrap(True)
-        
-        self.generate_btn = QPushButton("Generate Excel Template")
-        self.generate_btn.clicked.connect(self.generate_template)
-        
-        layout.addWidget(info_label)
-        layout.addWidget(self.generate_btn)
-        layout.addStretch()
-        
-        page.setLayout(layout)
-        return page
-    
-    def load_academic_years(self):
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
-                years = c.fetchall()
-                
-                self.year_combo.addItem("Select Academic Year", None)
-                for year_id, year_name in years:
-                    self.year_combo.addItem(year_name, year_id)
-                    
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load academic years: {str(e)}")
-    
-    def on_year_changed(self):
-        year_id = self.year_combo.currentData()
-        if not year_id:
-            return
-            
-        try:
-            with get_db_connection() as (conn, c):
-                # Load classes for selected year
-                self.class_combo.clear()
-                c.execute("SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ? ORDER BY ClassName", (year_id,))
-                classes = c.fetchall()
-                self.class_combo.addItem("Select Class", None)
-                for class_id, class_name in classes:
-                    self.class_combo.addItem(class_name, class_id)
-                
-                # Load terms for selected year
-                self.term_combo.clear()
-                c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ? ORDER BY TermName", (year_id,))
-                terms = c.fetchall()
-                self.term_combo.addItem("Select Term", None)
-                for term_id, term_name in terms:
-                    self.term_combo.addItem(term_name, term_id)
-                    
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load classes and terms: {str(e)}")
-    
-    def load_students(self):
-        class_id = self.class_combo.currentData()
-        term_id = self.term_combo.currentData()
-        
-        if not class_id or not term_id:
-            return
-            
+        """Load payment data with filters"""
         try:
             with get_db_connection() as (conn, c):
                 query = """
-                    SELECT 
-                        st.StudentTermID,
-                        s.Student_Name as Name,
-                        f.FeesID,
-                        (f.Amount * (st.PayRate / 100)) as AmountDue,
-                        COALESCE(SUM(fp.AmountPaid), 0) as AmountPaid,
-                        CASE 
-                            WHEN COALESCE(SUM(fp.AmountPaid), 0) >= (f.Amount * (st.PayRate / 100)) THEN 'Fully Paid'
-                            WHEN COALESCE(SUM(fp.AmountPaid), 0) > 0 THEN 'Partially Paid'
-                            ELSE 'Not Paid'
-                        END as PaymentStatus,
-                        '' as TransactionDate,  -- Placeholder for user input
-                        '' as Reference         -- Placeholder for user input
-                    FROM StudentTerm st
-                    JOIN Students s ON st.StudentID = s.StudentID
-                    JOIN Fees f ON f.Class = st.ClassID AND f.Term = st.TermID
-                    LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
-                    WHERE st.ClassID = ? AND st.TermID = ?
-                    GROUP BY st.StudentTermID
-                    ORDER BY s.Student_Name
+                SELECT 
+                    s.Student_Name,
+                    t.TermName || ' (' || ay.Year || ')' as TermWithYear,
+                    c.ClassName,
+                    ROUND(f.Amount * (st.PayRate / 100.0), 2) as FeeAfterDiscount,
+                    COALESCE(SUM(fp.AmountPaid), 0) as AmountPaid,
+                    ROUND(MAX(f.Amount * (st.PayRate / 100.0)) - COALESCE(SUM(fp.AmountPaid), 0), 2) as UnpaidAmount,
+                    CASE 
+                        WHEN COALESCE(SUM(fp.AmountPaid), 0) >= (f.Amount * (st.PayRate / 100.0)) THEN 'Paid'
+                        WHEN COALESCE(SUM(fp.AmountPaid), 0) > 0 THEN 'Partial'
+                        ELSE 'Unpaid'
+                    END as PaymentStatus,
+                    st.StudentTermID,
+                    f.FeesID
+                FROM StudentTerm st
+                JOIN Students s ON st.StudentID = s.StudentID
+                JOIN Class c ON st.ClassID = c.ClassID
+                JOIN Term t ON st.TermID = t.TermID
+                JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                JOIN Fees f ON f.Class = c.ClassID AND f.Term = t.TermID
+                LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
                 """
                 
-                c.execute(query, (class_id, term_id))
-                self.filtered_students = c.fetchall()
+                filters = []
+                params = []
                 
-                # Update preview table
-                self.preview_table.setRowCount(0)
-                for row_data in self.filtered_students:
-                    row = self.preview_table.rowCount()
-                    self.preview_table.insertRow(row)
+                # Apply filters
+                search_text = self.search_input.text().strip()
+                if search_text:
+                    filters.append("(s.Student_Name LIKE ? OR s.StudentID LIKE ?)")
+                    params.extend([f"%{search_text}%", f"%{search_text}%"])
+                
+                selected_year = self.year_combo.currentData()
+                if selected_year:
+                    filters.append("ay.Year = ?")
+                    params.append(selected_year)
+                
+                selected_term = self.term_combo.currentData()
+                if selected_term:
+                    filters.append("t.TermName = ?")
+                    params.append(selected_term)
+                
+                selected_class = self.class_combo.currentData()
+                if selected_class:
+                    filters.append("c.ClassName = ?")
+                    params.append(selected_class)
+                
+                if filters:
+                    query += " WHERE " + " AND ".join(filters)
+                
+                query += """
+                GROUP BY st.StudentTermID
+                ORDER BY s.Student_Name, ay.Year, t.TermName
+                """
+                
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                self.table.setRowCount(0)
+                for row_data in rows:
+                    row = self.table.rowCount()
+                    self.table.insertRow(row)
                     
-                    for col, data in enumerate(row_data):
+                    # Add data columns
+                    for col, data in enumerate(row_data[:7]):  # First 7 columns are data
                         item = QTableWidgetItem(str(data))
-                        # Make only TransactionDate and Reference editable
-                        item.setFlags(item.flags() & ~Qt.ItemIsEditable if col not in [6, 7] else item.flags())
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                         
-                        # Color code payment status
-                        if col == 5:  # PaymentStatus column
-                            if data == 'Fully Paid':
-                                item.setBackground(QColor(200, 255, 200))  # Light green
-                            elif data == 'Partially Paid':
-                                item.setBackground(QColor(255, 255, 200))  # Light yellow
+                        # Color code status
+                        if col == 6:  # Status column
+                            if data == 'Paid':
+                                item.setBackground(QColor(200, 255, 200))
+                            elif data == 'Partial':
+                                item.setBackground(QColor(255, 255, 200))
                             else:
-                                item.setBackground(QColor(255, 200, 200))  # Light red
+                                item.setBackground(QColor(255, 200, 200))
                         
-                        self.preview_table.setItem(row, col, item)
+                        self.table.setItem(row, col, item)
+                    
+                    # Add Payment History button
+                    student_term_id = row_data[7]  # StudentTermID
+                    fees_id = row_data[8]  # FeesID
+                    
+                    history_btn = QPushButton("View History")
+                    history_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #4299E1;
+                            color: white;
+                            border: none;
+                            padding: 5px;
+                            border-radius: 3px;
+                            font-size: 11px;
+                        }
+                        QPushButton:hover {
+                            background-color: #3182CE;
+                        }
+                    """)
+                    history_btn.clicked.connect(
+                        lambda checked, stid=student_term_id, fid=fees_id: 
+                        self.show_payment_history(stid, fid)
+                    )
+                    
+                    self.table.setCellWidget(row, 7, history_btn)
                 
-                count = len(self.filtered_students)
-                class_name = self.class_combo.currentText()
-                term_name = self.term_combo.currentText()
+        except Exception as e:
+            print(f"Error loading data: {e}")
+
+    def show_payment_history(self, student_term_id, fees_id):
+        """Show payment history dialog for a student"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Get student info
+                c.execute("""
+                    SELECT s.Student_Name, c.ClassName, t.TermName, ay.Year
+                    FROM StudentTerm st
+                    JOIN Students s ON st.StudentID = s.StudentID
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Term t ON st.TermID = t.TermID
+                    JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                    WHERE st.StudentTermID = ?
+                """, (student_term_id,))
+                student_info = c.fetchone()
                 
-                self.preview_label.setText(
-                    f"Found {count} students in {class_name} for {term_name}\n"
-                    f"Payment status is color-coded: Green = Fully Paid, Yellow = Partially Paid, Red = Not Paid\n"
-                    f"TransactionDate and Reference columns are for your input in Excel."
+                # Get payment history
+                c.execute("""
+                    SELECT 
+                        AmountPaid, 
+                        TransactionDate, 
+                        ReferenceNumber, 
+                        DoneOn
+                    FROM FeesPayment 
+                    WHERE StudentTermID = ? AND FeesID = ?
+                    ORDER BY TransactionDate DESC
+                """, (student_term_id, fees_id))
+                payments = c.fetchall()
+                
+                # Create dialog
+                dialog = QDialog(self)
+                dialog.setWindowTitle(f"Payment History - {student_info[0]}")
+                dialog.setMinimumSize(600, 400)
+                
+                layout = QVBoxLayout()
+                
+                # Student info
+                info_text = f"""
+                <h3>{student_info[0]}</h3>
+                <p>Class: {student_info[1]}</p>
+                <p>Term: {student_info[2]} ({student_info[3]})</p>
+                """
+                info_label = QLabel(info_text)
+                info_label.setTextFormat(Qt.RichText)
+                layout.addWidget(info_label)
+                
+                # Payments table
+                if payments:
+                    table = QTableWidget()
+                    table.setColumnCount(4)
+                    table.setHorizontalHeaderLabels(["Amount Paid", "Transaction Date", "Reference", "Recorded On"])
+                    table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                    
+                    table.setRowCount(len(payments))
+                    for row_idx, payment in enumerate(payments):
+                        for col_idx, data in enumerate(payment):
+                            item = QTableWidgetItem(str(data))
+                            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                            table.setItem(row_idx, col_idx, item)
+                    
+                    layout.addWidget(QLabel("Payment History:"))
+                    layout.addWidget(table)
+                else:
+                    layout.addWidget(QLabel("No payment history found."))
+                
+                # Close button
+                close_btn = QPushButton("Close")
+                close_btn.clicked.connect(dialog.accept)
+                layout.addWidget(close_btn)
+                
+                dialog.setLayout(layout)
+                dialog.exec_()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load payment history: {str(e)}")
+
+        
+    def get_academic_years(self):
+        """Fetch list of academic years"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
+                return c.fetchall()
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to fetch academic years: {str(e)}")
+            return []
+
+    def get_classes_for_year(self, academic_year_id):
+        """Fetch classes for a specific academic year"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT ClassID, ClassName 
+                    FROM Class 
+                    WHERE AcademicYear = ? 
+                    ORDER BY ClassName
+                """, (academic_year_id,))
+                return c.fetchall()
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to fetch classes: {str(e)}")
+            return []
+
+    def get_terms_for_year(self, academic_year_id):
+        """Fetch terms for a specific academic year"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT TermID, TermName 
+                    FROM Term 
+                    WHERE AcademicYear = ? 
+                    ORDER BY TermName
+                """, (academic_year_id,))
+                return c.fetchall()
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to fetch terms: {str(e)}")
+            return []
+
+    # New method to show dialog for selecting criteria and generating template
+    def generate_payment_template_dialog(self):
+        """Show dialog to select academic year, class, term and generate spreadsheet"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Generate Payment Template")
+        dialog.setFixedSize(400, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Academic Year selector
+        year_group = QGroupBox("Select Academic Year")
+        year_layout = QFormLayout(year_group)
+        year_combo = QComboBox()
+        years = self.get_academic_years()
+        if not years:
+            QMessageBox.warning(self, "No Data", "No academic years found.")
+            return
+        for year_id, year_name in years:
+            year_combo.addItem(year_name, year_id)
+        year_layout.addRow("Academic Year:", year_combo)
+        layout.addWidget(year_group)
+        
+        # Class selector (updates on year change)
+        class_group = QGroupBox("Select Class")
+        class_layout = QFormLayout(class_group)
+        class_combo = QComboBox()
+        class_layout.addRow("Class:", class_combo)
+        layout.addWidget(class_group)
+        
+        # Term selector (updates on year change)
+        term_group = QGroupBox("Select Term")
+        term_layout = QFormLayout(term_group)
+        term_combo = QComboBox()
+        term_layout.addRow("Term:", term_combo)
+        layout.addWidget(term_group)
+        
+        # Update classes and terms when year changes
+        def update_selections():
+            year_id = year_combo.currentData()
+            # Update classes
+            class_combo.clear()
+            classes = self.get_classes_for_year(year_id)
+            for class_id, class_name in classes:
+                class_combo.addItem(class_name, class_id)
+            # Update terms
+            term_combo.clear()
+            terms = self.get_terms_for_year(year_id)
+            for term_id, term_name in terms:
+                term_combo.addItem(term_name, term_id)
+        
+        year_combo.currentIndexChanged.connect(update_selections)
+        update_selections()  # Initial load
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(lambda: self.generate_payment_template(
+            year_combo.currentData(), class_combo.currentData(), term_combo.currentData(), dialog
+        ))
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        dialog.exec_()
+
+    def generate_payment_template(self, academic_year_id, class_id, term_id, dialog):
+        """Generate XLSX template for bulk payments"""
+        if not all([academic_year_id, class_id, term_id]):
+            QMessageBox.warning(self, "Error", "Please select academic year, class, and term.")
+            return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Fetch fee for this class and term
+                c.execute("""
+                    SELECT FeesID, Amount 
+                    FROM Fees 
+                    WHERE Class = ? AND Term = ?
+                """, (class_id, term_id))
+                fee_data = c.fetchone()
+                if not fee_data:
+                    QMessageBox.warning(self, "Error", "No fee structure found for this class and term.")
+                    return
+                fees_id, original_amount = fee_data
+                
+                # Fetch all student enrollments for this class and term
+                # Assuming StudentTerm has enrollments per class/term (which imply year via links)
+                c.execute("""
+                    SELECT st.StudentTermID, st.StudentID, s.Student_Name, st.PayRate,
+                           c.ClassName, t.TermName, y.Year
+                    FROM StudentTerm st
+                    JOIN Students s ON st.StudentID = s.StudentID
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Term t ON st.TermID = t.TermID
+                    JOIN AcademicYear y ON c.AcademicYear = y.AcademicYearID
+                    WHERE st.ClassID = ? AND st.TermID = ? AND c.AcademicYear = ?
+                """, (class_id, term_id, academic_year_id))
+                enrollments = c.fetchall()
+                
+                if not enrollments:
+                    QMessageBox.warning(self, "No Data", "No students enrolled in this class and term.")
+                    return
+                
+                # Create workbook
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "Bulk Payments"
+                
+                # Headers
+                headers = [
+                    "StudentTermID", "FeesID", "StudentID", "Student Name", "Class", "Term", "Academic Year",
+                    "Pay Rate (%)", "Original Amount", "Discounted Amount", "Already Paid",
+                    "Remaining", "Amount to Pay", "Transaction Date", "Reference Number"
+                ]
+                ws.append(headers)
+                
+                # Style headers
+                header_font = Font(bold=True, color="FFFFFF")
+                header_fill = PatternFill(start_color="4A5568", end_color="4A5568", fill_type="solid")
+                thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+                for cell in ws[1]:
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = Alignment(horizontal="center")
+                    cell.border = thin_border
+                
+                # Hide sensitive columns (StudentTermID, FeesID) by setting width to 0
+                ws.column_dimensions['A'].width = 0  # StudentTermID
+                ws.column_dimensions['B'].width = 0  # FeesID
+                
+                # Populate rows
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                for row, enrollment in enumerate(enrollments, start=2):
+                    student_term_id, student_id, student_name, pay_rate, class_name, term_name, year_name = enrollment
+                    
+                    # Calculate amounts (similar to dialog)
+                    discounted_amount = original_amount * (pay_rate / 100)
+                    
+                    c.execute("""
+                        SELECT COALESCE(SUM(AmountPaid), 0) 
+                        FROM FeesPayment 
+                        WHERE StudentTermID = ?
+                    """, (student_term_id,))
+                    already_paid = c.fetchone()[0]
+                    
+                    remaining = max(0, discounted_amount - already_paid)
+                    
+                    # Append row data
+                    ws.append([
+                        student_term_id, fees_id, student_id, student_name, class_name, term_name, year_name,
+                        pay_rate, original_amount, discounted_amount, already_paid, remaining,
+                        None, today_str, None  # Editable: Amount to Pay, Date, Ref
+                    ])
+                    
+                    # Style read-only cells (gray background)
+                    read_only_fill = PatternFill(start_color="EDF2F7", end_color="EDF2F7", fill_type="solid")
+                    for col in range(1, 13):  # A to L (up to Remaining)
+                        ws.cell(row=row, column=col).fill = read_only_fill
+                        ws.cell(row=row, column=col).border = thin_border
+                    
+                    # Editable cells (white, with borders)
+                    for col in range(13, 16):  # M to O
+                        ws.cell(row=row, column=col).border = thin_border
+                
+                # Auto-adjust visible column widths
+                for col in ws.columns:
+                    max_length = 0
+                    column = col[0].column_letter
+                    if column in ['A', 'B']: continue  # Hidden
+                    for cell in col:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(cell.value)
+                        except:
+                            pass
+                    adjusted_width = (max_length + 2)
+                    ws.column_dimensions[column].width = adjusted_width
+                
+                # Save file
+                file_path = QFileDialog.getSaveFileName(self, "Save Template", "", "Excel Files (*.xlsx)")[0]
+                if file_path:
+                    wb.save(file_path)
+                    QMessageBox.information(self, "Success", f"Template generated at {file_path}.\nEdit the 'Amount to Pay', 'Transaction Date', and 'Reference Number' columns, then import.")
+                    dialog.accept()
+        
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to generate template: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Unexpected error: {str(e)}")
+
+    # New method to import the edited spreadsheet
+    def import_payments_dialog(self):
+        """Show dialog to select file and import payments"""
+        file_path = QFileDialog.getOpenFileName(self, "Select Payment File", "", "Excel Files (*.xlsx)")[0]
+        if not file_path:
+            return
+        
+        self.import_payments(file_path)
+
+    def import_payments(self, file_path):
+        """Import and process payments from XLSX with enhanced real-time validations"""
+        try:
+            wb = openpyxl.load_workbook(file_path)
+            ws = wb.active
+            
+            # Expected headers (validate)
+            expected_headers = [
+                "StudentTermID", "FeesID", "StudentID", "Student Name", "Class", "Term", "Academic Year",
+                "Pay Rate (%)", "Original Amount", "Discounted Amount", "Already Paid",
+                "Remaining", "Amount to Pay", "Transaction Date", "Reference Number"
+            ]
+            actual_headers = [cell.value for cell in ws[1]]
+            if actual_headers != expected_headers:
+                QMessageBox.warning(self, "Error", "Invalid file format. Headers do not match expected template.")
+                return
+            
+            # Process rows
+            success_count = 0
+            skipped_count = 0
+            errors = []
+            done_on = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+            
+            with get_db_connection() as (conn, c):
+                for row in range(2, ws.max_row + 1):
+                    try:
+                        # Read row (assume minimal tampering, but re-validate from DB)
+                        student_term_id = int(ws.cell(row=row, column=1).value)
+                        fees_id = int(ws.cell(row=row, column=2).value)
+                        amount_to_pay_str = ws.cell(row=row, column=13).value
+                        transaction_date = ws.cell(row=row, column=14).value
+                        reference_number = str(ws.cell(row=row, column=15).value or "")
+                        
+                        if amount_to_pay_str is None:
+                            errors.append(f"Row {row}: No amount to pay specified.")
+                            continue
+                        
+                        amount_paid = float(amount_to_pay_str)
+                        
+                        # Basic validations
+                        if amount_paid <= 0:
+                            errors.append(f"Row {row}: Amount must be greater than zero.")
+                            continue
+                        if not transaction_date:
+                            errors.append(f"Row {row}: Transaction date required.")
+                            continue
+                        
+                        # Real-time DB fetch and validations
+                        # 1. Verify StudentTermID and FeesID exist and match
+                        c.execute("""
+                            SELECT st.PayRate, f.Amount
+                            FROM StudentTerm st
+                            JOIN Fees f ON f.FeesID = ?
+                            WHERE st.StudentTermID = ?
+                        """, (fees_id, student_term_id))
+                        data = c.fetchone()
+                        if not data:
+                            errors.append(f"Row {row}: Invalid StudentTermID or FeesID.")
+                            continue
+                        pay_rate, original_amount = data
+                        
+                        # 2. Calculate discounted amount
+                        discounted_amount = original_amount * (pay_rate / 100)
+                        
+                        # 3. Fetch current already paid
+                        c.execute("""
+                            SELECT COALESCE(SUM(AmountPaid), 0) 
+                            FROM FeesPayment 
+                            WHERE StudentTermID = ?
+                        """, (student_term_id,))
+                        already_paid = c.fetchone()[0]
+                        
+                        # 4. Calculate current remaining
+                        current_remaining = max(0, discounted_amount - already_paid)
+                        
+                        # 5. Validate amount <= current_remaining (prevents overpayment)
+                        if amount_paid > current_remaining:
+                            errors.append(f"Row {row}: Amount ({amount_paid:,.2f}) exceeds current remaining ({current_remaining:,.2f}).")
+                            continue
+                        
+                        # 6. Check for potential duplicate: See if exact same payment exists
+                        # (same amount, date, reference for this StudentTermID)
+                        c.execute("""
+                            SELECT COUNT(*) 
+                            FROM FeesPayment 
+                            WHERE StudentTermID = ? 
+                            AND AmountPaid = ? 
+                            AND TransactionDate = ? 
+                            AND ReferenceNumber = ?
+                        """, (student_term_id, amount_paid, transaction_date, reference_number))
+                        duplicate_count = c.fetchone()[0]
+                        if duplicate_count > 0:
+                            skipped_count += 1
+                            errors.append(f"Row {row}: Skipped duplicate payment.")
+                            continue
+                        c.execute("SELECT COUNT(*) FROM FeesPayment WHERE ReferenceNumber = ?", (reference_number,))
+                        ref_count = c.fetchone()[0]
+                        if ref_count > 0:
+                            errors.append(f"Row {row}: Reference number '{reference_number}' already used in another payment.")
+                            continue
+                        # If all good, insert payment
+                        c.execute("""
+                            INSERT INTO FeesPayment 
+                            (StudentTermID, FeesID, AmountPaid, TransactionDate, ReferenceNumber, DoneOn)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (student_term_id, fees_id, amount_paid, transaction_date, reference_number, done_on))
+                        
+                        success_count += 1
+                    
+                    except ValueError:
+                        errors.append(f"Row {row}: Invalid amount or data format.")
+                    except sqlite3.Error as e:
+                        errors.append(f"Row {row}: Database error - {str(e)}")
+                
+                conn.commit()
+            
+            # Show results
+            message = f"Imported {success_count} payments successfully.\nSkipped {skipped_count} potential duplicates."
+            if errors:
+                message += "\nErrors/Warnings:\n" + "\n".join(errors[:7])  # Limit to first 10 for brevity
+                if len(errors) > 10:
+                    message += f"\n... and {len(errors) - 10} more errors."
+            QMessageBox.information(self, "Import Result", message)
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to import file: {str(e)}")
+
+class PaymentHistoryPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+        self.load_data()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Payment History - Raw Data")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        
+        # Export button
+        export_btn = QPushButton("Export to Excel")
+        export_btn.clicked.connect(self.export_to_excel)
+        header_layout.addWidget(export_btn)
+        
+        layout.addLayout(header_layout)
+
+        # Filters
+        filter_layout = QHBoxLayout()
+        
+        # Search
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search student, reference...")
+        self.search_input.setMaximumWidth(250)
+        self.search_input.textChanged.connect(self.load_data)
+        
+        # Date range
+        self.date_from = QDateEdit()
+        self.date_from.setDate(QDate.currentDate().addMonths(-1))
+        self.date_from.setCalendarPopup(True)
+        self.date_from.setDisplayFormat("yyyy-MM-dd")
+        self.date_from.dateChanged.connect(self.load_data)
+        
+        self.date_to = QDateEdit()
+        self.date_to.setDate(QDate.currentDate())
+        self.date_to.setCalendarPopup(True)
+        self.date_to.setDisplayFormat("yyyy-MM-dd")
+        self.date_to.dateChanged.connect(self.load_data)
+        
+        # Student filter
+        self.student_combo = QComboBox()
+        self.student_combo.addItem("All Students", None)
+        self.student_combo.currentIndexChanged.connect(self.load_data)
+        
+        # Class filter
+        self.class_combo = QComboBox()
+        self.class_combo.addItem("All Classes", None)
+        self.class_combo.currentIndexChanged.connect(self.load_data)
+        
+        # Term filter
+        self.term_combo = QComboBox()
+        self.term_combo.addItem("All Terms", None)
+        self.term_combo.currentIndexChanged.connect(self.load_data)
+        
+        # Load filter options
+        self.load_filter_options()
+        
+        filter_layout.addWidget(QLabel("Search:"))
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(QLabel("From:"))
+        filter_layout.addWidget(self.date_from)
+        filter_layout.addWidget(QLabel("To:"))
+        filter_layout.addWidget(self.date_to)
+        filter_layout.addWidget(QLabel("Student:"))
+        filter_layout.addWidget(self.student_combo)
+        filter_layout.addWidget(QLabel("Class:"))
+        filter_layout.addWidget(self.class_combo)
+        filter_layout.addWidget(QLabel("Term:"))
+        filter_layout.addWidget(self.term_combo)
+        
+        layout.addLayout(filter_layout)
+
+        # Table for raw payment data
+        self.table = QTableWidget()
+        self.table.setColumnCount(10)
+        self.table.setHorizontalHeaderLabels([
+            "Payment ID", "Student", "Student ID", "Class", "Term", 
+            "Year", "Amount Paid", "Transaction Date", "Reference", "Recorded On"
+        ])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSortingEnabled(True)
+        
+        # Set column widths
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Payment ID
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Student Name
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Student ID
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Class
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Term
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Year
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Amount Paid
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Transaction Date
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Reference
+        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Recorded On
+        
+        layout.addWidget(self.table)
+        
+        # Summary label
+        self.summary_label = QLabel()
+        self.summary_label.setStyleSheet("font-weight: bold; color: #2D3748;")
+        layout.addWidget(self.summary_label)
+
+    def load_filter_options(self):
+        """Load filter options from database"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Load students
+                c.execute("SELECT StudentID, Student_Name FROM Students ORDER BY Student_Name")
+                students = c.fetchall()
+                for student_id, student_name in students:
+                    self.student_combo.addItem(f"{student_name} ({student_id})", student_id)
+                
+                # Load classes
+                c.execute("SELECT DISTINCT ClassName FROM Class ORDER BY ClassName")
+                classes = c.fetchall()
+                for class_name in classes:
+                    self.class_combo.addItem(class_name, class_name)
+                
+                # Load terms
+                c.execute("SELECT DISTINCT TermName FROM Term ORDER BY TermName")
+                terms = c.fetchall()
+                for term_name in terms:
+                    self.term_combo.addItem(term_name, term_name)
+                    
+        except Exception as e:
+            print(f"Error loading filter options: {e}")
+
+    def load_data(self):
+        """Load raw payment history data with filters"""
+        try:
+            with get_db_connection() as (conn, c):
+                query = """
+                SELECT 
+                    fp.FeesPaymentID,
+                    s.Student_Name,
+                    s.StudentID,
+                    c.ClassName,
+                    t.TermName,
+                    ay.Year as AcademicYear,
+                    fp.AmountPaid,
+                    fp.TransactionDate,
+                    fp.ReferenceNumber,
+                    fp.DoneOn
+                FROM FeesPayment fp
+                JOIN StudentTerm st ON fp.StudentTermID = st.StudentTermID
+                JOIN Students s ON st.StudentID = s.StudentID
+                JOIN Class c ON st.ClassID = c.ClassID
+                JOIN Term t ON st.TermID = t.TermID
+                JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                WHERE 1=1
+                """
+                
+                filters = []
+                params = []
+                
+                # Apply search filter
+                search_text = self.search_input.text().strip()
+                if search_text:
+                    filters.append("""
+                        (s.Student_Name LIKE ? OR s.StudentID LIKE ? 
+                         OR fp.ReferenceNumber LIKE ? OR fp.FeesPaymentID LIKE ?)
+                    """)
+                    params.extend([f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%"])
+                
+                # Apply date filters
+                date_from = self.date_from.date().toString("yyyy-MM-dd")
+                date_to = self.date_to.date().toString("yyyy-MM-dd")
+                filters.append("fp.TransactionDate BETWEEN ? AND ?")
+                params.extend([date_from, date_to])
+                
+                # Apply student filter
+                selected_student = self.student_combo.currentData()
+                if selected_student:
+                    filters.append("s.StudentID = ?")
+                    params.append(selected_student)
+                
+                # Apply class filter
+                selected_class = self.class_combo.currentData()
+                if selected_class:
+                    filters.append("c.ClassName = ?")
+                    params.append(selected_class)
+                
+                # Apply term filter
+                selected_term = self.term_combo.currentData()
+                if selected_term:
+                    filters.append("t.TermName = ?")
+                    params.append(selected_term)
+                
+                if filters:
+                    query += " AND " + " AND ".join(filters)
+                
+                query += " ORDER BY fp.TransactionDate DESC, fp.DoneOn DESC"
+                
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                # Update table
+                self.table.setRowCount(len(rows))
+                total_amount = 0
+                
+                for row_idx, row_data in enumerate(rows):
+                    total_amount += float(row_data[6] or 0)  # AmountPaid
+                    
+                    for col_idx, data in enumerate(row_data):
+                        item = QTableWidgetItem(str(data) if data is not None else "")
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        
+                        # Color code based on amount
+                        if col_idx == 6:  # AmountPaid column
+                            item.setText(f"{float(data or 0):,.2f}")
+                            if float(data or 0) > 0:
+                                item.setForeground(QColor(0, 100, 0))  # Dark green
+                        
+                        self.table.setItem(row_idx, col_idx, item)
+                
+                # Update summary
+                self.summary_label.setText(
+                    f"Total Records: {len(rows)} | "
+                    f"Total Amount Paid: {total_amount:,.2f} | "
+                    f"Date Range: {date_from} to {date_to}"
                 )
                 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load students: {str(e)}")
-    
-    def generate_template(self):
-        if not self.filtered_students:
-            QMessageBox.warning(self, "No Data", "No students found to generate template.")
-            return
-            
+            print(f"Error loading payment history: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to load payment history: {str(e)}")
+
+    def export_to_excel(self):
+        """Export payment history to Excel"""
         try:
-            # Convert to DataFrame
-            data = []
-            for student in self.filtered_students:
-                data.append({
-                    'StudentTermID': student[0],
-                    'Name': student[1],
-                    'FeesID': student[2],
-                    'AmountDue': student[3],
-                    'AmountPaid': student[4],
-                    'PaymentStatus': student[5],
-                    'TransactionDate': student[6],  # Empty for user input
-                    'Reference': student[7]         # Empty for user input
-                })
+            if self.table.rowCount() == 0:
+                QMessageBox.warning(self, "No Data", "No payment history to export.")
+                return
             
-            df = pd.DataFrame(data)
-            
-            # Save to Excel
             file_path, _ = QFileDialog.getSaveFileName(
-                self, "Save Fee Payment Template", 
-                f"Fee_Payment_Template_{self.class_combo.currentText()}_{self.term_combo.currentText()}.xlsx",
+                self, "Save Payment History", 
+                f"Payment_History_{QDate.currentDate().toString('yyyyMMdd')}.xlsx",
                 "Excel Files (*.xlsx)"
             )
             
             if file_path:
-                with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, sheet_name='Fee Payments', index=False)
-                    
-                    workbook = writer.book
-                    worksheet = writer.sheets['Fee Payments']
-                    
-                    # Format headers
-                    header_format = workbook.add_format({
-                        'bold': True,
-                        'bg_color': '#3498db',
-                        'font_color': 'white',
-                        'border': 1
-                    })
-                    
-                    # Format input columns
-                    input_format = workbook.add_format({
-                        'bg_color': '#FFF2CC',
-                        'border': 1
-                    })
-                    
-                    # Format read-only columns
-                    readonly_format = workbook.add_format({
-                        'bg_color': '#F0F0F0',
-                        'border': 1,
-                        'locked': True
-                    })
-                    
-                    # Format payment status columns
-                    paid_format = workbook.add_format({'bg_color': '#C6EFCE', 'border': 1, 'locked': True})
-                    partial_format = workbook.add_format({'bg_color': '#FFEB9C', 'border': 1, 'locked': True})
-                    unpaid_format = workbook.add_format({'bg_color': '#FFC7CE', 'border': 1, 'locked': True})
-                    
-                    # Apply formatting
-                    for col_num, value in enumerate(df.columns.values):
-                        worksheet.write(0, col_num, value, header_format)
-                        
-                        # Set column widths
-                        if value == 'Name':
-                            worksheet.set_column(col_num, col_num, 25)
-                        elif value in ['TransactionDate', 'Reference']:
-                            worksheet.set_column(col_num, col_num, 20)
-                        else:
-                            worksheet.set_column(col_num, col_num, 15)
-                        
-                        # Format cells
-                        if value in ['TransactionDate', 'Reference']:
-                            worksheet.set_column(col_num, col_num, 20, input_format)
-                        elif value == 'PaymentStatus':
-                            # Apply conditional formatting for payment status
-                            for row in range(1, len(df) + 1):
-                                status = df.iloc[row-1]['PaymentStatus']
-                                if status == 'Fully Paid':
-                                    worksheet.write(row, col_num, status, paid_format)
-                                elif status == 'Partially Paid':
-                                    worksheet.write(row, col_num, status, partial_format)
-                                else:
-                                    worksheet.write(row, col_num, status, unpaid_format)
-                        else:
-                            worksheet.set_column(col_num, col_num, 15, readonly_format)
-                    
-                    # Add data validation for AmountPaid (if needed)
-                    # Add date validation for TransactionDate
-                    date_col = df.columns.get_loc('TransactionDate')
-                    date_validation = {
-                        'validate': 'date',
-                        'criteria': 'between',
-                        'minimum': datetime(2000, 1, 1),
-                        'maximum': datetime(2100, 12, 31),
-                        'input_title': 'Enter date',
-                        'input_message': 'Date must be in YYYY-MM-DD format',
-                        'error_title': 'Invalid Date',
-                        'error_message': 'Please enter a valid date in YYYY-MM-DD format'
-                    }
-                    worksheet.data_validation(1, date_col, len(df), date_col, date_validation)
+                # Collect data from table
+                data = []
+                headers = []
                 
-                # Show success message
+                # Get headers
+                for col in range(self.table.columnCount()):
+                    headers.append(self.table.horizontalHeaderItem(col).text())
+                
+                # Get data
+                for row in range(self.table.rowCount()):
+                    row_data = []
+                    for col in range(self.table.columnCount()):
+                        item = self.table.item(row, col)
+                        row_data.append(item.text() if item else "")
+                    data.append(row_data)
+                
+                # Create DataFrame and save
+                df = pd.DataFrame(data, columns=headers)
+                df.to_excel(file_path, index=False)
+                
                 QMessageBox.information(self, "Success", 
-                                      f"Template generated successfully!\n"
-                                      f"Saved to: {file_path}\n\n"
-                                      f"Students included: {len(self.filtered_students)}\n"
-                                      f"Class: {self.class_combo.currentText()}\n"
-                                      f"Term: {self.term_combo.currentText()}\n\n"
-                                      f"Template includes ALL students with payment status color-coding.")
+                                      f"Payment history exported successfully!\n"
+                                      f"Saved to: {file_path}")
                 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate template: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to export: {str(e)}")
+
+    def show_context_menu(self, position):
+        """Show context menu for table actions"""
+        menu = QMenu()
+        
+        view_details = menu.addAction("View Payment Details")
+        copy_row = menu.addAction("Copy Row Data")
+        menu.addSeparator()
+        refresh = menu.addAction("Refresh Data")
+        
+        action = menu.exec_(self.table.viewport().mapToGlobal(position))
+        
+        if action == view_details:
+            self.view_payment_details()
+        elif action == copy_row:
+            self.copy_row_data()
+        elif action == refresh:
+            self.load_data()
+
+    def view_payment_details(self):
+        """View details of selected payment"""
+        selected_row = self.table.currentRow()
+        if selected_row >= 0:
+            payment_id = self.table.item(selected_row, 0).text()
+            student_name = self.table.item(selected_row, 1).text()
+            
+            # Show detailed dialog
+            self.show_payment_detail_dialog(payment_id, student_name)
+
+    def copy_row_data(self):
+        """Copy selected row data to clipboard"""
+        selected_row = self.table.currentRow()
+        if selected_row >= 0:
+            row_data = []
+            for col in range(self.table.columnCount()):
+                item = self.table.item(selected_row, col)
+                row_data.append(item.text() if item else "")
+            
+            clipboard = QApplication.clipboard()
+            clipboard.setText("\t".join(row_data))
+            
+            QMessageBox.information(self, "Copied", "Row data copied to clipboard.")
+
+    def show_payment_detail_dialog(self, payment_id, student_name):
+        """Show detailed payment information"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                SELECT 
+                    fp.*,
+                    s.Student_Name,
+                    c.ClassName,
+                    t.TermName,
+                    ay.Year,
+                    f.Amount as OriginalFee,
+                    st.PayRate
+                FROM FeesPayment fp
+                JOIN StudentTerm st ON fp.StudentTermID = st.StudentTermID
+                JOIN Students s ON st.StudentID = s.StudentID
+                JOIN Class c ON st.ClassID = c.ClassID
+                JOIN Term t ON st.TermID = t.TermID
+                JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                JOIN Fees f ON f.Class = c.ClassID AND f.Term = t.TermID
+                WHERE fp.FeesPaymentID = ?
+                """, (payment_id,))
+                
+                payment_data = c.fetchone()
+                
+                if payment_data:
+                    dialog = QDialog(self)
+                    dialog.setWindowTitle(f"Payment Details - {student_name}")
+                    dialog.setFixedSize(500, 400)
+                    
+                    layout = QVBoxLayout()
+                    
+                    # Payment details in form layout
+                    form = QFormLayout()
+                    
+                    details = [
+                        ("Payment ID", payment_data[0]),
+                        ("Student", payment_data[11]),
+                        ("Class", payment_data[12]),
+                        ("Term", f"{payment_data[13]} ({payment_data[14]})"),
+                        ("Original Fee", f"{payment_data[15]:,.2f}"),
+                        ("Pay Rate", f"{payment_data[16]}%"),
+                        ("Amount Paid", f"{payment_data[3]:,.2f}"),
+                        ("Transaction Date", payment_data[4]),
+                        ("Reference", payment_data[5] or "N/A"),
+                        ("Recorded On", payment_data[6])
+                    ]
+                    
+                    for label, value in details:
+                        value_label = QLabel(str(value))
+                        form.addRow(QLabel(f"{label}:"), value_label)
+                    
+                    layout.addLayout(form)
+                    
+                    # Close button
+                    close_btn = QPushButton("Close")
+                    close_btn.clicked.connect(dialog.accept)
+                    layout.addWidget(close_btn)
+                    
+                    dialog.setLayout(layout)
+                    dialog.exec_()
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load payment details: {str(e)}")
+
 #### End Of Fees Management ######
 
 class Uniforms(QWidget):
