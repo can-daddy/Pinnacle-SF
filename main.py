@@ -4705,8 +4705,16 @@ class PaymentHistoryPage(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to load payment details: {str(e)}")
 
 #### End Of Fees Management ######
+#### Start Of Uniforms #####
+class Uniforms(QTabWidget):
+    def __init__(self):
+        super().__init__()
+        self.Dashboard = UniformDashBoard()
+        self.Inventory = InventoryManagement()
+        self.addTab(self.Dashboard,"Dashboard & Insights")
+        self.addTab(self.Inventory,"Inventory")
 
-class Uniforms(QWidget):
+class UniformDashBoard(QWidget):
     def __init__(self):
         super().__init__()
         self.setStyleSheet("""
@@ -4926,6 +4934,196 @@ class Uniforms(QWidget):
         except Exception as e:
             QMessageBox.warning(dialog, "Error", f"Failed to add uniform: {str(e)}")
 
+class InventoryManagement(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit, QDateEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # First row: Filters
+        filter_layout = QHBoxLayout()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Search...")
+        search_input.setMaximumWidth(200)
+        from_date = QDateEdit()
+        from_date.setCalendarPopup(True)
+        from_date.setDate(QDate.currentDate().addMonths(-1))  # Default to last month
+        to_date = QDateEdit()
+        to_date.setCalendarPopup(True)
+        to_date.setDate(QDate.currentDate())
+        type_combo = QComboBox()
+        type_combo.addItems(["All Types", "In", "Out"])
+        filter_layout.addWidget(search_input)
+        filter_layout.addWidget(QLabel("From Date:"))
+        filter_layout.addWidget(from_date)
+        filter_layout.addWidget(QLabel("To Date:"))
+        filter_layout.addWidget(to_date)
+        filter_layout.addWidget(QLabel("Type:"))
+        filter_layout.addWidget(type_combo)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
+        # Second row: Results, metrics, buttons
+        metrics_layout = QHBoxLayout()
+        self.results_label = QLabel("0 results retrieved")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+        self.high_in_label = QLabel("High Qty In: 0")
+        self.high_in_label.setStyleSheet("font-size: 14px; color: #00C000;")
+        self.high_out_label = QLabel("High Qty Out: 0")
+        self.high_out_label.setStyleSheet("font-size: 14px; color: #C00000;")
+        print_btn = QPushButton("Print")
+        print_btn.clicked.connect(self.print_table)
+        new_inv_btn = QPushButton("New Inventory")
+        new_inv_btn.clicked.connect(self.show_add_inventory_dialog)
+        metrics_layout.addWidget(self.results_label)
+        metrics_layout.addWidget(self.high_in_label)
+        metrics_layout.addWidget(self.high_out_label)
+        metrics_layout.addStretch()
+        metrics_layout.addWidget(print_btn)
+        metrics_layout.addWidget(new_inv_btn)
+        layout.addLayout(metrics_layout)
+
+        # Third row: Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["ID", "Uniform", "Type", "Quantity", "Price", "Date", "References"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        # Connect filters to load data (placeholder)
+        search_input.textChanged.connect(self.load_data)
+        from_date.dateChanged.connect(self.load_data)
+        to_date.dateChanged.connect(self.load_data)
+        type_combo.currentIndexChanged.connect(self.load_data)
+
+        self.load_data()  # Initial load
+
+    def load_data(self):
+        # Placeholder: Simulate data loading
+        data = [
+            (1, "Shirt", "In", 50, 10.0, "2025-09-01", "Supplier A"),
+            (2, "Pants", "Out", 20, 15.0, "2025-09-05", "Sale #123"),
+            (3, "Skirt", "In", 30, 12.5, "2025-09-10", "Supplier B")
+        ]
+        self.table.setRowCount(len(data))
+        for i, row in enumerate(data):
+            for j, val in enumerate(row):
+                self.table.setItem(i, j, QTableWidgetItem(str(val)))
+        # Update metrics (placeholder calculations)
+        sender = self.sender()  # To avoid recalculating if not needed, but for demo
+        high_in = max([r[3] for r in data if r[2] == "In"], default=0)
+        high_out = max([r[3] for r in data if r[2] == "Out"], default=0)
+        self.high_in_label.setText(f"High Qty In: {high_in}")
+        self.high_out_label.setText(f"High Qty Out: {high_out}")
+        self.results_label.setText(f"{len(data)} results retrieved")
+
+    def print_table(self):
+        # Placeholder for print functionality
+        QMessageBox.information(self, "Print", "Printing table... (placeholder)")
+
+    def show_add_inventory_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add New Inventory")
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        uniform_combo = QComboBox()
+        # Placeholder populate
+        uniform_combo.addItems(["Shirt", "Pants", "Skirt"])
+        type_combo = QComboBox()
+        type_combo.addItems(["In", "Out"])
+        quantity_edit = QLineEdit()
+        price_edit = QLineEdit()
+        date_edit = QDateEdit()
+        date_edit.setCalendarPopup(True)
+        date_edit.setDate(QDate.currentDate())
+        ref_edit = QLineEdit()
+        form_layout.addRow("Uniform:", uniform_combo)
+        form_layout.addRow("Type:", type_combo)
+        form_layout.addRow("Quantity:", quantity_edit)
+        form_layout.addRow("Price:", price_edit)
+        form_layout.addRow("Date:", date_edit)
+        form_layout.addRow("References:", ref_edit)
+        layout.addLayout(form_layout)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(lambda: self.save_inventory(dialog, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def save_inventory(self, dialog, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit):
+        # Placeholder validation and save
+        if not all([uniform_combo.currentText(), type_combo.currentText(), quantity_edit.text(), price_edit.text(), ref_edit.text()]):
+            QMessageBox.warning(dialog, "Error", "All fields are required")
+            return
+        try:
+            int(quantity_edit.text())
+            float(price_edit.text())
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Invalid quantity or price")
+            return
+        QMessageBox.information(dialog, "Success", "Inventory added (placeholder)")
+        dialog.close()
+        self.load_data()
+
+#### This is End of the Uniforms  ####
 class Expenses(QWidget):
     def __init__(self):
         super().__init__()
