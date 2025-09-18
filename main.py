@@ -4711,8 +4711,12 @@ class Uniforms(QTabWidget):
         super().__init__()
         self.Dashboard = UniformDashBoard()
         self.Inventory = InventoryManagement()
+        self.Procurement = ProcurementManagement()
+        self.Expense = ExpenseManagement()
         self.addTab(self.Dashboard,"Dashboard & Insights")
         self.addTab(self.Inventory,"Inventory")
+        self.addTab(self.Procurement,"Procurement")
+        self.addTab(self.Expense,"Expense")
 
 class UniformDashBoard(QWidget):
     def __init__(self):
@@ -4885,14 +4889,12 @@ class UniformDashBoard(QWidget):
         form_layout = QFormLayout()
         name_edit = QLineEdit()
         price_edit = QLineEdit()
-        quantity_edit = QLineEdit()
         form_layout.addRow("Uniform Name:", name_edit)
         form_layout.addRow("Price:", price_edit)
-        form_layout.addRow("Quantity:", quantity_edit)
         layout.addLayout(form_layout)
         buttons = QHBoxLayout()
         save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_uniform(dialog, name_edit, price_edit, quantity_edit))
+        save_btn.clicked.connect(lambda: self.save_uniform(dialog, name_edit, price_edit))
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dialog.close)
         buttons.addWidget(save_btn)
@@ -4901,21 +4903,21 @@ class UniformDashBoard(QWidget):
         dialog.setLayout(layout)
         dialog.exec_()
 
-    def save_uniform(self, dialog, name_edit, price_edit, quantity_edit):
+    def save_uniform(self, dialog, name_edit, price_edit):
         name = name_edit.text().strip()
         price_str = price_edit.text().strip()
-        quantity_str = quantity_edit.text().strip()
-        if not all([name, price_str, quantity_str]):
+        quantity_str = 0
+        if not all([name, price_str]):
             QMessageBox.warning(dialog, "Error", "All fields are required")
             return
         try:
             price = float(price_str)
             quantity = int(quantity_str)
-            if price <= 0 or quantity <= 0:
-                QMessageBox.warning(dialog, "Error", "Price and Quantity must be positive")
+            if price <= 0:
+                QMessageBox.warning(dialog, "Error", "Price must be positive")
                 return
         except ValueError:
-            QMessageBox.warning(dialog, "Error", "Invalid price or quantity")
+            QMessageBox.warning(dialog, "Error", "Invalid price")
             return
         try:
             with get_db_connection() as (conn, c):
@@ -4929,7 +4931,6 @@ class UniformDashBoard(QWidget):
                 QMessageBox.information(dialog, "Success", "Uniform added successfully")
                 name_edit.clear()
                 price_edit.clear()
-                quantity_edit.clear()
                 self.load_data()
         except Exception as e:
             QMessageBox.warning(dialog, "Error", f"Failed to add uniform: {str(e)}")
@@ -5081,11 +5082,24 @@ class InventoryManagement(QWidget):
         form_layout = QFormLayout()
         uniform_combo = QComboBox()
         # Placeholder populate
-        uniform_combo.addItems(["Shirt", "Pants", "Skirt"])
+        with get_db_connection() as (conn,c):
+            c.execute("SELECT UniformId,UniformName FROM Uniform")
+            uniforms = c.fetchall()
+            for uid, uname in uniforms:
+                uniform_combo.addItem(uname, uid)
         type_combo = QComboBox()
         type_combo.addItems(["In", "Out"])
+        type_combo = QComboBox()
+        type_combo.addItems(["In", "Out"])
+        type_combo.currentIndexChanged.connect(lambda: self.update_quantity_placeholder(dialog, uniform_combo, type_combo, quantity_edit))
+
         quantity_edit = QLineEdit()
+        quantity_edit.setValidator(QIntValidator(1, 10000))
+        quantity_edit.setPlaceholderText("Enter quantity")
+
         price_edit = QLineEdit()
+        price_edit.setValidator(QDoubleValidator(0.01, 10000.00, 2))  # Min 0.01 to prevent 0
+        price_edit.setPlaceholderText("Enter price (min 0.01)")
         date_edit = QDateEdit()
         date_edit.setCalendarPopup(True)
         date_edit.setDate(QDate.currentDate())
@@ -5109,19 +5123,560 @@ class InventoryManagement(QWidget):
         dialog.exec_()
 
     def save_inventory(self, dialog, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit):
-        # Placeholder validation and save
-        if not all([uniform_combo.currentText(), type_combo.currentText(), quantity_edit.text(), price_edit.text(), ref_edit.text()]):
+        uniform_name = uniform_combo.currentText()
+        inv_type = type_combo.currentText()
+        quantity_str = quantity_edit.text().strip()
+        price_str = price_edit.text().strip()
+        date_str = date_edit.date().toString("yyyy-MM-dd")
+        references = ref_edit.text().strip()
+        
+        if not all([uniform_name, inv_type, quantity_str, price_str, date_str, references]):
             QMessageBox.warning(dialog, "Error", "All fields are required")
             return
+        
         try:
-            int(quantity_edit.text())
-            float(price_edit.text())
+            quantity = int(quantity_str)
+            price = float(price_str)
+            if quantity <= 0 or price < 0:
+                QMessageBox.warning(dialog, "Error", "Quantity must be positive and Price must be non-negative")
+                return
         except ValueError:
             QMessageBox.warning(dialog, "Error", "Invalid quantity or price")
             return
-        QMessageBox.information(dialog, "Success", "Inventory added (placeholder)")
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Get UniformId from name (assuming unique names)
+                c.execute("SELECT UniformId FROM Uniform WHERE UniformName = ?", (uniform_name,))
+                result = c.fetchone()
+                if not result:
+                    QMessageBox.warning(dialog, "Error", "Selected uniform not found")
+                    return
+                uniform_id = result[0]
+                
+                # Check current quantity for 'Out' to avoid negative
+                if inv_type == 'Out':
+                    c.execute("SELECT Quantity FROM Uniform WHERE UniformId = ?", (uniform_id,))
+                    current_qty = c.fetchone()[0]
+                    if current_qty < quantity:
+                        QMessageBox.warning(dialog, "Error", "Insufficient stock for this withdrawal")
+                        return
+                
+                # Insert into UniformInventory with quoted column names
+                c.execute('''INSERT INTO UniformInventory ("UniformID", "Type", "Quantity", "Price", "Date", "References")
+                            VALUES (?, ?, ?, ?, ?, ?)''', (uniform_id, inv_type, quantity, price, date_str, references))
+                
+                # Update Uniform quantity
+                if inv_type == 'In':
+                    c.execute("UPDATE Uniform SET Quantity = Quantity + ? WHERE UniformId = ?", (quantity, uniform_id))
+                else:  # 'Out'
+                    c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?", (quantity, uniform_id))
+                
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Inventory updated successfully")
+                dialog.close()
+                self.load_data()  # Refresh data dynamically
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to save inventory: {str(e)}")
+
+    def update_quantity_placeholder(self, dialog, uniform_combo, type_combo, quantity_edit):
+        if type_combo.currentText() == "Out":
+            uniform_id = uniform_combo.currentData()
+            if uniform_id:
+                try:
+                    with get_db_connection() as (conn, c):
+                        c.execute("SELECT Quantity FROM Uniform WHERE UniformId = ?", (uniform_id,))
+                        result = c.fetchone()
+                        if result:
+                            available_qty = result[0]
+                            quantity_edit.setPlaceholderText(f"Available qty: {available_qty}")
+                            return
+                except Exception as e:
+                    print(f"Error fetching available qty: {e}")  # Or show warning
+        quantity_edit.setPlaceholderText("Enter quantity")
+
+class ProcurementManagement(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit, QDateEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Procurement Management")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+
+        # First row: Filters (Search, From Date, To Date, Type ComboBox)
+        filter_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search...")
+        self.search_input.setMaximumWidth(200)
+        self.search_input.textChanged.connect(self.load_data)
+
+        self.from_date = QDateEdit()
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDate(QDate.currentDate().addMonths(-1))
+        self.from_date.dateChanged.connect(self.load_data)
+
+        self.to_date = QDateEdit()
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDate(QDate.currentDate())
+        self.to_date.dateChanged.connect(self.load_data)
+
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["All Types", "In", "Out"])
+        self.type_combo.currentIndexChanged.connect(self.load_data)
+
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(QLabel("From Date:"))
+        filter_layout.addWidget(self.from_date)
+        filter_layout.addWidget(QLabel("To Date:"))
+        filter_layout.addWidget(self.to_date)
+        filter_layout.addWidget(QLabel("Type:"))
+        filter_layout.addWidget(self.type_combo)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
+        # Second row: Results, High Qty In/Out, Print, New Inventory buttons
+        metrics_layout = QHBoxLayout()
+        self.results_label = QLabel("0 results retrieved")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+
+        self.high_in_label = QLabel("High Qty In: 0")
+        self.high_in_label.setStyleSheet("font-size: 14px; color: #00C000;")
+
+        self.high_out_label = QLabel("High Qty Out: 0")
+        self.high_out_label.setStyleSheet("font-size: 14px; color: #C00000;")
+
+        print_btn = QPushButton("Print")
+        print_btn.clicked.connect(self.print_table)
+
+        new_inv_btn = QPushButton("New Inventory")
+        new_inv_btn.clicked.connect(self.show_add_inventory_dialog)
+
+        metrics_layout.addWidget(self.results_label)
+        metrics_layout.addWidget(self.high_in_label)
+        metrics_layout.addWidget(self.high_out_label)
+        metrics_layout.addStretch()
+        metrics_layout.addWidget(print_btn)
+        metrics_layout.addWidget(new_inv_btn)
+        layout.addLayout(metrics_layout)
+
+        # Third row: Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(8)  # Added Actions column
+        self.table.setHorizontalHeaderLabels(["ID", "Name", "Date", "Unit", "Price", "Reference", "Quantity", "Actions"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        for col in range(7):
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+        header.setSectionResizeMode(7, QHeaderView.Fixed)
+        header.resizeSection(7, 150)  # Fixed width for actions
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        self.load_data()
+
+    def load_data(self):
+        # Placeholder data (replace with actual DB query)
+        data = [
+            (1, "Uniform Shirts", "2025-09-01", "PCS", 150.0, "SUP001", 100, None),
+            (2, "Uniform Pants", "2025-09-05", "PCS", 200.0, "SUP002", 50, None),
+            (3, "Uniform Skirts", "2025-09-10", "PCS", 180.0, "SUP003", 75, None)
+        ]
+        self.table.setRowCount(len(data))
+        for i, row in enumerate(data):
+            for j, val in enumerate(row[:-1]):  # Exclude Actions
+                self.table.setItem(i, j, QTableWidgetItem(str(val)))
+            # Add action buttons
+            self.add_action_buttons(i, row[0])  # Pass ID for edit/delete
+
+        # Update metrics (placeholder)
+        high_in = max([r[6] for r in data if 'In' in r[5]], default=0)  # Based on reference or type
+        high_out = max([r[6] for r in data if 'Out' in r[5]], default=0)
+        self.high_in_label.setText(f"High Qty In: {high_in}")
+        self.high_out_label.setText(f"High Qty Out: {high_out}")
+        self.results_label.setText(f"{len(data)} results retrieved")
+
+    def add_action_buttons(self, row, pro_id):
+        actions_widget = QWidget()
+        actions_widget.setMinimumWidth(140)
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(2, 2, 2, 2)
+        actions_layout.setSpacing(2)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedWidth(60)
+        edit_btn.clicked.connect(lambda: self.edit_procurement(pro_id))
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedWidth(60)
+        delete_btn.clicked.connect(lambda: self.delete_procurement(pro_id))
+
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+
+        self.table.setCellWidget(row, 7, actions_widget)
+
+    def print_table(self):
+        QMessageBox.information(self, "Print", "Printing procurement table... (placeholder)")
+
+    def show_add_inventory_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add New Procurement")
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        name_edit = QLineEdit()
+        date_edit = QDateEdit()
+        date_edit.setCalendarPopup(True)
+        date_edit.setDate(QDate.currentDate())
+        unit_edit = QLineEdit()
+        price_edit = QLineEdit()
+        ref_edit = QLineEdit()
+        quantity_edit = QLineEdit()
+        form_layout.addRow("Procurement Name:", name_edit)
+        form_layout.addRow("Date:", date_edit)
+        form_layout.addRow("Unit:", unit_edit)
+        form_layout.addRow("Price:", price_edit)
+        form_layout.addRow("Reference:", ref_edit)
+        form_layout.addRow("Quantity:", quantity_edit)
+        layout.addLayout(form_layout)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(lambda: self.save_procurement(dialog, name_edit, date_edit, unit_edit, price_edit, ref_edit, quantity_edit))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def save_procurement(self, dialog, name_edit, date_edit, unit_edit, price_edit, ref_edit, quantity_edit):
+        name = name_edit.text().strip()
+        date = date_edit.date().toString("yyyy-MM-dd")
+        unit = unit_edit.text().strip()
+        price_str = price_edit.text().strip()
+        ref = ref_edit.text().strip()
+        quantity_str = quantity_edit.text().strip()
+        if not all([name, date, unit, price_str, ref, quantity_str]):
+            QMessageBox.warning(dialog, "Error", "All fields are required")
+            return
+        try:
+            price = float(price_str)
+            quantity = int(quantity_str)
+            if price <= 0 or quantity <= 0:
+                QMessageBox.warning(dialog, "Error", "Price and Quantity must be positive")
+                return
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Invalid price or quantity")
+            return
+        # Placeholder save (replace with DB insert)
+        QMessageBox.information(dialog, "Success", "Procurement added (placeholder)")
         dialog.close()
         self.load_data()
+
+    def edit_procurement(self, pro_id):
+        # Placeholder edit dialog
+        QMessageBox.information(self, "Edit", f"Editing procurement {pro_id} (placeholder)")
+
+    def delete_procurement(self, pro_id):
+        reply = QMessageBox.question(self, 'Confirm Delete', f'Delete procurement {pro_id}?', QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # Placeholder delete
+            QMessageBox.information(self, "Delete", "Procurement deleted (placeholder)")
+            self.load_data()
+
+class ExpenseManagement(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit, QDateEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Expense Management")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+
+        # First row: Filters (Search, From Date, To Date, Category ComboBox)
+        filter_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search...")
+        self.search_input.setMaximumWidth(200)
+        self.search_input.textChanged.connect(self.load_data)
+
+        self.from_date = QDateEdit()
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDate(QDate.currentDate().addMonths(-1))
+        self.from_date.dateChanged.connect(self.load_data)
+
+        self.to_date = QDateEdit()
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDate(QDate.currentDate())
+        self.to_date.dateChanged.connect(self.load_data)
+
+        self.category_combo = QComboBox()
+        self.category_combo.addItem("All Categories")
+        # Populate categories from DB if needed, placeholder
+        self.category_combo.addItems(["Uniform", "Maintenance", "Other"])
+        self.category_combo.currentIndexChanged.connect(self.load_data)
+
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(QLabel("From Date:"))
+        filter_layout.addWidget(self.from_date)
+        filter_layout.addWidget(QLabel("To Date:"))
+        filter_layout.addWidget(self.to_date)
+        filter_layout.addWidget(QLabel("Category:"))
+        filter_layout.addWidget(self.category_combo)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
+        # Second row: Results, Total Amount, Print, Add New Expense buttons
+        metrics_layout = QHBoxLayout()
+        self.results_label = QLabel("0 results retrieved")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+
+        self.total_amount_label = QLabel("Total Amount: $0.00")
+        self.total_amount_label.setStyleSheet("font-size: 14px; color: #2D3748; font-weight: bold;")
+
+        print_btn = QPushButton("Print")
+        print_btn.clicked.connect(self.print_table)
+
+        add_exp_btn = QPushButton("Add New Expense")
+        add_exp_btn.clicked.connect(self.show_add_expense_dialog)
+
+        metrics_layout.addWidget(self.results_label)
+        metrics_layout.addWidget(self.total_amount_label)
+        metrics_layout.addStretch()
+        metrics_layout.addWidget(print_btn)
+        metrics_layout.addWidget(add_exp_btn)
+        layout.addLayout(metrics_layout)
+
+        # Third row: Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)  # Added Actions column
+        self.table.setHorizontalHeaderLabels(["ID", "Category", "Amount", "Date", "Description", "Actions"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        for col in range(5):
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.Fixed)
+        header.resizeSection(5, 150)  # Fixed width for actions
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        self.load_data()
+
+    def load_data(self):
+        # Placeholder data (replace with actual DB query)
+        data = [
+            (1, "Uniform", 1500.0, "2025-09-01", "Uniform procurement"),
+            (2, "Maintenance", 500.0, "2025-09-05", "Repair costs"),
+            (3, "Other", 200.0, "2025-09-10", "Miscellaneous")
+        ]
+        self.table.setRowCount(len(data))
+        total_amount = 0
+        for i, row in enumerate(data):
+            for j, val in enumerate(row[:-1]):  # Exclude Actions
+                self.table.setItem(i, j, QTableWidgetItem(str(val)))
+            total_amount += row[2]  # Sum amounts
+            # Add action buttons
+            self.add_action_buttons(i, row[0])  # Pass ID for edit/delete
+
+        # Update metrics (placeholder)
+        self.results_label.setText(f"{len(data)} results retrieved")
+        self.total_amount_label.setText(f"Total Amount: ${total_amount:.2f}")
+
+    def add_action_buttons(self, row, exp_id):
+        actions_widget = QWidget()
+        actions_widget.setMinimumWidth(140)
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(2, 2, 2, 2)
+        actions_layout.setSpacing(2)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedWidth(60)
+        edit_btn.clicked.connect(lambda: self.edit_expense(exp_id))
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedWidth(60)
+        delete_btn.clicked.connect(lambda: self.delete_expense(exp_id))
+
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+
+        self.table.setCellWidget(row, 5, actions_widget)
+
+    def print_table(self):
+        QMessageBox.information(self, "Print", "Printing expense table... (placeholder)")
+
+    def show_add_expense_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add New Expense")
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        category_combo = QComboBox()
+        category_combo.addItems(["Uniform", "Maintenance", "Other"])
+        amount_edit = QLineEdit()
+        date_edit = QDateEdit()
+        date_edit.setCalendarPopup(True)
+        date_edit.setDate(QDate.currentDate())
+        desc_edit = QLineEdit()
+        form_layout.addRow("Category:", category_combo)
+        form_layout.addRow("Amount:", amount_edit)
+        form_layout.addRow("Date:", date_edit)
+        form_layout.addRow("Description:", desc_edit)
+        layout.addLayout(form_layout)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(lambda: self.save_expense(dialog, category_combo, amount_edit, date_edit, desc_edit))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def save_expense(self, dialog, category_combo, amount_edit, date_edit, desc_edit):
+        category = category_combo.currentText()
+        amount_str = amount_edit.text().strip()
+        date = date_edit.date().toString("yyyy-MM-dd")
+        desc = desc_edit.text().strip()
+        if not all([category, amount_str, date, desc]):
+            QMessageBox.warning(dialog, "Error", "All fields are required")
+            return
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                QMessageBox.warning(dialog, "Error", "Amount must be positive")
+                return
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Invalid amount")
+            return
+        # Placeholder save (replace with DB insert)
+        QMessageBox.information(dialog, "Success", "Expense added (placeholder)")
+        dialog.close()
+        self.load_data()
+
+    def edit_expense(self, exp_id):
+        # Placeholder edit dialog
+        QMessageBox.information(self, "Edit", f"Editing expense {exp_id} (placeholder)")
+
+    def delete_expense(self, exp_id):
+        reply = QMessageBox.question(self, 'Confirm Delete', f'Delete expense {exp_id}?', QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # Placeholder delete
+            QMessageBox.information(self, "Delete", "Expense deleted (placeholder)")
+            self.load_data()
 
 #### This is End of the Uniforms  ####
 class Expenses(QWidget):
