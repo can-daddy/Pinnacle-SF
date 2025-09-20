@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+
 # Enhanced connection function with context manager
 @contextmanager
 def get_db_connection():
@@ -4718,6 +4719,98 @@ class Uniforms(QTabWidget):
         self.addTab(self.Procurement,"Procurement")
         self.addTab(self.Expense,"Expense")
 
+class UniformDialog(QDialog):
+    def __init__(self, parent=None, uniform_id=None):
+        super().__init__(parent)
+        self.uniform_id = uniform_id
+        self.setWindowTitle("Add New Uniform" if uniform_id is None else "Edit Uniform")
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        
+        self.name_edit = QLineEdit()
+        self.price_edit = QLineEdit()
+        
+        form_layout.addRow("Uniform Name:", self.name_edit)
+        form_layout.addRow("Price:", self.price_edit)
+        
+        layout.addLayout(form_layout)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.validate_and_save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        # If editing, load existing data
+        if uniform_id is not None:
+            self.load_uniform_data()
+    
+    def load_uniform_data(self):
+        """Load uniform data for editing"""
+        try:
+            with get_db_connection() as (conn, c):
+                
+                c.execute("SELECT * FROM Uniform WHERE UniformId = ?", (self.uniform_id,))
+                uniform = c.fetchone()
+                
+                if uniform:
+                    self.name_edit.setText(uniform['UniformName'])
+                    self.price_edit.setText(str(uniform['UniformPrice']))
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load uniform data: {str(e)}")
+    
+    def validate_and_save(self):
+        """Validate input and save uniform data"""
+        name = self.name_edit.text().strip()
+        price_str = self.price_edit.text().strip()
+        
+        # Validation
+        if not all([name, price_str]):
+            QMessageBox.warning(self, "Error", "All fields are required")
+            return
+        
+        try:
+            price = float(price_str)
+            if price <= 0:
+                QMessageBox.warning(self, "Error", "Price must be positive")
+                return
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Invalid price")
+            return
+        
+        # Save to database
+        try:
+            with get_db_connection() as (conn,c):
+                
+                # Check for duplicate name (excluding current uniform if editing)
+                if self.uniform_id is None:
+                    c.execute("SELECT COUNT(*) FROM Uniform WHERE UniformName = ?", (name,))
+                    if c.fetchone()[0] > 0:
+                        QMessageBox.warning(self, "Error", "A uniform with this name already exists")
+                        return
+                else:
+                    c.execute("SELECT COUNT(*) FROM Uniform WHERE UniformName = ? AND UniformId != ?", 
+                             (name, self.uniform_id))
+                    if c.fetchone()[0] > 0:
+                        QMessageBox.warning(self, "Error", "Another uniform with this name already exists")
+                        return
+                
+                if self.uniform_id is None:
+                    # Insert new record
+                    c.execute("INSERT INTO Uniform (UniformName, UniformPrice, Quantity) VALUES (?, ?, 0)", 
+                             (name, price))
+                else:
+                    # Update existing record
+                    c.execute("UPDATE Uniform SET UniformName = ?, UniformPrice = ? WHERE UniformId = ?", 
+                             (name, price, self.uniform_id))
+                
+                conn.commit()
+                self.accept()
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to save uniform: {str(e)}")
+
 class UniformDashBoard(QWidget):
     def __init__(self):
         super().__init__()
@@ -4765,24 +4858,25 @@ class UniformDashBoard(QWidget):
 
         # Pie charts section
         charts_layout = QHBoxLayout()
-        self.in_canvas = self.create_pie_canvas("Stock In (Current Month)")
-        self.out_canvas = self.create_pie_canvas("Stock Out (Current Month)")
+        self.in_canvas = self.create_pie_canvas("Stock In Distribution (Current Month)")
+        self.out_canvas = self.create_pie_canvas("Stock Out Distribution (Current Month)")
         charts_layout.addWidget(self.in_canvas)
         charts_layout.addWidget(self.out_canvas)
         left_layout.addLayout(charts_layout)
 
         # Last 5 inventory table
-        inventory_title = QLabel("Last 5 Inventory Entries")
+        inventory_title = QLabel("Recent Inventory Entries")
         inventory_title.setStyleSheet("font-size: 16px; font-weight: bold;")
         left_layout.addWidget(inventory_title)
         self.inventory_table = QTableWidget()
-        self.inventory_table.setColumnCount(7)
-        self.inventory_table.setHorizontalHeaderLabels(["ID", "Uniform", "Type", "Quantity", "Price", "Date", "References"])
+        self.inventory_table.setColumnCount(6)
+        self.inventory_table.setHorizontalHeaderLabels(["ID", "Uniform", "Type", "Quantity", "Date", "Reference"])
         self.inventory_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.inventory_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.inventory_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.inventory_table.setShowGrid(True)
         self.inventory_table.verticalHeader().setVisible(False)
+        self.inventory_table.setMaximumHeight(200)
         left_layout.addWidget(self.inventory_table)
 
         # Right column: Uniform list and add button
@@ -4792,9 +4886,18 @@ class UniformDashBoard(QWidget):
         uniform_title = QLabel("Uniform List")
         uniform_title.setStyleSheet("font-size: 16px; font-weight: bold;")
         right_layout.addWidget(uniform_title)
+        
+        # Add filter for uniform list
+        filter_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search uniforms...")
+        self.search_input.textChanged.connect(self.load_data)
+        filter_layout.addWidget(self.search_input)
+        right_layout.addLayout(filter_layout)
+        
         self.uniform_table = QTableWidget()
-        self.uniform_table.setColumnCount(4)
-        self.uniform_table.setHorizontalHeaderLabels(["ID", "Name", "Price", "Quantity"])
+        self.uniform_table.setColumnCount(5)
+        self.uniform_table.setHorizontalHeaderLabels(["ID", "Name", "Price", "Quantity", "Actions"])
         self.uniform_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.uniform_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.uniform_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -4806,134 +4909,194 @@ class UniformDashBoard(QWidget):
         add_uniform_btn.clicked.connect(self.show_add_uniform_dialog)
         right_layout.addWidget(add_uniform_btn, alignment=Qt.AlignBottom)
 
-        main_layout.addLayout(left_layout)
-        main_layout.addLayout(right_layout)
+        main_layout.addLayout(left_layout, 2)  # 2/3 of space
+        main_layout.addLayout(right_layout, 1)  # 1/3 of space
 
         self.load_data()
 
     def create_pie_canvas(self, title):
-        fig = Figure(figsize=(4, 4), dpi=100)
-        ax = fig.add_subplot(111)
-        ax.set_title(title)
+        fig = Figure(figsize=(5, 4), dpi=100)
         canvas = FigureCanvas(fig)
+        canvas.setMinimumHeight(300)
         return canvas
 
     def load_data(self):
         current_month = datetime.now().strftime('%Y-%m')
+        search_text = self.search_input.text().strip()
         
         try:
             with get_db_connection() as (conn, c):
-                # Calculate stock in and out for current month
+                
+                # Get stock in distribution by uniform type for current month
                 c.execute("""
-                    SELECT SUM(Quantity) 
-                    FROM UniformInventory 
-                    WHERE Type = 'In' AND strftime('%Y-%m', Date) = ?
+                    SELECT u.UniformName, SUM(ui.Quantity) as TotalQuantity
+                    FROM UniformInventory ui
+                    JOIN Uniform u ON ui.UniformID = u.UniformId
+                    WHERE ui.Type = 'In' AND strftime('%Y-%m', ui.Date) = ?
+                    GROUP BY u.UniformId
+                    ORDER BY TotalQuantity DESC
                 """, (current_month,))
-                stock_in = c.fetchone()[0] or 0
+                stock_in_data = c.fetchall()
                 
+                # Get stock out distribution by uniform type for current month
                 c.execute("""
-                    SELECT SUM(Quantity) 
-                    FROM UniformInventory 
-                    WHERE Type = 'Out' AND strftime('%Y-%m', Date) = ?
+                    SELECT u.UniformName, SUM(ui.Quantity) as TotalQuantity
+                    FROM UniformInventory ui
+                    JOIN Uniform u ON ui.UniformID = u.UniformId
+                    WHERE ui.Type = 'Out' AND strftime('%Y-%m', ui.Date) = ?
+                    GROUP BY u.UniformId
+                    ORDER BY TotalQuantity DESC
                 """, (current_month,))
-                stock_out = c.fetchone()[0] or 0
+                stock_out_data = c.fetchall()
                 
-                total = stock_in + stock_out
-                in_percentage = (stock_in / total * 100) if total > 0 else 0
-                out_percentage = (stock_out / total * 100) if total > 0 else 0
+                # Update in pie chart
+                self.update_pie_chart(self.in_canvas, "Stock In Distribution (Current Month)", 
+                                     stock_in_data, '#2E8B57')
                 
-                # Update in pie
-                fig_in = self.in_canvas.figure
-                fig_in.clf()
-                ax_in = fig_in.add_subplot(111)
-                ax_in.pie([in_percentage, 100 - in_percentage], labels=['In', 'Other'], colors=['#00FF00', '#F0F0F0'], autopct='%1.1f%%')
-                ax_in.set_title("Stock In (Current Month)")
-                self.in_canvas.draw()
+                # Update out pie chart
+                self.update_pie_chart(self.out_canvas, "Stock Out Distribution (Current Month)", 
+                                     stock_out_data, '#CD5C5C')
                 
-                # Update out pie
-                fig_out = self.out_canvas.figure
-                fig_out.clf()
-                ax_out = fig_out.add_subplot(111)
-                ax_out.pie([out_percentage, 100 - out_percentage], labels=['Out', 'Other'], colors=['#FF0000', '#F0F0F0'], autopct='%1.1f%%')
-                ax_out.set_title("Stock Out (Current Month)")
-                self.out_canvas.draw()
-                
-                # Last 5 inventory - quote "References"
+                # Recent inventory entries (last 10 instead of 5 for better overview)
                 c.execute("""
-                    SELECT ui.UniformInventoryID, u.UniformName, ui.Type, ui.Quantity, ui.Price, ui.Date, ui."References"
+                    SELECT ui.UniformInventoryID, u.UniformName, ui.Type, ui.Quantity, ui.Date, ui.ReferencesNotes
                     FROM UniformInventory ui
                     LEFT JOIN Uniform u ON ui.UniformID = u.UniformId
-                    ORDER BY ui.Date DESC
-                    LIMIT 5
+                    ORDER BY ui.Date DESC, ui.UniformInventoryID DESC
+                    LIMIT 10
                 """)
-                rows = c.fetchall()
-                self.inventory_table.setRowCount(len(rows))
-                for i, row in enumerate(rows):
-                    for j, val in enumerate(row):
-                        self.inventory_table.setItem(i, j, QTableWidgetItem(str(val)))
+                inventory_rows = c.fetchall()
+                self.inventory_table.setRowCount(len(inventory_rows))
+                for i, row in enumerate(inventory_rows):
+                    for j in range(len(row)):
+                        self.inventory_table.setItem(i, j, QTableWidgetItem(str(row[j])))
                 
-                # Uniform list
-                c.execute("SELECT UniformId, UniformName, UniformPrice, Quantity FROM Uniform")
-                rows = c.fetchall()
-                self.uniform_table.setRowCount(len(rows))
-                for i, row in enumerate(rows):
-                    for j, val in enumerate(row):
-                        self.uniform_table.setItem(i, j, QTableWidgetItem(str(val)))
+                # Uniform list with search filter
+                if search_text:
+                    c.execute("""
+                        SELECT UniformId, UniformName, UniformPrice, Quantity 
+                        FROM Uniform 
+                        WHERE UniformName LIKE ?
+                        ORDER BY UniformName
+                    """, (f"%{search_text}%",))
+                else:
+                    c.execute("SELECT UniformId, UniformName, UniformPrice, Quantity FROM Uniform ORDER BY UniformName")
+                
+                uniform_rows = c.fetchall()
+                self.uniform_table.setRowCount(len(uniform_rows))
+                for i, row in enumerate(uniform_rows):
+                    for j in range(4):  # ID, Name, Price, Quantity
+                        self.uniform_table.setItem(i, j, QTableWidgetItem(str(row[j])))
+                    
+                    # Add action buttons
+                    self.add_uniform_action_buttons(i, row[0])
+                    
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load dashboard data: {str(e)}")
 
-    def show_add_uniform_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add New Uniform")
-        layout = QVBoxLayout()
-        form_layout = QFormLayout()
-        name_edit = QLineEdit()
-        price_edit = QLineEdit()
-        form_layout.addRow("Uniform Name:", name_edit)
-        form_layout.addRow("Price:", price_edit)
-        layout.addLayout(form_layout)
-        buttons = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_uniform(dialog, name_edit, price_edit))
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
-        buttons.addWidget(save_btn)
-        buttons.addWidget(close_btn)
-        layout.addLayout(buttons)
-        dialog.setLayout(layout)
-        dialog.exec_()
+    def update_pie_chart(self, canvas, title, data, color_scheme):
+        """Update pie chart with distribution data"""
+        fig = canvas.figure
+        fig.clear()
+        
+        if not data:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(title)
+            canvas.draw()
+            return
+        
+        labels = [row[0] for row in data]
+        quantities = [row[1] for row in data]
+        total = sum(quantities)
+        percentages = [q/total*100 for q in quantities]
+        
+        ax = fig.add_subplot(111)
+        wedges, texts, autotexts = ax.pie(quantities, labels=labels, autopct='%1.1f%%',
+                                         startangle=90, colors=self.generate_colors(len(labels), color_scheme))
+        
+        # Improve label appearance
+        for text in texts:
+            text.set_fontsize(8)
+        for autotext in autotexts:
+            autotext.set_fontsize(8)
+            autotext.set_color('white')
+            autotext.set_fontweight('bold')
+        
+        ax.set_title(title, fontsize=10, fontweight='bold')
+        ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
+        canvas.draw()
 
-    def save_uniform(self, dialog, name_edit, price_edit):
-        name = name_edit.text().strip()
-        price_str = price_edit.text().strip()
-        quantity_str = 0
-        if not all([name, price_str]):
-            QMessageBox.warning(dialog, "Error", "All fields are required")
-            return
-        try:
-            price = float(price_str)
-            quantity = int(quantity_str)
-            if price <= 0:
-                QMessageBox.warning(dialog, "Error", "Price must be positive")
-                return
-        except ValueError:
-            QMessageBox.warning(dialog, "Error", "Invalid price")
-            return
+    def generate_colors(self, n, base_color):
+        """Generate a color palette based on a base color"""
+        # For simplicity, using matplotlib's default color cycle
+        import matplotlib.pyplot as plt
+        return plt.cm.Set3(range(n))
+
+    def add_uniform_action_buttons(self, row, uniform_id):
+        actions_widget = QWidget()
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(5, 2, 5, 2)
+        actions_layout.setSpacing(3)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedWidth(50)
+        edit_btn.setStyleSheet("font-size: 11px; padding: 3px;")
+        edit_btn.clicked.connect(lambda: self.edit_uniform(uniform_id))
+        
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedWidth(50)
+        delete_btn.setStyleSheet("font-size: 11px; padding: 3px;")
+        delete_btn.clicked.connect(lambda: self.delete_uniform(uniform_id))
+
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+
+        self.uniform_table.setCellWidget(row, 4, actions_widget)
+
+    def show_add_uniform_dialog(self):
+        """Show dialog to add new uniform"""
+        dialog = UniformDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_data()
+
+    def edit_uniform(self, uniform_id):
+        """Edit existing uniform"""
+        dialog = UniformDialog(self, uniform_id)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_data()
+
+    def delete_uniform(self, uniform_id):
+        """Delete uniform after checking for inventory constraints"""
         try:
             with get_db_connection() as (conn, c):
-                c.execute("SELECT COUNT(*) FROM Uniform WHERE UniformName = ?", (name,))
-                if c.fetchone()[0] > 0:
-                    QMessageBox.warning(dialog, "Error", "Duplicate uniform name")
+                
+                # Check if uniform has inventory entries
+                c.execute("SELECT COUNT(*) FROM UniformInventory WHERE UniformID = ?", (uniform_id,))
+                inventory_count = c.fetchone()[0]
+                
+                if inventory_count > 0:
+                    QMessageBox.warning(self, "Cannot Delete", 
+                                      f"This uniform has {inventory_count} inventory entries and cannot be deleted.\n\n"
+                                      "Please delete or reassign the inventory entries first.")
                     return
-                c.execute("""INSERT INTO Uniform (UniformName, UniformPrice, Quantity)
-                             VALUES (?, ?, ?)""", (name, price, quantity))
-                conn.commit()
-                QMessageBox.information(dialog, "Success", "Uniform added successfully")
-                name_edit.clear()
-                price_edit.clear()
-                self.load_data()
+                
+                # Confirm deletion
+                reply = QMessageBox.question(
+                    self, 'Confirm Delete', 
+                    f'Are you sure you want to delete uniform #{uniform_id}?', 
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    c.execute("DELETE FROM Uniform WHERE UniformId = ?", (uniform_id,))
+                    conn.commit()
+                    QMessageBox.information(self, "Success", "Uniform deleted successfully")
+                    self.load_data()
+                    
         except Exception as e:
-            QMessageBox.warning(dialog, "Error", f"Failed to add uniform: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Failed to delete uniform: {str(e)}")
 
 class InventoryManagement(QWidget):
     def __init__(self):
@@ -4992,24 +5155,24 @@ class InventoryManagement(QWidget):
 
         # First row: Filters
         filter_layout = QHBoxLayout()
-        search_input = QLineEdit()
-        search_input.setPlaceholderText("Search...")
-        search_input.setMaximumWidth(200)
-        from_date = QDateEdit()
-        from_date.setCalendarPopup(True)
-        from_date.setDate(QDate.currentDate().addMonths(-1))  # Default to last month
-        to_date = QDateEdit()
-        to_date.setCalendarPopup(True)
-        to_date.setDate(QDate.currentDate())
-        type_combo = QComboBox()
-        type_combo.addItems(["All Types", "In", "Out"])
-        filter_layout.addWidget(search_input)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search...")
+        self.search_input.setMaximumWidth(200)
+        self.from_date = QDateEdit()
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDate(QDate.currentDate().addMonths(-1))  # Default to last month
+        self.to_date = QDateEdit()
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDate(QDate.currentDate())
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["All Types", "In", "Out"])
+        filter_layout.addWidget(self.search_input)
         filter_layout.addWidget(QLabel("From Date:"))
-        filter_layout.addWidget(from_date)
+        filter_layout.addWidget(self.from_date)
         filter_layout.addWidget(QLabel("To Date:"))
-        filter_layout.addWidget(to_date)
+        filter_layout.addWidget(self.to_date)
         filter_layout.addWidget(QLabel("Type:"))
-        filter_layout.addWidget(type_combo)
+        filter_layout.addWidget(self.type_combo)
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
@@ -5035,8 +5198,8 @@ class InventoryManagement(QWidget):
 
         # Third row: Table
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["ID", "Uniform", "Type", "Quantity", "Price", "Date", "References"])
+        self.table.setColumnCount(8)  # +1 for Actions
+        self.table.setHorizontalHeaderLabels(["ID", "Uniform", "Type", "Quantity", "Price", "Date", "References", "Actions"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -5044,32 +5207,92 @@ class InventoryManagement(QWidget):
         self.table.verticalHeader().setVisible(False)
         layout.addWidget(self.table)
 
-        # Connect filters to load data (placeholder)
-        search_input.textChanged.connect(self.load_data)
-        from_date.dateChanged.connect(self.load_data)
-        to_date.dateChanged.connect(self.load_data)
-        type_combo.currentIndexChanged.connect(self.load_data)
+        # Connect filters to load data
+        self.search_input.textChanged.connect(self.load_data)
+        self.from_date.dateChanged.connect(self.load_data)
+        self.to_date.dateChanged.connect(self.load_data)
+        self.type_combo.currentIndexChanged.connect(self.load_data)
 
         self.load_data()  # Initial load
 
     def load_data(self):
-        # Placeholder: Simulate data loading
-        data = [
-            (1, "Shirt", "In", 50, 10.0, "2025-09-01", "Supplier A"),
-            (2, "Pants", "Out", 20, 15.0, "2025-09-05", "Sale #123"),
-            (3, "Skirt", "In", 30, 12.5, "2025-09-10", "Supplier B")
-        ]
-        self.table.setRowCount(len(data))
-        for i, row in enumerate(data):
-            for j, val in enumerate(row):
-                self.table.setItem(i, j, QTableWidgetItem(str(val)))
-        # Update metrics (placeholder calculations)
-        sender = self.sender()  # To avoid recalculating if not needed, but for demo
-        high_in = max([r[3] for r in data if r[2] == "In"], default=0)
-        high_out = max([r[3] for r in data if r[2] == "Out"], default=0)
-        self.high_in_label.setText(f"High Qty In: {high_in}")
-        self.high_out_label.setText(f"High Qty Out: {high_out}")
-        self.results_label.setText(f"{len(data)} results retrieved")
+        search_text = self.search_input.text().strip()
+        from_date_str = self.from_date.date().toString("yyyy-MM-dd")
+        to_date_str = self.to_date.date().toString("yyyy-MM-dd")
+        inv_type = self.type_combo.currentText()
+        if inv_type == "All Types":
+            inv_type = None
+        
+        try:
+            with get_db_connection() as (conn, c):
+                query = """
+                    SELECT ui.UniformInventoryID, u.UniformName, ui.Type, ui.Quantity, ui.Price, ui.Date, ui.ReferencesNotes
+                    FROM UniformInventory ui
+                    LEFT JOIN Uniform u ON ui.UniformID = u.UniformId
+                    WHERE 1=1
+                """
+                params = []
+                
+                if search_text:
+                    query += " AND (u.UniformName LIKE ? OR ui.ReferencesNotes LIKE ?)"
+                    params.extend([f"%{search_text}%", f"%{search_text}%"])
+                
+                if from_date_str:
+                    query += " AND ui.Date >= ?"
+                    params.append(from_date_str)
+                
+                if to_date_str:
+                    query += " AND ui.Date <= ?"
+                    params.append(to_date_str)
+                
+                if inv_type:
+                    query += " AND ui.Type = ?"
+                    params.append(inv_type)
+                
+                query += " ORDER BY ui.Date DESC"
+                
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                self.table.setRowCount(len(rows))
+                high_in = 0
+                high_out = 0
+                for i, row in enumerate(rows):
+                    for j, val in enumerate(row):
+                        self.table.setItem(i, j, QTableWidgetItem(str(val)))
+                    # Calculate high qty
+                    qty = row[3]
+                    if row[2] == "In" and qty > high_in:
+                        high_in = qty
+                    elif row[2] == "Out" and qty > high_out:
+                        high_out = qty
+                    # Add actions
+                    self.add_action_buttons(i, row[0])
+                
+                self.results_label.setText(f"{len(rows)} results retrieved")
+                self.high_in_label.setText(f"High Qty In: {high_in}")
+                self.high_out_label.setText(f"High Qty Out: {high_out}")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
+
+    def add_action_buttons(self, row, inv_id):
+        actions_widget = QWidget()
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(2, 2, 2, 2)
+        actions_layout.setSpacing(2)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedWidth(60)
+        edit_btn.clicked.connect(lambda: self.update_inventory(inv_id))
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedWidth(60)
+        delete_btn.clicked.connect(lambda: self.delete_inventory(inv_id))
+
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+
+        self.table.setCellWidget(row, 7, actions_widget)
 
     def print_table(self):
         # Placeholder for print functionality
@@ -5078,39 +5301,47 @@ class InventoryManagement(QWidget):
     def show_add_inventory_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Add New Inventory")
+        dialog.setMinimumWidth(400)
         layout = QVBoxLayout()
+        
         form_layout = QFormLayout()
+        
+        # Uniform selection
         uniform_combo = QComboBox()
-        # Placeholder populate
-        with get_db_connection() as (conn,c):
-            c.execute("SELECT UniformId,UniformName FROM Uniform")
-            uniforms = c.fetchall()
-            for uid, uname in uniforms:
-                uniform_combo.addItem(uname, uid)
+        uniform_combo.addItem("Select Uniform", None)
+        
+        # Type selection
         type_combo = QComboBox()
         type_combo.addItems(["In", "Out"])
-        type_combo = QComboBox()
-        type_combo.addItems(["In", "Out"])
-        type_combo.currentIndexChanged.connect(lambda: self.update_quantity_placeholder(dialog, uniform_combo, type_combo, quantity_edit))
-
+        
+        # Quantity input
         quantity_edit = QLineEdit()
-        quantity_edit.setValidator(QIntValidator(1, 10000))
-        quantity_edit.setPlaceholderText("Enter quantity")
-
+        quantity_edit.setValidator(QIntValidator(1, 1000000))
+        
+        # Price input - will be dynamic based on type
         price_edit = QLineEdit()
-        price_edit.setValidator(QDoubleValidator(0.01, 10000.00, 2))  # Min 0.01 to prevent 0
-        price_edit.setPlaceholderText("Enter price (min 0.01)")
+        price_edit.setValidator(QDoubleValidator(0, 1000000, 2))
+        
+        # Date selection
         date_edit = QDateEdit()
         date_edit.setCalendarPopup(True)
         date_edit.setDate(QDate.currentDate())
+        date_edit.setDisplayFormat("yyyy-MM-dd")
+        
+        # Reference input
         ref_edit = QLineEdit()
+        ref_edit.setPlaceholderText("Optional reference notes")
+        
         form_layout.addRow("Uniform:", uniform_combo)
         form_layout.addRow("Type:", type_combo)
         form_layout.addRow("Quantity:", quantity_edit)
         form_layout.addRow("Price:", price_edit)
         form_layout.addRow("Date:", date_edit)
         form_layout.addRow("References:", ref_edit)
+        
         layout.addLayout(form_layout)
+        
+        # Buttons
         buttons = QHBoxLayout()
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(lambda: self.save_inventory(dialog, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit))
@@ -5119,18 +5350,219 @@ class InventoryManagement(QWidget):
         buttons.addWidget(save_btn)
         buttons.addWidget(close_btn)
         layout.addLayout(buttons)
+        
         dialog.setLayout(layout)
+        
+        # Populate uniform combo
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT UniformId, UniformName FROM Uniform ORDER BY UniformName")
+                for uniform in c.fetchall():
+                    uniform_combo.addItem(uniform[1], uniform[0])
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to load uniforms: {str(e)}")
+        
+        # Connect signals for dynamic behavior
+        def update_dynamic_fields():
+            self.update_quantity_placeholder(uniform_combo, type_combo, quantity_edit)
+            self.update_price_field(uniform_combo, type_combo, price_edit)
+        
+        uniform_combo.currentIndexChanged.connect(update_dynamic_fields)
+        type_combo.currentIndexChanged.connect(update_dynamic_fields)
+        
+        # Set initial state
+        update_dynamic_fields()
+        
         dialog.exec_()
 
+    def update_quantity_placeholder(self, uniform_combo, type_combo, quantity_edit):
+        """Update quantity placeholder based on uniform and type selection"""
+        uniform_id = uniform_combo.currentData()
+        inv_type = type_combo.currentText()
+        
+        if uniform_id and inv_type == "Out":
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("SELECT Quantity FROM Uniform WHERE UniformId = ?", (uniform_id,))
+                    result = c.fetchone()
+                    if result:
+                        available_qty = result[0]
+                        quantity_edit.setPlaceholderText(f"Max: {available_qty} (available stock)")
+                        # Set tooltip with more information
+                        quantity_edit.setToolTip(f"Current available quantity: {available_qty}. You cannot issue more than available stock.")
+                        return
+            except Exception as e:
+                print(f"Error fetching available quantity: {e}")
+        
+        # Default placeholder for "In" or no uniform selected
+        quantity_edit.setPlaceholderText("Enter quantity")
+        quantity_edit.setToolTip("Enter the quantity for this inventory transaction")
+
+    def update_price_field(self, uniform_combo, type_combo, price_edit):
+        """Update price field based on uniform and type selection"""
+        uniform_id = uniform_combo.currentData()
+        inv_type = type_combo.currentText()
+        
+        if uniform_id and inv_type == "Out":
+            try:
+                with get_db_connection() as (conn, c):
+                    # Get the current price from Uniform table
+                    c.execute("SELECT UniformPrice FROM Uniform WHERE UniformId = ?", (uniform_id,))
+                    result = c.fetchone()
+                    if result and result[0] is not None:
+                        current_price = result[0]
+                        price_edit.setText(f"{current_price:.2f}")
+                        price_edit.setReadOnly(True)
+                        price_edit.setStyleSheet("background-color: #f0f0f0; color: #666;")
+                        price_edit.setToolTip("Price is automatically set from uniform's current price (read-only for Out transactions)")
+                        return
+            except Exception as e:
+                print(f"Error fetching uniform price: {e}")
+        
+        # For "In" transactions or if price not available
+        price_edit.clear()
+        price_edit.setReadOnly(False)
+        price_edit.setStyleSheet("")
+        price_edit.setPlaceholderText("Enter price per unit")
+        price_edit.setToolTip("Enter the price per unit for this inventory transaction")
     def save_inventory(self, dialog, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit):
-        uniform_name = uniform_combo.currentText()
+        """Save new inventory transaction"""
+        uniform_id = uniform_combo.currentData()
         inv_type = type_combo.currentText()
         quantity_str = quantity_edit.text().strip()
         price_str = price_edit.text().strip()
         date_str = date_edit.date().toString("yyyy-MM-dd")
         references = ref_edit.text().strip()
         
-        if not all([uniform_name, inv_type, quantity_str, price_str, date_str, references]):
+        # Validation
+        if not uniform_id:
+            QMessageBox.warning(dialog, "Error", "Please select a uniform")
+            return
+            
+        if not quantity_str:
+            QMessageBox.warning(dialog, "Error", "Please enter quantity")
+            return
+            
+        if not price_str and inv_type == "In":  # Price is required for "In" transactions
+            QMessageBox.warning(dialog, "Error", "Please enter price")
+            return
+            
+        try:
+            quantity = int(quantity_str)
+            if quantity <= 0:
+                QMessageBox.warning(dialog, "Error", "Quantity must be positive")
+                return
+                
+            price = float(price_str) if price_str else 0.0
+            if price <= 0:
+                QMessageBox.warning(dialog, "Error", "Price cannot be negative")
+                return
+                
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Invalid quantity or price format")
+            return
+        
+        # Additional validation for "Out" transactions
+        if inv_type == "Out":
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("SELECT Quantity FROM Uniform WHERE UniformId = ?", (uniform_id,))
+                    result = c.fetchone()
+                    if result and quantity > result[0]:
+                        QMessageBox.warning(dialog, "Error", 
+                                        f"Cannot issue {quantity} units. Only {result[0]} units available in stock.")
+                        return
+            except Exception as e:
+                QMessageBox.warning(dialog, "Error", f"Failed to check available stock: {str(e)}")
+                return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Insert inventory transaction
+                c.execute('''INSERT INTO UniformInventory 
+                            (UniformID, Type, Quantity, Price, Date, ReferencesNotes)
+                            VALUES (?, ?, ?, ?, ?, ?)''',
+                        (uniform_id, inv_type, quantity, price, date_str, references))
+                
+                # Update uniform quantity
+                if inv_type == "In":
+                    c.execute("UPDATE Uniform SET Quantity = Quantity + ?, Price = ? WHERE UniformId = ?",
+                            (quantity, price, uniform_id))
+                else:
+                    c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?",
+                            (quantity, uniform_id))
+                
+                conn.commit()
+                QMessageBox.information(dialog, "Success", "Inventory transaction added successfully")
+                dialog.accept()
+                self.load_data()  # Refresh the main table
+                
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to save inventory: {str(e)}")
+    def update_inventory(self, inv_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute('''SELECT ui.UniformInventoryID, u.UniformName, ui.Type, ui.Quantity, ui.Price, ui.Date, ui.ReferencesNotes, u.UniformId
+                             FROM UniformInventory ui
+                             LEFT JOIN Uniform u ON ui.UniformID = u.UniformId
+                             WHERE ui.UniformInventoryID = ?''', (inv_id,))
+                data = c.fetchone()
+            if data:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Update Inventory")
+                layout = QVBoxLayout()
+                form_layout = QFormLayout()
+                uniform_combo = QComboBox()
+                try:
+                    with get_db_connection() as (conn, c):
+                        c.execute("SELECT UniformId, UniformName FROM Uniform")
+                        for uniform in c.fetchall():
+                            uniform_combo.addItem(uniform[1], uniform[0])
+                        uniform_combo.setCurrentIndex(uniform_combo.findData(data[7]))
+                except Exception as e:
+                    QMessageBox.warning(dialog, "Error", f"Failed to load uniforms: {str(e)}")
+                    return
+                type_combo = QComboBox()
+                type_combo.addItems(["In", "Out"])
+                type_combo.setCurrentText(data[2])
+                quantity_edit = QLineEdit(str(data[3]))
+                price_edit = QLineEdit(str(data[4]))
+                date_edit = QDateEdit(QDate.fromString(data[5], "yyyy-MM-dd"))
+                date_edit.setCalendarPopup(True)
+                ref_edit = QLineEdit(data[6])
+                form_layout.addRow("Uniform:", uniform_combo)
+                form_layout.addRow("Type:", type_combo)
+                form_layout.addRow("Quantity:", quantity_edit)
+                form_layout.addRow("Price:", price_edit)
+                form_layout.addRow("Date:", date_edit)
+                form_layout.addRow("References:", ref_edit)
+                layout.addLayout(form_layout)
+                buttons = QHBoxLayout()
+                save_btn = QPushButton("Save")
+                save_btn.clicked.connect(lambda: self.save_updated_inventory(dialog, inv_id, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit))
+                close_btn = QPushButton("Close")
+                close_btn.clicked.connect(dialog.close)
+                buttons.addWidget(save_btn)
+                buttons.addWidget(close_btn)
+                layout.addLayout(buttons)
+                dialog.setLayout(layout)
+                
+                # Connect type change for validation
+                type_combo.currentIndexChanged.connect(lambda: self.update_quantity_placeholder(uniform_combo, type_combo, quantity_edit))
+                
+                dialog.exec_()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load inventory: {str(e)}")
+
+    def save_updated_inventory(self, dialog, inv_id, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit):
+        uniform_id = uniform_combo.currentData()
+        inv_type = type_combo.currentText()
+        quantity_str = quantity_edit.text().strip()
+        price_str = price_edit.text().strip()
+        date_str = date_edit.date().toString("yyyy-MM-dd")
+        references = ref_edit.text().strip()
+        
+        if not all([uniform_id, inv_type, quantity_str, price_str, date_str, references]):
             QMessageBox.warning(dialog, "Error", "All fields are required")
             return
         
@@ -5138,7 +5570,7 @@ class InventoryManagement(QWidget):
             quantity = int(quantity_str)
             price = float(price_str)
             if quantity <= 0 or price < 0:
-                QMessageBox.warning(dialog, "Error", "Quantity must be positive and Price must be non-negative")
+                QMessageBox.warning(dialog, "Error", "Quantity must be positive and Price non-negative")
                 return
         except ValueError:
             QMessageBox.warning(dialog, "Error", "Invalid quantity or price")
@@ -5146,54 +5578,303 @@ class InventoryManagement(QWidget):
         
         try:
             with get_db_connection() as (conn, c):
-                # Get UniformId from name (assuming unique names)
-                c.execute("SELECT UniformId FROM Uniform WHERE UniformName = ?", (uniform_name,))
-                result = c.fetchone()
-                if not result:
-                    QMessageBox.warning(dialog, "Error", "Selected uniform not found")
+                # Get original data for quantity adjustment
+                c.execute('''SELECT UniformID, Type, Quantity, Date FROM UniformInventory WHERE UniformInventoryID = ?''', (inv_id,))
+                original = c.fetchone()
+                if not original:
+                    QMessageBox.warning(dialog, "Error", "Inventory entry not found")
                     return
-                uniform_id = result[0]
+                    
+                original_uniform_id = original[0]
+                original_type = original[1]
+                original_qty = original[2]
+                original_date = original[3]
                 
-                # Check current quantity for 'Out' to avoid negative
-                if inv_type == 'Out':
+                # CRITICAL VALIDATION: Check if this "In" inventory has corresponding "Out" transactions
+                if original_type == 'In':
+                    # Check if there are any "Out" transactions for this uniform that might have used this inventory
+                    c.execute('''
+                        SELECT SUM(Quantity) FROM UniformInventory 
+                        WHERE UniformID = ? AND Type = 'Out' AND Date >= ? AND UniformInventoryID != ?
+                    ''', (original_uniform_id, original_date, inv_id))
+                    out_quantity_after = c.fetchone()[0] or 0
+                    
+                    # If there are out transactions after this inventory date, we need to be cautious
+                    if out_quantity_after > 0:
+                        # Check if changing this would cause negative inventory
+                        c.execute('''
+                            SELECT SUM(CASE WHEN Type = 'In' THEN Quantity ELSE -Quantity END) 
+                            FROM UniformInventory 
+                            WHERE UniformID = ? AND Date < ?
+                        ''', (original_uniform_id, original_date))
+                        inventory_before = c.fetchone()[0] or 0
+                        
+                        # Calculate what the new inventory would be after our changes
+                        if inv_type == 'In':
+                            new_inventory_after = inventory_before + quantity - out_quantity_after
+                        else:
+                            new_inventory_after = inventory_before - quantity - out_quantity_after
+                        
+                        if new_inventory_after < 0:
+                            QMessageBox.warning(dialog, "Error", 
+                                "Cannot modify this inventory entry. The change would cause negative inventory "
+                                "due to existing sales transactions that may have used this stock.")
+                            return
+                
+                # VALIDATION: Prevent changing from "In" to "Out" if it would cause negative inventory
+                if original_type == 'In' and inv_type == 'Out':
                     c.execute("SELECT Quantity FROM Uniform WHERE UniformId = ?", (uniform_id,))
-                    current_qty = c.fetchone()[0]
-                    if current_qty < quantity:
-                        QMessageBox.warning(dialog, "Error", "Insufficient stock for this withdrawal")
+                    current_stock = c.fetchone()[0] or 0
+                    if quantity > current_stock + original_qty:  # We're removing original "In" and adding new "Out"
+                        QMessageBox.warning(dialog, "Error",
+                            "Changing from 'In' to 'Out' would cause negative inventory. "
+                            f"Available: {current_stock}, Trying to remove: {quantity}")
                         return
                 
-                # Insert into UniformInventory with quoted column names
-                c.execute('''INSERT INTO UniformInventory ("UniformID", "Type", "Quantity", "Price", "Date", "References")
-                            VALUES (?, ?, ?, ?, ?, ?)''', (uniform_id, inv_type, quantity, price, date_str, references))
+                # VALIDATION: Prevent changing uniform if there are transactions for the original uniform
+                if uniform_id != original_uniform_id:
+                    c.execute('''
+                        SELECT COUNT(*) FROM UniformInventory 
+                        WHERE UniformID = ? AND Date >= ? AND UniformInventoryID != ?
+                    ''', (original_uniform_id, original_date, inv_id))
+                    later_transactions = c.fetchone()[0] > 0
+                    
+                    if later_transactions:
+                        QMessageBox.warning(dialog, "Error",
+                            "Cannot change uniform type. There are later inventory transactions "
+                            "for the original uniform that depend on inventory consistency.")
+                        return
                 
-                # Update Uniform quantity
+                # Adjust original quantity reverse
+                if original_type == 'In':
+                    c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?", (original_qty, original_uniform_id))
+                else:
+                    c.execute("UPDATE Uniform SET Quantity = Quantity + ? WHERE UniformId = ?", (original_qty, original_uniform_id))
+                
+                # Validate new 'Out' if applicable
+                if inv_type == 'Out':
+                    c.execute("SELECT Quantity FROM Uniform WHERE UniformId = ?", (uniform_id,))
+                    available = c.fetchone()[0] or 0
+                    if quantity > available:
+                        # Revert adjustment
+                        if original_type == 'In':
+                            c.execute("UPDATE Uniform SET Quantity = Quantity + ? WHERE UniformId = ?", (original_qty, original_uniform_id))
+                        else:
+                            c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?", (original_qty, original_uniform_id))
+                        QMessageBox.warning(dialog, "Error", f"Quantity exceeds available stock. Available: {available}")
+                        return
+                
+                # Update inventory
+                c.execute('''UPDATE UniformInventory 
+                            SET UniformID = ?, Type = ?, Quantity = ?, Price = ?, Date = ?, ReferencesNotes = ?
+                            WHERE UniformInventoryID = ?''', (uniform_id, inv_type, quantity, price, date_str, references, inv_id))
+                
+                # Apply new quantity adjustment
                 if inv_type == 'In':
                     c.execute("UPDATE Uniform SET Quantity = Quantity + ? WHERE UniformId = ?", (quantity, uniform_id))
-                else:  # 'Out'
+                else:
                     c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?", (quantity, uniform_id))
                 
                 conn.commit()
                 QMessageBox.information(dialog, "Success", "Inventory updated successfully")
                 dialog.close()
-                self.load_data()  # Refresh data dynamically
+                self.load_data()
+                
         except Exception as e:
-            QMessageBox.warning(dialog, "Error", f"Failed to save inventory: {str(e)}")
+            # Try to revert if possible
+            try:
+                if 'conn' in locals() and 'c' in locals():
+                    if original_type == 'In':
+                        c.execute("UPDATE Uniform SET Quantity = Quantity + ? WHERE UniformId = ?", (original_qty, original_uniform_id))
+                    else:
+                        c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?", (original_qty, original_uniform_id))
+                    conn.commit()
+            except:
+                pass
+            QMessageBox.warning(dialog, "Error", f"Failed to update inventory: {str(e)}")
 
-    def update_quantity_placeholder(self, dialog, uniform_combo, type_combo, quantity_edit):
-        if type_combo.currentText() == "Out":
-            uniform_id = uniform_combo.currentData()
-            if uniform_id:
-                try:
-                    with get_db_connection() as (conn, c):
-                        c.execute("SELECT Quantity FROM Uniform WHERE UniformId = ?", (uniform_id,))
-                        result = c.fetchone()
-                        if result:
-                            available_qty = result[0]
-                            quantity_edit.setPlaceholderText(f"Available qty: {available_qty}")
+    def delete_inventory(self, inv_id):
+        reply = QMessageBox.question(self, 'Confirm Delete', 
+                                'Are you sure you want to delete this inventory record?\n\n'
+                                'WARNING: This action cannot be undone and may affect inventory accuracy.',
+                                QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    # Get original for reverse adjustment
+                    c.execute('''SELECT UniformID, Type, Quantity, Date FROM UniformInventory WHERE UniformInventoryID = ?''', (inv_id,))
+                    original = c.fetchone()
+                    
+                    if not original:
+                        QMessageBox.warning(self, "Error", "Inventory entry not found")
+                        return
+                        
+                    uniform_id = original[0]
+                    inv_type = original[1]
+                    quantity = original[2]
+                    inventory_date = original[3]
+                    
+                    # CRITICAL VALIDATION: Check if deleting would cause inventory inconsistencies
+                    if inv_type == 'In':
+                        # Check if there are "Out" transactions after this date that might have used this stock
+                        c.execute('''
+                            SELECT SUM(Quantity) FROM UniformInventory 
+                            WHERE UniformID = ? AND Type = 'Out' AND Date >= ?
+                        ''', (uniform_id, inventory_date))
+                        out_quantity_after = c.fetchone()[0] or 0
+                        
+                        if out_quantity_after > 0:
+                            # Check current inventory before this transaction
+                            c.execute('''
+                                SELECT SUM(CASE WHEN Type = 'In' THEN Quantity ELSE -Quantity END) 
+                                FROM UniformInventory 
+                                WHERE UniformID = ? AND Date < ?
+                            ''', (uniform_id, inventory_date))
+                            inventory_before = c.fetchone()[0] or 0
+                            
+                            # Check if deletion would cause negative inventory
+                            if inventory_before - out_quantity_after < 0:
+                                QMessageBox.warning(self, "Error",
+                                    "Cannot delete this inventory entry. It would cause negative inventory "
+                                    "because there are sales transactions that may have used this stock.\n\n"
+                                    f"Inventory before: {inventory_before}, Sales after: {out_quantity_after}")
+                                return
+                    
+                    # VALIDATION: Check for dependent transactions after this date
+                    c.execute('''
+                        SELECT COUNT(*) FROM UniformInventory 
+                        WHERE UniformID = ? AND Date >= ? AND UniformInventoryID != ?
+                    ''', (uniform_id, inventory_date, inv_id))
+                    later_transactions = c.fetchone()[0] > 0
+                    
+                    if later_transactions:
+                        reply = QMessageBox.question(self, 'Warning',
+                            "There are inventory transactions after this date. Deleting may cause inventory inaccuracies.\n\n"
+                            "Are you sure you want to proceed?",
+                            QMessageBox.Yes | QMessageBox.No)
+                        
+                        if reply != QMessageBox.Yes:
                             return
-                except Exception as e:
-                    print(f"Error fetching available qty: {e}")  # Or show warning
-        quantity_edit.setPlaceholderText("Enter quantity")
+                    
+                    # Reverse quantity update
+                    if inv_type == 'In':
+                        c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?", (quantity, uniform_id))
+                    else:
+                        c.execute("UPDATE Uniform SET Quantity = Quantity + ? WHERE UniformId = ?", (quantity, uniform_id))
+                    
+                    # For audit purposes, you might want to create an archive table first:
+                    # CREATE TABLE UniformInventoryArchive AS SELECT * FROM UniformInventory WHERE 1=0;
+                    # Then insert the record being deleted
+                    try:
+                        c.execute('''
+                            INSERT INTO UniformInventoryArchive 
+                            SELECT *, datetime('now'), 'Deleted by user' FROM UniformInventory 
+                            WHERE UniformInventoryID = ?
+                        ''', (inv_id,))
+                    except:
+                        # Archive table doesn't exist, proceed with regular delete
+                        pass
+                    
+                    c.execute("DELETE FROM UniformInventory WHERE UniformInventoryID = ?", (inv_id,))
+                    conn.commit()
+                    
+                    QMessageBox.information(self, "Success", 
+                        "Inventory deleted successfully. Inventory quantities have been adjusted.")
+                    self.load_data()
+                    
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to delete inventory: {str(e)}")
+
+class ProcurementDialog(QDialog):
+    def __init__(self, parent=None, procurement_id=None):
+        super().__init__(parent)
+        self.procurement_id = procurement_id
+        self.setWindowTitle("Add New Procurement" if procurement_id is None else "Edit Procurement")
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        
+        self.name_edit = QLineEdit()
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDate(QDate.currentDate())
+        self.unit_edit = QLineEdit()
+        self.price_edit = QLineEdit()
+        self.ref_edit = QLineEdit()
+        
+        form_layout.addRow("Procurement Name:", self.name_edit)
+        form_layout.addRow("Date:", self.date_edit)
+        form_layout.addRow("Unit:", self.unit_edit)
+        form_layout.addRow("Price:", self.price_edit)
+        form_layout.addRow("Reference:", self.ref_edit)
+        
+        layout.addLayout(form_layout)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.validate_and_save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        # If editing, load existing data
+        if procurement_id is not None:
+            self.load_procurement_data()
+    
+    def load_procurement_data(self):
+        """Load procurement data for editing"""
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT * FROM Procurement WHERE PRO_ID = ?", (self.procurement_id,))
+            procurement = c.fetchone()
+            
+            if procurement:
+                self.name_edit.setText(procurement['PRO_NAME'])
+                self.date_edit.setDate(QDate.fromString(procurement['PRO_DATE'], "yyyy-MM-dd"))
+                self.unit_edit.setText(procurement['PRO_UNIT'])
+                self.price_edit.setText(str(procurement['PRO_PRICE']))
+                self.ref_edit.setText(procurement['PRO_REFERENCE'])
+    
+    def validate_and_save(self):
+        """Validate input and save procurement data"""
+        name = self.name_edit.text().strip()
+        date = self.date_edit.date().toString("yyyy-MM-dd")
+        unit = self.unit_edit.text().strip()
+        price_str = self.price_edit.text().strip()
+        ref = self.ref_edit.text().strip()
+        
+        # Validation
+        if not all([name, date, unit, price_str, ref]):
+            QMessageBox.warning(self, "Error", "All fields are required")
+            return
+        
+        try:
+            price = float(price_str)
+            if price <= 0:
+                QMessageBox.warning(self, "Error", "Price must be positive")
+                return
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Invalid price")
+            return
+        
+        # Save to database
+        with get_db_connection() as (conn, c):
+            if self.procurement_id is None:
+                # Insert new record
+                c.execute('''
+                    INSERT INTO Procurement (PRO_NAME, PRO_DATE, PRO_UNIT, PRO_PRICE, PRO_REFERENCE)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (name, date, unit, price, ref))
+            else:
+                # Update existing record
+                c.execute('''
+                    UPDATE Procurement 
+                    SET PRO_NAME=?, PRO_DATE=?, PRO_UNIT=?, PRO_PRICE=?, PRO_REFERENCE=?
+                    WHERE PRO_ID=?
+                ''', (name, date, unit, price, ref, self.procurement_id))
+            
+            conn.commit()
+        
+        self.accept()
 
 class ProcurementManagement(QWidget):
     def __init__(self):
@@ -5258,11 +5939,11 @@ class ProcurementManagement(QWidget):
         header_layout.addStretch()
         layout.addLayout(header_layout)
 
-        # First row: Filters (Search, From Date, To Date, Type ComboBox)
+        # First row: Filters (Search, From Date, To Date)
         filter_layout = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search...")
-        self.search_input.setMaximumWidth(200)
+        self.search_input.setPlaceholderText("Search by name or reference...")
+        self.search_input.setMaximumWidth(300)
         self.search_input.textChanged.connect(self.load_data)
 
         self.from_date = QDateEdit()
@@ -5275,81 +5956,96 @@ class ProcurementManagement(QWidget):
         self.to_date.setDate(QDate.currentDate())
         self.to_date.dateChanged.connect(self.load_data)
 
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(["All Types", "In", "Out"])
-        self.type_combo.currentIndexChanged.connect(self.load_data)
-
         filter_layout.addWidget(self.search_input)
         filter_layout.addWidget(QLabel("From Date:"))
         filter_layout.addWidget(self.from_date)
         filter_layout.addWidget(QLabel("To Date:"))
         filter_layout.addWidget(self.to_date)
-        filter_layout.addWidget(QLabel("Type:"))
-        filter_layout.addWidget(self.type_combo)
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
-        # Second row: Results, High Qty In/Out, Print, New Inventory buttons
+        # Second row: Results, Total Amount, Print, New Procurement buttons
         metrics_layout = QHBoxLayout()
         self.results_label = QLabel("0 results retrieved")
         self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
 
-        self.high_in_label = QLabel("High Qty In: 0")
-        self.high_in_label.setStyleSheet("font-size: 14px; color: #00C000;")
-
-        self.high_out_label = QLabel("High Qty Out: 0")
-        self.high_out_label.setStyleSheet("font-size: 14px; color: #C00000;")
+        self.total_amount_label = QLabel("Total Amount: 0.00")
+        self.total_amount_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2D3748;")
 
         print_btn = QPushButton("Print")
         print_btn.clicked.connect(self.print_table)
 
-        new_inv_btn = QPushButton("New Inventory")
-        new_inv_btn.clicked.connect(self.show_add_inventory_dialog)
+        new_procurement_btn = QPushButton("New Procurement")
+        new_procurement_btn.clicked.connect(self.show_add_procurement_dialog)
 
         metrics_layout.addWidget(self.results_label)
-        metrics_layout.addWidget(self.high_in_label)
-        metrics_layout.addWidget(self.high_out_label)
+        metrics_layout.addWidget(self.total_amount_label)
         metrics_layout.addStretch()
         metrics_layout.addWidget(print_btn)
-        metrics_layout.addWidget(new_inv_btn)
+        metrics_layout.addWidget(new_procurement_btn)
         layout.addLayout(metrics_layout)
 
         # Third row: Table
         self.table = QTableWidget()
-        self.table.setColumnCount(8)  # Added Actions column
-        self.table.setHorizontalHeaderLabels(["ID", "Name", "Date", "Unit", "Price", "Reference", "Quantity", "Actions"])
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["ID", "Name", "Date", "Unit", "Price", "Reference", "Actions"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         header = self.table.horizontalHeader()
-        for col in range(7):
+        for col in range(6):
             header.setSectionResizeMode(col, QHeaderView.Stretch)
-        header.setSectionResizeMode(7, QHeaderView.Fixed)
-        header.resizeSection(7, 150)  # Fixed width for actions
+        header.setSectionResizeMode(6, QHeaderView.Fixed)
+        header.resizeSection(6, 150)  # Fixed width for actions
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
         layout.addWidget(self.table)
 
+        # Initialize database and load data
         self.load_data()
 
     def load_data(self):
-        # Placeholder data (replace with actual DB query)
-        data = [
-            (1, "Uniform Shirts", "2025-09-01", "PCS", 150.0, "SUP001", 100, None),
-            (2, "Uniform Pants", "2025-09-05", "PCS", 200.0, "SUP002", 50, None),
-            (3, "Uniform Skirts", "2025-09-10", "PCS", 180.0, "SUP003", 75, None)
-        ]
+        """Load procurement data from database with filtering"""
+        search_text = self.search_input.text().strip()
+        from_date = self.from_date.date().toString("yyyy-MM-dd")
+        to_date = self.to_date.date().toString("yyyy-MM-dd")
+        
+        # Build query with filters
+        query = """
+            SELECT * FROM Procurement 
+            WHERE PRO_DATE BETWEEN ? AND ?
+        """
+        params = [from_date, to_date]
+        
+        if search_text:
+            query += " AND (PRO_NAME LIKE ? OR PRO_REFERENCE LIKE ?)"
+            params.extend([f"%{search_text}%", f"%{search_text}%"])
+        
+        query += " ORDER BY PRO_DATE DESC"
+        
+        with get_db_connection() as (conn, c):
+            c.execute(query, params)
+            data = c.fetchall()
+        
+        # Update table
         self.table.setRowCount(len(data))
+        total_amount = 0.0
+        
         for i, row in enumerate(data):
-            for j, val in enumerate(row[:-1]):  # Exclude Actions
-                self.table.setItem(i, j, QTableWidgetItem(str(val)))
+            self.table.setItem(i, 0, QTableWidgetItem(str(row['PRO_ID'])))
+            self.table.setItem(i, 1, QTableWidgetItem(row['PRO_NAME']))
+            self.table.setItem(i, 2, QTableWidgetItem(row['PRO_DATE']))
+            self.table.setItem(i, 3, QTableWidgetItem(row['PRO_UNIT']))
+            self.table.setItem(i, 4, QTableWidgetItem(f"{row['PRO_PRICE']:.2f}"))
+            self.table.setItem(i, 5, QTableWidgetItem(row['PRO_REFERENCE']))
+            
+            # Calculate total amount for all items
+            total_amount += row['PRO_PRICE']
+            
             # Add action buttons
-            self.add_action_buttons(i, row[0])  # Pass ID for edit/delete
-
-        # Update metrics (placeholder)
-        high_in = max([r[6] for r in data if 'In' in r[5]], default=0)  # Based on reference or type
-        high_out = max([r[6] for r in data if 'Out' in r[5]], default=0)
-        self.high_in_label.setText(f"High Qty In: {high_in}")
-        self.high_out_label.setText(f"High Qty Out: {high_out}")
+            self.add_action_buttons(i, row['PRO_ID'])
+        
+        # Update metrics
+        self.total_amount_label.setText(f"Total Amount: {total_amount:.2f}")
         self.results_label.setText(f"{len(data)} results retrieved")
 
     def add_action_buttons(self, row, pro_id):
@@ -5370,76 +6066,133 @@ class ProcurementManagement(QWidget):
         actions_layout.addWidget(delete_btn)
         actions_layout.addStretch()
 
-        self.table.setCellWidget(row, 7, actions_widget)
+        self.table.setCellWidget(row, 6, actions_widget)
 
     def print_table(self):
+        """Print functionality placeholder"""
         QMessageBox.information(self, "Print", "Printing procurement table... (placeholder)")
 
-    def show_add_inventory_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add New Procurement")
-        layout = QVBoxLayout()
-        form_layout = QFormLayout()
-        name_edit = QLineEdit()
-        date_edit = QDateEdit()
-        date_edit.setCalendarPopup(True)
-        date_edit.setDate(QDate.currentDate())
-        unit_edit = QLineEdit()
-        price_edit = QLineEdit()
-        ref_edit = QLineEdit()
-        quantity_edit = QLineEdit()
-        form_layout.addRow("Procurement Name:", name_edit)
-        form_layout.addRow("Date:", date_edit)
-        form_layout.addRow("Unit:", unit_edit)
-        form_layout.addRow("Price:", price_edit)
-        form_layout.addRow("Reference:", ref_edit)
-        form_layout.addRow("Quantity:", quantity_edit)
-        layout.addLayout(form_layout)
-        buttons = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_procurement(dialog, name_edit, date_edit, unit_edit, price_edit, ref_edit, quantity_edit))
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
-        buttons.addWidget(save_btn)
-        buttons.addWidget(close_btn)
-        layout.addLayout(buttons)
-        dialog.setLayout(layout)
-        dialog.exec_()
-
-    def save_procurement(self, dialog, name_edit, date_edit, unit_edit, price_edit, ref_edit, quantity_edit):
-        name = name_edit.text().strip()
-        date = date_edit.date().toString("yyyy-MM-dd")
-        unit = unit_edit.text().strip()
-        price_str = price_edit.text().strip()
-        ref = ref_edit.text().strip()
-        quantity_str = quantity_edit.text().strip()
-        if not all([name, date, unit, price_str, ref, quantity_str]):
-            QMessageBox.warning(dialog, "Error", "All fields are required")
-            return
-        try:
-            price = float(price_str)
-            quantity = int(quantity_str)
-            if price <= 0 or quantity <= 0:
-                QMessageBox.warning(dialog, "Error", "Price and Quantity must be positive")
-                return
-        except ValueError:
-            QMessageBox.warning(dialog, "Error", "Invalid price or quantity")
-            return
-        # Placeholder save (replace with DB insert)
-        QMessageBox.information(dialog, "Success", "Procurement added (placeholder)")
-        dialog.close()
-        self.load_data()
+    def show_add_procurement_dialog(self):
+        """Show dialog to add new procurement"""
+        dialog = ProcurementDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_data()
 
     def edit_procurement(self, pro_id):
-        # Placeholder edit dialog
-        QMessageBox.information(self, "Edit", f"Editing procurement {pro_id} (placeholder)")
+        """Edit existing procurement"""
+        dialog = ProcurementDialog(self, pro_id)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_data()
 
     def delete_procurement(self, pro_id):
-        reply = QMessageBox.question(self, 'Confirm Delete', f'Delete procurement {pro_id}?', QMessageBox.Yes | QMessageBox.No)
+        """Delete procurement after confirmation"""
+        reply = QMessageBox.question(
+            self, 
+            'Confirm Delete', 
+            f'Are you sure you want to delete procurement #{pro_id}?', 
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
         if reply == QMessageBox.Yes:
-            # Placeholder delete
-            QMessageBox.information(self, "Delete", "Procurement deleted (placeholder)")
+            with get_db_connection() as (conn, c):
+                c.execute("DELETE FROM Procurement WHERE PRO_ID = ?", (pro_id,))
+                conn.commit()
+            
+            QMessageBox.information(self, "Success", "Procurement deleted successfully")
             self.load_data()
+
+class ExpenseDialog(QDialog):
+    def __init__(self, parent=None, expense_id=None):
+        super().__init__(parent)
+        self.expense_id = expense_id
+        self.setWindowTitle("Add New Expense" if expense_id is None else "Edit Expense")
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        
+        self.category_combo = QComboBox()
+        self.category_combo.addItems(["Salaries", "Rent", "Utilities", "Office Supplies", 
+                                     "Marketing", "Travel", "Training", "Equipment", "Other"])
+        
+        self.amount_edit = QLineEdit()
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDate(QDate.currentDate())
+        self.desc_edit = QLineEdit()
+        
+        form_layout.addRow("Category:", self.category_combo)
+        form_layout.addRow("Amount:", self.amount_edit)
+        form_layout.addRow("Date:", self.date_edit)
+        form_layout.addRow("Description:", self.desc_edit)
+        
+        layout.addLayout(form_layout)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.validate_and_save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        # If editing, load existing data
+        if expense_id is not None:
+            self.load_expense_data()
+    
+    def load_expense_data(self):
+        """Load expense data for editing"""
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT * FROM Expenses WHERE ExpID = ?", (self.expense_id,))
+            expense = c.fetchone()
+            
+            if expense:
+                # Set category
+                index = self.category_combo.findText(expense['ExpCategory'])
+                if index >= 0:
+                    self.category_combo.setCurrentIndex(index)
+                
+                self.amount_edit.setText(str(expense['ExpAmount']))
+                self.date_edit.setDate(QDate.fromString(expense['ExpDate'], "yyyy-MM-dd"))
+                self.desc_edit.setText(expense['ExpDescription'] if expense['ExpDescription'] else "")
+    
+    def validate_and_save(self):
+        """Validate input and save expense data"""
+        category = self.category_combo.currentText()
+        amount_str = self.amount_edit.text().strip()
+        date = self.date_edit.date().toString("yyyy-MM-dd")
+        desc = self.desc_edit.text().strip()
+        
+        # Validation
+        if not all([category, amount_str, date]):
+            QMessageBox.warning(self, "Error", "Category, Amount, and Date are required")
+            return
+        
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                QMessageBox.warning(self, "Error", "Amount must be positive")
+                return
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Invalid amount")
+            return
+        
+        # Save to database
+        with get_db_connection() as (conn, c):
+            if self.expense_id is None:
+                # Insert new record
+                c.execute('''
+                    INSERT INTO Expenses (ExpCategory, ExpAmount, ExpDate, ExpDescription)
+                    VALUES (?, ?, ?, ?)
+                ''', (category, amount, date, desc if desc else None))
+            else:
+                # Update existing record
+                c.execute('''
+                    UPDATE Expenses 
+                    SET ExpCategory=?, ExpAmount=?, ExpDate=?, ExpDescription=?
+                    WHERE ExpID=?
+                ''', (category, amount, date, desc if desc else None, self.expense_id))
+            
+            conn.commit()
+        
+        self.accept()
 
 class ExpenseManagement(QWidget):
     def __init__(self):
@@ -5507,8 +6260,8 @@ class ExpenseManagement(QWidget):
         # First row: Filters (Search, From Date, To Date, Category ComboBox)
         filter_layout = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search...")
-        self.search_input.setMaximumWidth(200)
+        self.search_input.setPlaceholderText("Search by description...")
+        self.search_input.setMaximumWidth(250)
         self.search_input.textChanged.connect(self.load_data)
 
         self.from_date = QDateEdit()
@@ -5522,9 +6275,6 @@ class ExpenseManagement(QWidget):
         self.to_date.dateChanged.connect(self.load_data)
 
         self.category_combo = QComboBox()
-        self.category_combo.addItem("All Categories")
-        # Populate categories from DB if needed, placeholder
-        self.category_combo.addItems(["Uniform", "Maintenance", "Other"])
         self.category_combo.currentIndexChanged.connect(self.load_data)
 
         filter_layout.addWidget(self.search_input)
@@ -5543,7 +6293,7 @@ class ExpenseManagement(QWidget):
         self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
 
         self.total_amount_label = QLabel("Total Amount: $0.00")
-        self.total_amount_label.setStyleSheet("font-size: 14px; color: #2D3748; font-weight: bold;")
+        self.total_amount_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2D3748;")
 
         print_btn = QPushButton("Print")
         print_btn.clicked.connect(self.print_table)
@@ -5560,7 +6310,7 @@ class ExpenseManagement(QWidget):
 
         # Third row: Table
         self.table = QTableWidget()
-        self.table.setColumnCount(7)  # Added Actions column
+        self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["ID", "Category", "Amount", "Date", "Description", "Actions"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         header = self.table.horizontalHeader()
@@ -5573,27 +6323,68 @@ class ExpenseManagement(QWidget):
         self.table.verticalHeader().setVisible(False)
         layout.addWidget(self.table)
 
+        # Initialize database and load data
+        self.load_categories()
         self.load_data()
 
-    def load_data(self):
-        # Placeholder data (replace with actual DB query)
-        data = [
-            (1, "Uniform", 1500.0, "2025-09-01", "Uniform procurement"),
-            (2, "Maintenance", 500.0, "2025-09-05", "Repair costs"),
-            (3, "Other", 200.0, "2025-09-10", "Miscellaneous")
-        ]
-        self.table.setRowCount(len(data))
-        total_amount = 0
-        for i, row in enumerate(data):
-            for j, val in enumerate(row[:-1]):  # Exclude Actions
-                self.table.setItem(i, j, QTableWidgetItem(str(val)))
-            total_amount += row[2]  # Sum amounts
-            # Add action buttons
-            self.add_action_buttons(i, row[0])  # Pass ID for edit/delete
+    def load_categories(self):
+        """Load distinct categories from database for the filter dropdown"""
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT DISTINCT ExpCategory FROM Expenses ORDER BY ExpCategory")
+            categories = [row['ExpCategory'] for row in c.fetchall()]
+        
+        self.category_combo.clear()
+        self.category_combo.addItem("All Categories")
+        self.category_combo.addItems(categories)
 
-        # Update metrics (placeholder)
-        self.results_label.setText(f"{len(data)} results retrieved")
+    def load_data(self):
+        """Load expense data from database with filtering"""
+        search_text = self.search_input.text().strip()
+        from_date = self.from_date.date().toString("yyyy-MM-dd")
+        to_date = self.to_date.date().toString("yyyy-MM-dd")
+        selected_category = self.category_combo.currentText()
+        
+        # Build query with filters
+        query = """
+            SELECT * FROM Expenses 
+            WHERE ExpDate BETWEEN ? AND ?
+        """
+        params = [from_date, to_date]
+        
+        if search_text:
+            query += " AND (ExpDescription LIKE ? OR ExpCategory LIKE ?)"
+            params.extend([f"%{search_text}%", f"%{search_text}%"])
+        
+        if selected_category != "All Categories":
+            query += " AND ExpCategory = ?"
+            params.append(selected_category)
+        
+        query += " ORDER BY ExpDate DESC"
+        
+        with get_db_connection() as (conn, c):
+            c.execute(query, params)
+            data = c.fetchall()
+        
+        # Update table
+        self.table.setRowCount(len(data))
+        total_amount = 0.0
+        
+        for i, row in enumerate(data):
+            self.table.setItem(i, 0, QTableWidgetItem(str(row['ExpID'])))
+            self.table.setItem(i, 1, QTableWidgetItem(row['ExpCategory']))
+            self.table.setItem(i, 2, QTableWidgetItem(f"${row['ExpAmount']:.2f}"))
+            self.table.setItem(i, 3, QTableWidgetItem(row['ExpDate']))
+            self.table.setItem(i, 4, QTableWidgetItem(row['ExpDescription'] if row['ExpDescription'] else ""))
+            
+            # Calculate total amount for all expenses
+            total_amount += row['ExpAmount']
+            
+            # Add action buttons
+            self.add_action_buttons(i, row['ExpID'])
+        
+        # Update metrics
         self.total_amount_label.setText(f"Total Amount: ${total_amount:.2f}")
+        self.results_label.setText(f"{len(data)} results retrieved")
 
     def add_action_buttons(self, row, exp_id):
         actions_widget = QWidget()
@@ -5616,66 +6407,39 @@ class ExpenseManagement(QWidget):
         self.table.setCellWidget(row, 5, actions_widget)
 
     def print_table(self):
+        """Print functionality placeholder"""
         QMessageBox.information(self, "Print", "Printing expense table... (placeholder)")
 
     def show_add_expense_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add New Expense")
-        layout = QVBoxLayout()
-        form_layout = QFormLayout()
-        category_combo = QComboBox()
-        category_combo.addItems(["Uniform", "Maintenance", "Other"])
-        amount_edit = QLineEdit()
-        date_edit = QDateEdit()
-        date_edit.setCalendarPopup(True)
-        date_edit.setDate(QDate.currentDate())
-        desc_edit = QLineEdit()
-        form_layout.addRow("Category:", category_combo)
-        form_layout.addRow("Amount:", amount_edit)
-        form_layout.addRow("Date:", date_edit)
-        form_layout.addRow("Description:", desc_edit)
-        layout.addLayout(form_layout)
-        buttons = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_expense(dialog, category_combo, amount_edit, date_edit, desc_edit))
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
-        buttons.addWidget(save_btn)
-        buttons.addWidget(close_btn)
-        layout.addLayout(buttons)
-        dialog.setLayout(layout)
-        dialog.exec_()
-
-    def save_expense(self, dialog, category_combo, amount_edit, date_edit, desc_edit):
-        category = category_combo.currentText()
-        amount_str = amount_edit.text().strip()
-        date = date_edit.date().toString("yyyy-MM-dd")
-        desc = desc_edit.text().strip()
-        if not all([category, amount_str, date, desc]):
-            QMessageBox.warning(dialog, "Error", "All fields are required")
-            return
-        try:
-            amount = float(amount_str)
-            if amount <= 0:
-                QMessageBox.warning(dialog, "Error", "Amount must be positive")
-                return
-        except ValueError:
-            QMessageBox.warning(dialog, "Error", "Invalid amount")
-            return
-        # Placeholder save (replace with DB insert)
-        QMessageBox.information(dialog, "Success", "Expense added (placeholder)")
-        dialog.close()
-        self.load_data()
+        """Show dialog to add new expense"""
+        dialog = ExpenseDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_categories()  # Refresh categories in case a new one was added
+            self.load_data()
 
     def edit_expense(self, exp_id):
-        # Placeholder edit dialog
-        QMessageBox.information(self, "Edit", f"Editing expense {exp_id} (placeholder)")
+        """Edit existing expense"""
+        dialog = ExpenseDialog(self, exp_id)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_categories()  # Refresh categories in case a new one was added
+            self.load_data()
 
     def delete_expense(self, exp_id):
-        reply = QMessageBox.question(self, 'Confirm Delete', f'Delete expense {exp_id}?', QMessageBox.Yes | QMessageBox.No)
+        """Delete expense after confirmation"""
+        reply = QMessageBox.question(
+            self, 
+            'Confirm Delete', 
+            f'Are you sure you want to delete expense #{exp_id}?', 
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
         if reply == QMessageBox.Yes:
-            # Placeholder delete
-            QMessageBox.information(self, "Delete", "Expense deleted (placeholder)")
+            with get_db_connection() as (conn, c):
+                c.execute("DELETE FROM Expenses WHERE ExpID = ?", (exp_id,))
+                conn.commit()
+            
+            QMessageBox.information(self, "Success", "Expense deleted successfully")
+            self.load_categories()  # Refresh categories in case we deleted the last item of a category
             self.load_data()
 
 #### This is End of the Uniforms  ####
