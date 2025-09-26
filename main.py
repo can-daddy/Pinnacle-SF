@@ -1542,7 +1542,7 @@ class Window(QMainWindow):
             ("Students", "Icons/student-icon.png"),
             ("Fees", "Icons/fees-icon.png"),
             ("Uniforms", "Icons/uniform-icon.png"),
-            ("Expenses", "Icons/expenses-icon.png"),
+            ("Expenditure", "Icons/expenses-icon.png"),
             ("Classes", "Icons/classes-icon.png"),
             ("Academic Calendar", "Icons/Calendar.png"),
             ("Reports", "Icons/report-icon.png")
@@ -1608,7 +1608,7 @@ class Window(QMainWindow):
         self.ClassPage = Class()
         self.FeesPage = Fees()
         self.UniformsPage = Uniforms()
-        self.ExpensesPage = Expenses()
+        self.ExpensesPage = Expenditure()
         self.ReportsPage = Reports()
         self.AboutPage = About()
         self.AccountPage = Account()
@@ -1640,7 +1640,7 @@ class Window(QMainWindow):
             "Students": self.StudentPage,
             "Fees": self.FeesPage,
             "Uniforms": self.UniformsPage,
-            "Expenses": self.ExpensesPage,
+            "Expenditure": self.ExpensesPage,
             "Classes": self.ClassPage,
             "Academic Calendar": self.AcademicYearTermPage,
             "Reports": self.ReportsPage,
@@ -1659,7 +1659,6 @@ class Window(QMainWindow):
             if page_widget:
                 btn.clicked.connect(make_nav_handler(page_widget, btn.original_text))
 
-   
     def toggle_sidebar(self):
         self.sidebar_expanded = not self.sidebar_expanded
         new_width = 60 if not self.sidebar_expanded else 250
@@ -6292,7 +6291,7 @@ class ExpenseManagement(QWidget):
         self.results_label = QLabel("0 results retrieved")
         self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
 
-        self.total_amount_label = QLabel("Total Amount: $0.00")
+        self.total_amount_label = QLabel("Total Amount: 0.00")
         self.total_amount_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2D3748;")
 
         print_btn = QPushButton("Print")
@@ -6372,7 +6371,7 @@ class ExpenseManagement(QWidget):
         for i, row in enumerate(data):
             self.table.setItem(i, 0, QTableWidgetItem(str(row['ExpID'])))
             self.table.setItem(i, 1, QTableWidgetItem(row['ExpCategory']))
-            self.table.setItem(i, 2, QTableWidgetItem(f"${row['ExpAmount']:.2f}"))
+            self.table.setItem(i, 2, QTableWidgetItem(f"{row['ExpAmount']:.2f}"))
             self.table.setItem(i, 3, QTableWidgetItem(row['ExpDate']))
             self.table.setItem(i, 4, QTableWidgetItem(row['ExpDescription'] if row['ExpDescription'] else ""))
             
@@ -6383,7 +6382,7 @@ class ExpenseManagement(QWidget):
             self.add_action_buttons(i, row['ExpID'])
         
         # Update metrics
-        self.total_amount_label.setText(f"Total Amount: ${total_amount:.2f}")
+        self.total_amount_label.setText(f"Total Amount: {total_amount:.2f}")
         self.results_label.setText(f"{len(data)} results retrieved")
 
     def add_action_buttons(self, row, exp_id):
@@ -6443,16 +6442,1745 @@ class ExpenseManagement(QWidget):
             self.load_data()
 
 #### This is End of the Uniforms  ####
-class Expenses(QWidget):
+#### start of expenditure #####
+
+class Expenditure(QWidget):
     def __init__(self):
         super().__init__()
+        self.setWindowTitle("Expenditure Management System")
+        self.setGeometry(100, 100, 1000, 700)
+       
+        
         layout = QVBoxLayout(self)
-        layout.addStretch()
-        label = QLabel("Expenses Page")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("font-size: 28px; font-weight: bold; color: #2D3748;")
-        layout.addWidget(label)
-        layout.addStretch()                    
+        
+        # Main tabs for different sections
+        self.main_tabs = QTabWidget()
+        
+        # Categories Tab
+        self.expenditure_tab = ExpenditureManagement()
+        self.main_tabs.addTab(self.expenditure_tab, "Expenditure")
+        
+        # Placeholder for future tabs
+        self.assets_tab = AssetsManagement()
+        self.main_tabs.addTab(self.assets_tab, "Assets")
+        
+        self.categories_tab = CategoriesTab()
+        self.main_tabs.addTab(self.categories_tab, "Categories")
+        
+        layout.addWidget(self.main_tabs)
+
+class CategoryDialog(QDialog):
+    def __init__(self, parent=None, category_data=None, is_subcategory=False, categories=None):
+        super().__init__(parent)
+        self.category_data = category_data
+        self.is_subcategory = is_subcategory
+        self.categories = categories or []
+        self.setup_ui()
+        
+        
+    def setup_ui(self):
+        if self.is_subcategory:
+            self.setWindowTitle("Edit Subcategory" if self.category_data else "Add Subcategory")
+        else:
+            self.setWindowTitle("Edit Category" if self.category_data else "Add Category")
+            
+        self.setModal(True)
+        self.resize(400, 200)
+        
+        layout = QFormLayout(self)
+        
+        if self.is_subcategory:
+            self.category_combo = QComboBox()
+            for cat_id, cat_name in self.categories:
+                self.category_combo.addItem(cat_name, cat_id)
+            layout.addRow("Category:", self.category_combo)
+            
+        self.name_edit = QLineEdit()
+        layout.addRow("Name:" if self.is_subcategory else "Category Name:", self.name_edit)
+        
+        if not self.is_subcategory:
+            self.type_combo = QComboBox()
+            self.type_combo.addItems(["Expense", "Income", "Transfer"])
+            layout.addRow("Type:", self.type_combo)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+        
+        if self.category_data:
+            self.populate_data()
+    
+    def populate_data(self):
+        if self.is_subcategory:
+            self.name_edit.setText(self.category_data['ExpenditureSubCategoryName'])
+            index = self.category_combo.findData(self.category_data['ExpenditureCategoryID'])
+            if index >= 0:
+                self.category_combo.setCurrentIndex(index)
+        else:
+            self.name_edit.setText(self.category_data['ExpCatName'])
+            index = self.type_combo.findText(self.category_data['ExpCatType'])
+            if index >= 0:
+                self.type_combo.setCurrentIndex(index)
+    
+    def validate_and_accept(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Validation Error", "Name is required!")
+            return
+        
+        self.accept()
+    
+    def get_data(self):
+        if self.is_subcategory:
+            return {
+                'name': self.name_edit.text().strip(),
+                'category_id': self.category_combo.currentData()
+            }
+        else:
+            return {
+                'name': self.name_edit.text().strip(),
+                'type': self.type_combo.currentText()
+            }
+
+class CategoriesTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+        self.load_categories()
+        self.load_subcategories()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit, QDateEdit, QTextEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+        """)
+        
+        
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        
+        # Title
+        title = QLabel("Categories Management")
+        title.setFont(QFont("Arial", 16, QFont.Bold))
+        title.setAlignment(Qt.AlignLeft)
+        main_layout.addWidget(title)
+        
+        # Filters row
+        filters_layout = QHBoxLayout()
+        
+        # Left side filters
+        left_filters = QHBoxLayout()
+        
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search...")
+        self.search_edit.textChanged.connect(self.filter_table)
+        left_filters.addWidget(QLabel("Search:"))
+        left_filters.addWidget(self.search_edit)
+        
+        self.type_combo = QComboBox()
+        self.type_combo.addItem("All Types", "")
+        self.type_combo.addItems(["Expense", "Income", "Transfer"])
+        self.type_combo.currentTextChanged.connect(self.filter_table)
+        left_filters.addWidget(QLabel("Type:"))
+        left_filters.addWidget(self.type_combo)
+        
+        self.category_combo = QComboBox()
+        self.category_combo.addItem("All Categories", "")
+        self.category_combo.currentTextChanged.connect(self.filter_table)
+        left_filters.addWidget(QLabel("Category:"))
+        left_filters.addWidget(self.category_combo)
+        
+        filters_layout.addLayout(left_filters)
+        filters_layout.addStretch()
+        
+        # Right side buttons
+        right_buttons = QHBoxLayout()
+        
+        self.new_category_btn = QPushButton("New Category")
+        self.new_category_btn.clicked.connect(self.add_category)
+        right_buttons.addWidget(self.new_category_btn)
+        
+        self.new_subcat_btn = QPushButton("New Subcategory")
+        self.new_subcat_btn.clicked.connect(self.add_subcategory)
+        right_buttons.addWidget(self.new_subcat_btn)
+        
+        self.print_btn = QPushButton("Print")
+        self.print_btn.clicked.connect(self.print_data)
+        right_buttons.addWidget(self.print_btn)
+        
+        filters_layout.addLayout(right_buttons)
+        main_layout.addLayout(filters_layout)
+        
+        # Create tabs for Categories and Subcategories
+        self.tabs = QTabWidget()
+        
+        # Categories Tab
+        self.categories_tab = QWidget()
+        self.setup_categories_tab()
+        self.tabs.addTab(self.categories_tab, "Categories")
+        
+        # Subcategories Tab
+        self.subcategories_tab = QWidget()
+        self.setup_subcategories_tab()
+        self.tabs.addTab(self.subcategories_tab, "Subcategories")
+        
+        main_layout.addWidget(self.tabs)
+    
+    def setup_categories_tab(self):
+        layout = QVBoxLayout(self.categories_tab)
+        
+        # Categories table
+        self.categories_table = QTableWidget()
+        self.categories_table.setColumnCount(4)
+        self.categories_table.setHorizontalHeaderLabels(["ID", "Name", "Type", "Actions"])
+        self.categories_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.categories_table)
+    
+    def setup_subcategories_tab(self):
+        layout = QVBoxLayout(self.subcategories_tab)
+        
+        # Subcategories table
+        self.subcategories_table = QTableWidget()
+        self.subcategories_table.setColumnCount(4)
+        self.subcategories_table.setHorizontalHeaderLabels(["ID", "Name", "Category", "Type", "Actions"])
+        self.subcategories_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.subcategories_table)
+    
+    def get_db_connection(self):
+        """Context manager for database connections"""
+        conn = None
+        try:
+            conn = sqlite3.connect("Database.db")
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            yield conn, c
+        except sqlite3.Error as e:
+            print(f"Database connection error: {e}")
+            raise
+        finally:
+            if conn:
+                conn.close()
+    
+    def load_categories(self):
+        try:
+            conn_gen = self.get_db_connection()
+            conn, c = next(conn_gen)
+            c.execute("SELECT ExpCatID, ExpCatName, ExpCatType FROM ExpenditureCategory")
+            self.categories = [dict(row) for row in c.fetchall()]
+            
+            # Update category filter combo
+            self.category_combo.clear()
+            self.category_combo.addItem("All Categories", "")
+            for cat in self.categories:
+                self.category_combo.addItem(cat['ExpCatName'], cat['ExpCatID'])
+                
+            self.populate_categories_table()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load categories: {str(e)}")
+    
+    def load_subcategories(self):
+        try:
+            conn_gen = self.get_db_connection()
+            conn, c = next(conn_gen)
+            query = """
+                SELECT esc.ExpeSubCatID, esc.ExpenditureSubCategoryName, 
+                       ec.ExpCatID, ec.ExpCatName, ec.ExpCatType
+                FROM ExpenditureSubCategory esc
+                JOIN ExpenditureCategory ec ON esc.ExpenditureCategoryID = ec.ExpCatID
+            """
+            c.execute(query)
+            self.subcategories = [dict(row) for row in c.fetchall()]
+            self.populate_subcategories_table()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to load subcategories: {str(e)}")
+    
+    def populate_categories_table(self):
+        self.categories_table.setRowCount(0)
+        
+        for category in self.categories:
+            row_position = self.categories_table.rowCount()
+            self.categories_table.insertRow(row_position)
+            
+            self.categories_table.setItem(row_position, 0, QTableWidgetItem(str(category['ExpCatID'])))
+            self.categories_table.setItem(row_position, 1, QTableWidgetItem(category['ExpCatName']))
+            self.categories_table.setItem(row_position, 2, QTableWidgetItem(category['ExpCatType']))
+            
+            # Actions column
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(5, 2, 5, 2)
+            
+            edit_btn = QPushButton("Edit")
+            edit_btn.clicked.connect(lambda checked, data=category: self.edit_category(data))
+            edit_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border: none; padding: 5px; }")
+            
+            delete_btn = QPushButton("Delete")
+            delete_btn.clicked.connect(lambda checked, data=category: self.delete_category(data))
+            delete_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; border: none; padding: 5px; }")
+            
+            actions_layout.addWidget(edit_btn)
+            actions_layout.addWidget(delete_btn)
+            actions_layout.addStretch()
+            
+            self.categories_table.setCellWidget(row_position, 3, actions_widget)
+    
+    def populate_subcategories_table(self):
+        self.subcategories_table.setRowCount(0)
+        
+        for subcat in self.subcategories:
+            row_position = self.subcategories_table.rowCount()
+            self.subcategories_table.insertRow(row_position)
+            
+            self.subcategories_table.setItem(row_position, 0, QTableWidgetItem(str(subcat['ExpeSubCatID'])))
+            self.subcategories_table.setItem(row_position, 1, QTableWidgetItem(subcat['ExpenditureSubCategoryName']))
+            self.subcategories_table.setItem(row_position, 2, QTableWidgetItem(subcat['ExpCatName']))
+            self.subcategories_table.setItem(row_position, 3, QTableWidgetItem(subcat['ExpCatType']))
+            
+            # Actions column
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(5, 2, 5, 2)
+            
+            edit_btn = QPushButton("Edit")
+            edit_btn.clicked.connect(lambda checked, data=subcat: self.edit_subcategory(data))
+            edit_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border: none; padding: 5px; }")
+            
+            delete_btn = QPushButton("Delete")
+            delete_btn.clicked.connect(lambda checked, data=subcat: self.delete_subcategory(data))
+            delete_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; border: none; padding: 5px; }")
+            
+            actions_layout.addWidget(edit_btn)
+            actions_layout.addWidget(delete_btn)
+            actions_layout.addStretch()
+            
+            self.subcategories_table.setCellWidget(row_position, 4, actions_widget)
+    
+    def filter_table(self):
+        # This now filters the subcategories table
+        search_text = self.search_edit.text().lower()
+        type_filter = self.type_combo.currentText()
+        category_filter = self.category_combo.currentText()
+        
+        current_tab = self.tabs.currentIndex()
+        
+        if current_tab == 0:  # Categories tab
+            table = self.categories_table
+            for row in range(table.rowCount()):
+                should_show = True
+                
+                if search_text:
+                    name_item = table.item(row, 1)
+                    if name_item and search_text not in name_item.text().lower():
+                        should_show = False
+                
+                if should_show and type_filter and type_filter != "All Types":
+                    type_item = table.item(row, 2)
+                    if type_item and type_item.text() != type_filter:
+                        should_show = False
+                
+                table.setRowHidden(row, not should_show)
+                
+        else:  # Subcategories tab
+            table = self.subcategories_table
+            for row in range(table.rowCount()):
+                should_show = True
+                
+                if search_text:
+                    name_item = table.item(row, 1)
+                    if name_item and search_text not in name_item.text().lower():
+                        should_show = False
+                
+                if should_show and type_filter and type_filter != "All Types":
+                    type_item = table.item(row, 3)
+                    if type_item and type_item.text() != type_filter:
+                        should_show = False
+                
+                if should_show and category_filter and category_filter != "All Categories":
+                    category_item = table.item(row, 2)
+                    if category_item and category_item.text() != category_filter:
+                        should_show = False
+                
+                table.setRowHidden(row, not should_show)
+    
+    def add_category(self):
+        dialog = CategoryDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            data = dialog.get_data()
+            try:
+                conn_gen = self.get_db_connection()
+                conn, c = next(conn_gen)
+                c.execute("INSERT INTO ExpenditureCategory (ExpCatName, ExpCatType) VALUES (?, ?)",
+                         (data['name'], data['type']))
+                conn.commit()
+                self.load_categories()
+                QMessageBox.information(self, "Success", "Category added successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to add category: {str(e)}")
+    
+    def edit_category(self, data):
+        dialog = CategoryDialog(self, category_data=data)
+        if dialog.exec_() == QDialog.Accepted:
+            new_data = dialog.get_data()
+            try:
+                conn_gen = self.get_db_connection()
+                conn, c = next(conn_gen)
+                c.execute("UPDATE ExpenditureCategory SET ExpCatName = ?, ExpCatType = ? WHERE ExpCatID = ?",
+                         (new_data['name'], new_data['type'], data['ExpCatID']))
+                conn.commit()
+                self.load_categories()
+                self.load_subcategories()  # Reload subcategories in case category type changed
+                QMessageBox.information(self, "Success", "Category updated successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to update category: {str(e)}")
+    
+    def delete_category(self, data):
+        reply = QMessageBox.question(self, "Confirm Delete", 
+                                   f"Are you sure you want to delete category '{data['ExpCatName']}'?",
+                                   QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            try:
+                # Check if category has subcategories
+                conn_gen = self.get_db_connection()
+                conn, c = next(conn_gen)
+                c.execute("SELECT COUNT(*) FROM ExpenditureSubCategory WHERE ExpenditureCategoryID = ?", (data['ExpCatID'],))
+                subcat_count = c.fetchone()[0]
+                
+                if subcat_count > 0:
+                    QMessageBox.warning(self, "Cannot Delete", 
+                                      "This category has subcategories. Please delete all subcategories first.")
+                    return
+                
+                c.execute("DELETE FROM ExpenditureCategory WHERE ExpCatID = ?", (data['ExpCatID'],))
+                conn.commit()
+                self.load_categories()
+                QMessageBox.information(self, "Success", "Category deleted successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to delete category: {str(e)}")
+    
+    def add_subcategory(self):
+        if not self.categories:
+            QMessageBox.warning(self, "No Categories", "Please create a category first!")
+            return
+            
+        dialog = CategoryDialog(self, is_subcategory=True, categories=[(cat['ExpCatID'], cat['ExpCatName']) for cat in self.categories])
+        if dialog.exec_() == QDialog.Accepted:
+            data = dialog.get_data()
+            try:
+                conn_gen = self.get_db_connection()
+                conn, c = next(conn_gen)
+                c.execute("INSERT INTO ExpenditureSubCategory (ExpenditureCategoryID, ExpenditureSubCategoryName) VALUES (?, ?)",
+                         (data['category_id'], data['name']))
+                conn.commit()
+                self.load_subcategories()
+                QMessageBox.information(self, "Success", "Subcategory added successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to add subcategory: {str(e)}")
+    
+    def edit_subcategory(self, data):
+        dialog = CategoryDialog(self, category_data=data, is_subcategory=True, 
+                               categories=[(cat['ExpCatID'], cat['ExpCatName']) for cat in self.categories])
+        if dialog.exec_() == QDialog.Accepted:
+            new_data = dialog.get_data()
+            try:
+                conn_gen = self.get_db_connection()
+                conn, c = next(conn_gen)
+                c.execute("UPDATE ExpenditureSubCategory SET ExpenditureSubCategoryName = ?, ExpenditureCategoryID = ? WHERE ExpeSubCatID = ?",
+                         (new_data['name'], new_data['category_id'], data['ExpeSubCatID']))
+                conn.commit()
+                self.load_subcategories()
+                QMessageBox.information(self, "Success", "Subcategory updated successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to update subcategory: {str(e)}")
+    
+    def delete_subcategory(self, data):
+        reply = QMessageBox.question(self, "Confirm Delete", 
+                                   f"Are you sure you want to delete '{data['ExpenditureSubCategoryName']}'?",
+                                   QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            try:
+                # Check if subcategory is used in expenditures
+                conn_gen = self.get_db_connection()
+                conn, c = next(conn_gen)
+                c.execute("SELECT COUNT(*) FROM Expenditure WHERE ExpeSubID = ?", (data['ExpeSubCatID'],))
+                count = c.fetchone()[0]
+                
+                if count > 0:
+                    QMessageBox.warning(self, "Cannot Delete", 
+                                      "This subcategory is used in existing expenditures and cannot be deleted.")
+                    return
+                
+                c.execute("DELETE FROM ExpenditureSubCategory WHERE ExpeSubCatID = ?", (data['ExpeSubCatID'],))
+                conn.commit()
+                self.load_subcategories()
+                QMessageBox.information(self, "Success", "Subcategory deleted successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to delete subcategory: {str(e)}")
+    
+    def print_data(self):
+        current_tab = self.tabs.currentIndex()
+        if current_tab == 0:
+            QMessageBox.information(self, "Print", "Printing categories data...")
+        else:
+            QMessageBox.information(self, "Print", "Printing subcategories data...")
+
+class ExpenditureManagement(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit, QDateEdit, QTextEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Header (unchanged)
+        header_layout = QHBoxLayout()
+        title = QLabel("Expenditure Management")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        add_btn = QPushButton("Add New Expenditure")
+        add_btn.clicked.connect(self.show_add_dialog)
+        header_layout.addWidget(add_btn)
+        layout.addLayout(header_layout)
+
+        # FILTERS - REMOVED TYPE FILTER FROM MAIN PAGE
+        filter_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search...")
+        self.search_input.setMaximumWidth(200)
+        self.search_input.textChanged.connect(self.load_data)
+
+        self.from_date = QDateEdit()
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDate(QDate.currentDate().addMonths(-1))
+        self.from_date.dateChanged.connect(self.load_data)
+
+        self.to_date = QDateEdit()
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDate(QDate.currentDate())
+        self.to_date.dateChanged.connect(self.load_data)
+
+        # Category and Subcategory filters (for ALL types on main page)
+        self.category_combo = QComboBox()
+        self.category_combo.addItem("All Categories")
+        self.load_categories()  # Load ALL categories for filtering
+        self.category_combo.currentIndexChanged.connect(self.on_category_changed)
+
+        self.subcategory_combo = QComboBox()
+        self.subcategory_combo.addItem("All Subcategories")
+        self.subcategory_combo.currentIndexChanged.connect(self.load_data)
+    
+        self.payment_combo = QComboBox()
+        self.payment_combo.addItem("All Payment Methods")
+        self.payment_combo.addItems(["Cash", "Bank Transfer", "Credit Card", "Other"])
+        self.payment_combo.currentIndexChanged.connect(self.load_data)
+
+        filter_layout.addWidget(QLabel("Search:"))
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(QLabel("From:"))
+        filter_layout.addWidget(self.from_date)
+        filter_layout.addWidget(QLabel("To:"))
+        filter_layout.addWidget(self.to_date)
+        filter_layout.addWidget(QLabel("Category:"))
+        filter_layout.addWidget(self.category_combo)
+        filter_layout.addWidget(QLabel("Subcategory:"))
+        filter_layout.addWidget(self.subcategory_combo)
+        filter_layout.addWidget(QLabel("Payment:"))
+        filter_layout.addWidget(self.payment_combo)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
+        # Metrics and Table (unchanged)
+        metrics_layout = QHBoxLayout()
+        self.results_label = QLabel("0 results")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+        self.total_label = QLabel("Total Amount: 0.00")
+        self.total_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        metrics_layout.addWidget(self.results_label)
+        metrics_layout.addWidget(self.total_label)
+        metrics_layout.addStretch()
+        layout.addLayout(metrics_layout)
+
+        # Table - SIMPLIFIED for Expenditure data only
+        self.table = QTableWidget()
+        self.table.setColumnCount(8)  # Removed Asset Name column
+        self.table.setHorizontalHeaderLabels(["ID", "Category", "Subcategory", "Amount", "Date", "Description", "Payment Method", "Actions"])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        for col in range(6):  # Adjusted columns
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.Fixed)  # Actions column
+        header.resizeSection(6, 150)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        # Load initial data
+        self.load_data()
+
+    def on_category_changed(self):
+        """Handle category selection change - for FILTERING on main page"""
+        if self.category_combo.currentIndex() == 0:  # "All Categories"
+            cat_id = None
+        else:
+            cat_id = self.category_combo.currentData()
+        
+        self.load_subcategories(cat_id)
+        self.load_data()
+
+    def load_categories(self):
+        """Load ALL categories for FILTERING on main page"""
+        self.category_combo.clear()
+        self.category_combo.addItem("All Categories")
+        
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ExpCatID, ExpCatName FROM ExpenditureCategory")
+                for row in c.fetchall():
+                    self.category_combo.addItem(row[1], row[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load categories: {str(e)}")
+
+    def load_subcategories(self, cat_id=None):
+        """Load subcategories for FILTERING on main page"""
+        self.subcategory_combo.clear()
+        self.subcategory_combo.addItem("All Subcategories")
+        
+        if cat_id is None:
+            return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ExpeSubCatID, ExpenditureSubCategoryName FROM ExpenditureSubCategory WHERE ExpenditureCategoryID = ?", (cat_id,))
+                for row in c.fetchall():
+                    self.subcategory_combo.addItem(row[1], row[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load subcategories: {str(e)}")
+   
+    def load_data(self):
+        """Load expenditure data with filters - SIMPLIFIED without type filtering"""
+        search_text = self.search_input.text().strip()
+        from_date_str = self.from_date.date().toString("yyyy-MM-dd")
+        to_date_str = self.to_date.date().toString("yyyy-MM-dd")
+        
+        # Get filters safely
+        category_id = None
+        if self.category_combo.currentIndex() > 0:
+            category_id = self.category_combo.currentData()
+        
+        subcategory_id = None
+        if self.subcategory_combo.currentIndex() > 0:
+            subcategory_id = self.subcategory_combo.currentData()
+        
+        payment_method = self.payment_combo.currentText()
+        if payment_method == "All Payment Methods":
+            payment_method = None
+        
+        try:
+            with get_db_connection() as (conn, c):
+                query = """
+                    SELECT e.ExpenseID, ec.ExpCatName, esc.ExpenditureSubCategoryName, e.ExpenseAmount,
+                           e.ExpenseDate, e.ExpenseDesc, e.PaymentMethod
+                    FROM Expenditure e
+                    JOIN ExpenditureSubCategory esc ON e.ExpeSubID = esc.ExpeSubCatID
+                    JOIN ExpenditureCategory ec ON esc.ExpenditureCategoryID = ec.ExpCatID
+                    WHERE 1=1
+                """
+                params = []
+                
+                if search_text:
+                    query += " AND (ec.ExpCatName LIKE ? OR esc.ExpenditureSubCategoryName LIKE ? OR e.ExpenseDesc LIKE ?)"
+                    params.extend([f"%{search_text}%", f"%{search_text}%", f"%{search_text}%"])
+                
+                if from_date_str:
+                    query += " AND e.ExpenseDate >= ?"
+                    params.append(from_date_str)
+                
+                if to_date_str:
+                    query += " AND e.ExpenseDate <= ?"
+                    params.append(to_date_str)
+                
+                if category_id:
+                    query += " AND ec.ExpCatID = ?"
+                    params.append(category_id)
+                
+                if subcategory_id:
+                    query += " AND esc.ExpeSubCatID = ?"
+                    params.append(subcategory_id)
+                
+                if payment_method:
+                    query += " AND e.PaymentMethod = ?"
+                    params.append(payment_method)
+                
+                query += " ORDER BY e.ExpenseDate DESC"
+                
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                self.table.setRowCount(len(rows))
+                total_amount = 0
+                for i, row in enumerate(rows):
+                    for j, val in enumerate(row):
+                        self.table.setItem(i, j, QTableWidgetItem(str(val) if val else ""))
+                    total_amount += row[3] or 0
+                    self.add_action_buttons(i, row[0])
+                
+                self.results_label.setText(f"{len(rows)} results")
+                self.total_label.setText(f"Total Amount: {total_amount:.2f}")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
+
+    def add_action_buttons(self, row, exp_id):
+        """Add action buttons to table row"""
+        actions_widget = QWidget()
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(5, 2, 5, 2)
+        actions_layout.setSpacing(5)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedWidth(60)
+        edit_btn.setStyleSheet("background-color: #4CAF50; color: white;")
+        edit_btn.clicked.connect(lambda: self.edit_expenditure(exp_id))
+        
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedWidth(60)
+        delete_btn.setStyleSheet("background-color: #f44336; color: white;")
+        delete_btn.clicked.connect(lambda: self.delete_expenditure(exp_id))
+
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+
+        self.table.setCellWidget(row, 7, actions_widget)  # Updated column index
+
+    def show_add_dialog(self):
+        """Show dialog to add new expenditure - WITH TYPE FILTERING FOR CATEGORIES"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add New Expenditure")
+        dialog.setMinimumWidth(500)
+        layout = QVBoxLayout(dialog)
+        
+        form_layout = QFormLayout()
+        
+        # TYPE SELECTION - Filters categories by ExpCatType
+        type_combo = QComboBox()
+        type_combo.addItems(["Expenses", "Assets"])
+        
+        category_combo = QComboBox()
+        category_combo.addItem("Select Category")
+        
+        subcategory_combo = QComboBox()
+        subcategory_combo.addItem("Select Subcategory")
+        
+        # When type changes, filter categories by type
+        type_combo.currentTextChanged.connect(
+            lambda text: self.load_categories_by_type(
+                category_combo, 
+                "Expense" if text == "Expenses" else "Asset"
+            )
+        )
+        
+        # When category changes, load its subcategories
+        category_combo.currentIndexChanged.connect(
+            lambda: self.load_subcategories_dialog(
+                subcategory_combo, 
+                category_combo.currentData() if category_combo.currentIndex() > 0 else None
+            )
+        )
+        
+        # Load initial categories for default type
+        self.load_categories_by_type(category_combo, "Expense")
+        
+        amount_edit = QLineEdit()
+        amount_edit.setValidator(QDoubleValidator(0.01, 9999999.99, 2))
+        
+        date_edit = QDateEdit()
+        date_edit.setCalendarPopup(True)
+        date_edit.setDate(QDate.currentDate())
+        
+        desc_edit = QTextEdit()
+        desc_edit.setMaximumHeight(80)
+        desc_edit.setPlaceholderText("Enter description...")
+        
+        payment_combo = QComboBox()
+        payment_combo.addItems(["Cash", "Bank Transfer", "Credit Card", "Other"])
+        
+        form_layout.addRow("Type:", type_combo)
+        form_layout.addRow("Category:", category_combo)
+        form_layout.addRow("Subcategory:", subcategory_combo)
+        form_layout.addRow("Amount:", amount_edit)
+        form_layout.addRow("Date:", date_edit)
+        form_layout.addRow("Description:", desc_edit)
+        form_layout.addRow("Payment Method:", payment_combo)
+        
+        layout.addLayout(form_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(lambda: self.save_expenditure(
+            dialog, subcategory_combo, amount_edit, date_edit, desc_edit, payment_combo
+        ))
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(save_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.exec_()
+
+    def load_categories_by_type(self, combo, category_type):
+        """Load categories filtered by type for DIALOG"""
+        try:
+            combo.clear()
+            combo.addItem("Select Category")
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ExpCatID, ExpCatName FROM ExpenditureCategory WHERE ExpCatType = ?", (category_type,))
+                for row in c.fetchall():
+                    combo.addItem(row[1], row[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load categories: {str(e)}")
+
+    def load_subcategories_dialog(self, combo, cat_id):
+        """Load subcategories for DIALOG"""
+        combo.clear()
+        combo.addItem("Select Subcategory")
+        
+        if not cat_id:
+            return
+            
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ExpeSubCatID, ExpenditureSubCategoryName FROM ExpenditureSubCategory WHERE ExpenditureCategoryID = ?", (cat_id,))
+                for row in c.fetchall():
+                    combo.addItem(row[1], row[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load subcategories: {str(e)}")
+
+    def save_expenditure(self, dialog, subcategory_combo, amount_edit, date_edit, desc_edit, payment_combo):
+        """Save new expenditure to database"""
+        # Validate inputs
+        if subcategory_combo.currentIndex() == 0:
+            QMessageBox.warning(dialog, "Error", "Please select a subcategory")
+            return
+            
+        sub_id = subcategory_combo.currentData()
+        amount_str = amount_edit.text().strip()
+        date_str = date_edit.date().toString("yyyy-MM-dd")
+        desc = desc_edit.toPlainText().strip()
+        payment = payment_combo.currentText()
+        
+        if not amount_str:
+            QMessageBox.warning(dialog, "Error", "Please enter an amount")
+            return
+            
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                QMessageBox.warning(dialog, "Error", "Amount must be positive")
+                return
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Please enter a valid amount")
+            return
+        
+        # Save to database
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""INSERT INTO Expenditure (ExpeSubID, ExpenseAmount, ExpenseDate, ExpenseDesc, PaymentMethod)
+                             VALUES (?, ?, ?, ?, ?)""", 
+                         (sub_id, amount, date_str, desc, payment))
+                conn.commit()
+                
+                QMessageBox.information(dialog, "Success", "Expenditure added successfully")
+                dialog.accept()
+                self.load_data()
+                
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to save expenditure: {str(e)}")
+
+    def edit_expenditure(self, exp_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT e.ExpenseID, esc.ExpenditureCategoryID, e.ExpeSubID, e.ExpenseAmount, 
+                        e.ExpenseDate, e.ExpenseDesc, e.PaymentMethod, ec.ExpCatType
+                    FROM Expenditure e
+                    JOIN ExpenditureSubCategory esc ON e.ExpeSubID = esc.ExpeSubCatID
+                    JOIN ExpenditureCategory ec ON esc.ExpenditureCategoryID = ec.ExpCatID
+                    WHERE e.ExpenseID = ?
+                """, (exp_id,))
+                data = c.fetchone()
+                
+            if not data:
+                QMessageBox.warning(self, "Error", "Expenditure not found")
+                return
+                
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Expenditure")
+            dialog.setMinimumWidth(500)
+            layout = QVBoxLayout(dialog)
+            
+            form_layout = QFormLayout()
+            
+            # Type selection (based on category type from database)
+            type_combo = QComboBox()
+            type_combo.addItems(["Expenses", "Assets"])
+            
+            # Set the type based on category type from database
+            category_type = "Expenses" if data[7] == "Expense" else "Assets"
+            type_combo.setCurrentText(category_type)
+            type_combo.setEnabled(False)  # Cannot change type when editing
+            
+            category_combo = QComboBox()
+            category_combo.addItem("Select Category")
+            
+            subcategory_combo = QComboBox()
+            subcategory_combo.addItem("Select Subcategory")
+            
+            # Load categories for the specific type
+            self.load_categories_by_type(category_combo, data[7])
+            
+            # Set current category and load its subcategories
+            category_combo.setCurrentIndex(category_combo.findData(data[1]))
+            self.load_subcategories_dialog(subcategory_combo, data[1])
+            subcategory_combo.setCurrentIndex(subcategory_combo.findData(data[2]))
+        
+            # Connect signals
+            type_combo.currentTextChanged.connect(
+                lambda text: self.load_categories_by_type(
+                    category_combo, 
+                    "Expense" if text == "Expenses" else "Asset"
+                )
+            )
+            
+            category_combo.currentIndexChanged.connect(
+                lambda: self.load_subcategories_dialog(
+                    subcategory_combo, 
+                    category_combo.currentData() if category_combo.currentIndex() > 0 else None
+                )
+            )
+            
+            amount_edit = QLineEdit(str(data[3]))
+            amount_edit.setValidator(QDoubleValidator(0.01, 9999999.99, 2))
+            
+            date_edit = QDateEdit(QDate.fromString(data[4], "yyyy-MM-dd"))
+            date_edit.setCalendarPopup(True)
+            date_edit.setEnabled(False)  # Date cannot be changed as per requirements
+            
+            desc_edit = QTextEdit(data[5] or "")
+            desc_edit.setMaximumHeight(80)
+            
+            payment_combo = QComboBox()
+            payment_combo.addItems(["Cash", "Bank Transfer", "Credit Card", "Other"])
+            payment_combo.setCurrentText(data[6] or "Cash")
+            
+            form_layout.addRow("Type:", type_combo)
+            form_layout.addRow("Category:", category_combo)
+            form_layout.addRow("Subcategory:", subcategory_combo)
+            form_layout.addRow("Amount:", amount_edit)
+            form_layout.addRow("Date:", date_edit)
+            form_layout.addRow("Description:", desc_edit)
+            form_layout.addRow("Payment Method:", payment_combo)
+            
+            layout.addLayout(form_layout)
+            
+            # Buttons
+            button_layout = QHBoxLayout()
+            save_btn = QPushButton("Save")
+            save_btn.clicked.connect(lambda: self.save_edited_expenditure(
+                dialog, exp_id, subcategory_combo, amount_edit, desc_edit, payment_combo
+            ))
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(dialog.reject)
+            
+            button_layout.addStretch()
+            button_layout.addWidget(save_btn)
+            button_layout.addWidget(cancel_btn)
+            layout.addLayout(button_layout)
+            
+            dialog.exec_()
+        
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load expenditure: {str(e)}")
+
+    def save_edited_expenditure(self, dialog, exp_id, subcategory_combo, amount_edit, desc_edit, payment_combo):
+        """Save edited expenditure"""
+        # Validate inputs
+        if subcategory_combo.currentIndex() == 0:
+            QMessageBox.warning(dialog, "Error", "Please select a subcategory")
+            return
+            
+        sub_id = subcategory_combo.currentData()
+        amount_str = amount_edit.text().strip()
+        desc = desc_edit.toPlainText().strip()
+        payment = payment_combo.currentText()
+        
+        if not amount_str:
+            QMessageBox.warning(dialog, "Error", "Please enter an amount")
+            return
+            
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                QMessageBox.warning(dialog, "Error", "Amount must be positive")
+                return
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Please enter a valid amount")
+            return
+        
+        # Save to database
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""UPDATE Expenditure SET ExpeSubID=?, ExpenseAmount=?, ExpenseDesc=?, PaymentMethod=?
+                             WHERE ExpenseID=?""", 
+                         (sub_id, amount, desc, payment, exp_id))
+                conn.commit()
+                
+                QMessageBox.information(dialog, "Success", "Expenditure updated successfully")
+                dialog.accept()
+                self.load_data()
+                
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to update expenditure: {str(e)}")
+
+    def delete_expenditure(self, exp_id):
+        """Delete expenditure/asset with confirmation"""
+        reply = QMessageBox.question(
+            self, 'Confirm Delete', 
+            f'Are you sure you want to delete record #{exp_id}?', 
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    # First delete asset if exists, then expenditure
+                    c.execute("DELETE FROM Assets WHERE ExpenseID = ?", (exp_id,))
+                    c.execute("DELETE FROM Expenditure WHERE ExpenseID = ?", (exp_id,))
+                    conn.commit()
+                    
+                    QMessageBox.information(self, "Success", "Record deleted successfully")
+                    self.load_data()
+                    
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to delete record: {str(e)}")
+
+class AssetsManagement(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("""
+            QLabel {
+                color: #2D3748;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit, QDateEdit, QTextEdit, QComboBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+                gridline-color: #E0E3E7;
+                selection-background-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                color: #2D3748;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 10px;
+                border: none;
+                border-bottom: 1px solid #E0E3E7;
+                font-weight: bold;
+                color: #4A5568;
+            }
+            QGroupBox {
+                font-weight: bold;
+                margin-top: 10px;
+                padding-top: 10px;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Assets Management")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        
+        add_btn = QPushButton("Add New Asset")
+        add_btn.clicked.connect(self.show_add_dialog)
+        header_layout.addWidget(add_btn)
+        
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self.load_data)
+        header_layout.addWidget(refresh_btn)
+        
+        layout.addLayout(header_layout)
+
+        # Filters
+        filter_layout = QHBoxLayout()
+        
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search by asset name...")
+        self.search_input.setMaximumWidth(250)
+        self.search_input.textChanged.connect(self.load_data)
+
+        self.status_combo = QComboBox()
+        self.status_combo.addItem("All Status")
+        self.status_combo.addItems(["Active", "Inactive", "Sold", "Disposed"])
+        self.status_combo.currentIndexChanged.connect(self.load_data)
+
+        self.from_date = QDateEdit()
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDate(QDate.currentDate().addYears(-1))
+        self.from_date.dateChanged.connect(self.load_data)
+
+        self.to_date = QDateEdit()
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDate(QDate.currentDate())
+        self.to_date.dateChanged.connect(self.load_data)
+
+        self.category_combo = QComboBox()
+        self.category_combo.addItem("All Categories")
+        self.load_asset_categories()
+        self.category_combo.currentIndexChanged.connect(self.load_data)
+
+        filter_layout.addWidget(QLabel("Search:"))
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(QLabel("Status:"))
+        filter_layout.addWidget(self.status_combo)
+        filter_layout.addWidget(QLabel("From:"))
+        filter_layout.addWidget(self.from_date)
+        filter_layout.addWidget(QLabel("To:"))
+        filter_layout.addWidget(self.to_date)
+        filter_layout.addWidget(QLabel("Category:"))
+        filter_layout.addWidget(self.category_combo)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
+        # Metrics
+        metrics_layout = QHBoxLayout()
+        self.results_label = QLabel("0 assets")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
+        
+        self.total_value_label = QLabel("Total Value: 0.00")
+        self.total_value_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2D3748;")
+        
+        self.active_assets_label = QLabel("Active Assets: 0")
+        self.active_assets_label.setStyleSheet("font-size: 14px; color: #38A169;")
+        
+        metrics_layout.addWidget(self.results_label)
+        metrics_layout.addWidget(self.total_value_label)
+        metrics_layout.addWidget(self.active_assets_label)
+        metrics_layout.addStretch()
+        layout.addLayout(metrics_layout)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(9)
+        self.table.setHorizontalHeaderLabels([
+            "ID", "Asset Name", "Category", "Subcategory", "Purchase Amount", 
+            "Current Value", "Status", "Last Updated", "Actions"
+        ])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        
+        # Set resize modes
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # ID
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Asset Name
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Category
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Subcategory
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Purchase Amount
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Current Value
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Last Updated
+        header.setSectionResizeMode(8, QHeaderView.Fixed)  # Actions
+        header.resizeSection(8, 120)
+        
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        # Load initial data
+        self.load_data()
+
+    def load_asset_categories(self):
+        """Load only asset categories"""
+        try:
+            self.category_combo.clear()
+            self.category_combo.addItem("All Categories")
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ExpCatID, ExpCatName FROM ExpenditureCategory WHERE ExpCatType = 'Assets'")
+                for row in c.fetchall():
+                    self.category_combo.addItem(row[1], row[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load categories: {str(e)}")
+
+    def load_data(self):
+        """Load assets data with filters"""
+        search_text = self.search_input.text().strip()
+        status_filter = self.status_combo.currentText()
+        from_date_str = self.from_date.date().toString("yyyy-MM-dd")
+        to_date_str = self.to_date.date().toString("yyyy-MM-dd")
+        category_id = self.category_combo.currentData() if self.category_combo.currentIndex() > 0 else None
+
+        try:
+            with get_db_connection() as (conn, c):
+                query = """
+                    SELECT 
+                        a.AssetID, a.AssetName, ec.ExpCatName, esc.ExpenditureSubCategoryName,
+                        e.ExpenseAmount, a.AssetValue, a.Status, a.updatedON, e.ExpenseDate
+                    FROM Assets a
+                    JOIN Expenditure e ON a.ExpenseID = e.ExpenseID
+                    JOIN ExpenditureSubCategory esc ON e.ExpeSubID = esc.ExpeSubCatID
+                    JOIN ExpenditureCategory ec ON esc.ExpenditureCategoryID = ec.ExpCatID
+                    WHERE 1=1
+                """
+                params = []
+                
+                if search_text:
+                    query += " AND (a.AssetName LIKE ? OR a.Status LIKE ?)"
+                    params.extend([f"%{search_text}%", f"%{search_text}%"])
+                
+                if status_filter != "All Status":
+                    query += " AND a.Status = ?"
+                    params.append(status_filter)
+                
+                if from_date_str:
+                    query += " AND a.updatedON >= ?"
+                    params.append(from_date_str)
+                
+                if to_date_str:
+                    query += " AND a.updatedON <= ?"
+                    params.append(to_date_str)
+                
+                if category_id:
+                    query += " AND ec.ExpCatID = ?"
+                    params.append(category_id)
+                
+                query += " ORDER BY a.updatedON DESC"
+                
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                self.table.setRowCount(len(rows))
+                total_value = 0
+                active_count = 0
+                
+                for i, row in enumerate(rows):
+                    for j, val in enumerate(row[:8]):  # Exclude ExpenseDate from display
+                        item = QTableWidgetItem(str(val) if val else "")
+                        
+                        # Color coding for status
+                        if j == 6:  # Status column
+                            if val == "Active":
+                                item.setForeground(Qt.darkGreen)
+                            elif val == "Inactive":
+                                item.setForeground(Qt.darkYellow)
+                            elif val in ["Sold", "Disposed"]:
+                                item.setForeground(Qt.darkRed)
+                        
+                        # Format currency columns
+                        if j in [4, 5]:  # Amount columns
+                            item.setText(f"{float(val):.2f}" if val else "0.00")
+                        
+                        self.table.setItem(i, j, item)
+                    
+                    # Calculate metrics
+                    asset_value = row[5] or 0
+                    total_value += asset_value
+                    if row[6] == "Active":
+                        active_count += 1
+                    
+                    self.add_action_buttons(i, row[0])
+                
+                # Update metrics
+                self.results_label.setText(f"{len(rows)} assets")
+                self.total_value_label.setText(f"Total Value: {total_value:.2f}")
+                self.active_assets_label.setText(f"Active Assets: {active_count}")
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load assets: {str(e)}")
+
+    def add_action_buttons(self, row, asset_id):
+        """Add action buttons to table row"""
+        actions_widget = QWidget()
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(5, 2, 5, 2)
+        actions_layout.setSpacing(3)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedWidth(50)
+        edit_btn.setStyleSheet("background-color: #4CAF50; color: white; font-size: 12px;")
+        edit_btn.clicked.connect(lambda: self.edit_asset(asset_id))
+        
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedWidth(50)
+        delete_btn.setStyleSheet("background-color: #f44336; color: white; font-size: 12px;")
+        delete_btn.clicked.connect(lambda: self.delete_asset(asset_id))
+
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+
+        self.table.setCellWidget(row, 8, actions_widget)
+
+    def show_add_dialog(self):
+        """Show dialog to add new asset"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add New Asset")
+        dialog.setMinimumWidth(600)
+        layout = QVBoxLayout(dialog)
+        
+        form_layout = QFormLayout()
+        
+        # Asset basic info
+        asset_name_edit = QLineEdit()
+        asset_name_edit.setPlaceholderText("Enter asset name...")
+        
+        category_combo = QComboBox()
+        category_combo.addItem("Select Category")
+        self.load_asset_categories_dialog(category_combo)
+        
+        subcategory_combo = QComboBox()
+        subcategory_combo.addItem("Select Subcategory")
+        
+        # Connect category change to load subcategories
+        category_combo.currentIndexChanged.connect(
+            lambda: self.load_subcategories_dialog(
+                subcategory_combo, 
+                category_combo.currentData() if category_combo.currentIndex() > 0 else None
+            )
+        )
+        
+        purchase_amount_edit = QLineEdit()
+        purchase_amount_edit.setValidator(QDoubleValidator(0.01, 9999999.99, 2))
+        purchase_amount_edit.setPlaceholderText("Purchase amount...")
+        
+        current_value_edit = QLineEdit()
+        current_value_edit.setValidator(QDoubleValidator(0.01, 9999999.99, 2))
+        current_value_edit.setPlaceholderText("Current value...")
+        
+        status_combo = QComboBox()
+        status_combo.addItems(["Active", "Inactive", "Sold", "Disposed"])
+        
+        purchase_date_edit = QDateEdit()
+        purchase_date_edit.setCalendarPopup(True)
+        purchase_date_edit.setDate(QDate.currentDate())
+        
+        description_edit = QTextEdit()
+        description_edit.setMaximumHeight(80)
+        description_edit.setPlaceholderText("Asset description...")
+        
+        form_layout.addRow("Asset Name*:", asset_name_edit)
+        form_layout.addRow("Category*:", category_combo)
+        form_layout.addRow("Subcategory*:", subcategory_combo)
+        form_layout.addRow("Purchase Amount*:", purchase_amount_edit)
+        form_layout.addRow("Current Value*:", current_value_edit)
+        form_layout.addRow("Status*:", status_combo)
+        form_layout.addRow("Purchase Date*:", purchase_date_edit)
+        form_layout.addRow("Description:", description_edit)
+        
+        layout.addLayout(form_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        save_btn = QPushButton("Save Asset")
+        save_btn.clicked.connect(lambda: self.save_asset(
+            dialog, asset_name_edit, category_combo, subcategory_combo, purchase_amount_edit,
+            current_value_edit, status_combo, purchase_date_edit, description_edit
+        ))
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(save_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.exec_()
+
+    def load_asset_categories_dialog(self, combo):
+        """Load asset categories for dialog"""
+        try:
+            combo.clear()
+            combo.addItem("Select Category")
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ExpCatID, ExpCatName FROM ExpenditureCategory WHERE ExpCatType = 'Assets'")
+                for row in c.fetchall():
+                    combo.addItem(row[1], row[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load categories: {str(e)}")
+
+    def load_subcategories_dialog(self, combo, cat_id):
+        """Load subcategories for dialog"""
+        combo.clear()
+        combo.addItem("Select Subcategory")
+        
+        if not cat_id:
+            return
+            
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT ExpeSubCatID, ExpenditureSubCategoryName FROM ExpenditureSubCategory WHERE ExpenditureCategoryID = ?", (cat_id,))
+                for row in c.fetchall():
+                    combo.addItem(row[1], row[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load subcategories: {str(e)}")
+
+    def save_asset(self, dialog, asset_name_edit, category_combo, subcategory_combo, purchase_amount_edit,
+                  current_value_edit, status_combo, purchase_date_edit, description_edit):
+        """Save new asset to database"""
+        # Validate inputs
+        if not all([
+            asset_name_edit.text().strip(),
+            category_combo.currentIndex() > 0,
+            subcategory_combo.currentIndex() > 0,
+            purchase_amount_edit.text().strip(),
+            current_value_edit.text().strip()
+        ]):
+            QMessageBox.warning(dialog, "Error", "Please fill all required fields (*)")
+            return
+        
+        asset_name = asset_name_edit.text().strip()
+        subcategory_id = subcategory_combo.currentData()
+        status = status_combo.currentText()
+        purchase_date = purchase_date_edit.date().toString("yyyy-MM-dd")
+        description = description_edit.toPlainText().strip()
+        
+        try:
+            purchase_amount = float(purchase_amount_edit.text())
+            current_value = float(current_value_edit.text())
+            
+            if purchase_amount <= 0 or current_value <= 0:
+                QMessageBox.warning(dialog, "Error", "Amounts must be positive")
+                return
+                
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Please enter valid amounts")
+            return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # First create expenditure record
+                c.execute("""INSERT INTO Expenditure (ExpeSubID, ExpenseAmount, ExpenseDate, ExpenseDesc, PaymentMethod)
+                             VALUES (?, ?, ?, ?, ?)""", 
+                         (subcategory_id, purchase_amount, purchase_date, description, "Asset Purchase"))
+                expense_id = c.lastrowid
+                
+                # Then create asset record
+                updated_on = QDate.currentDate().toString("yyyy-MM-dd")
+                c.execute("""INSERT INTO Assets (ExpenseID, AssetName, AssetValue, Status, updatedON)
+                             VALUES (?, ?, ?, ?, ?)""", 
+                         (expense_id, asset_name, current_value, status, updated_on))
+                
+                conn.commit()
+                
+                QMessageBox.information(dialog, "Success", "Asset added successfully")
+                dialog.accept()
+                self.load_data()
+                
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to save asset: {str(e)}")
+
+    def edit_asset(self, asset_id):
+        """Edit existing asset"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT 
+                        a.AssetID, a.AssetName, esc.ExpenditureCategoryID, e.ExpeSubID,
+                        e.ExpenseAmount, a.AssetValue, a.Status, a.updatedON, e.ExpenseDate,
+                        e.ExpenseDesc
+                    FROM Assets a
+                    JOIN Expenditure e ON a.ExpenseID = e.ExpenseID
+                    JOIN ExpenditureSubCategory esc ON e.ExpeSubID = esc.ExpeSubCatID
+                    WHERE a.AssetID = ?
+                """, (asset_id,))
+                data = c.fetchone()
+                
+            if not data:
+                QMessageBox.warning(self, "Error", "Asset not found")
+                return
+                
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Asset")
+            dialog.setMinimumWidth(600)
+            layout = QVBoxLayout(dialog)
+            
+            form_layout = QFormLayout()
+            
+            # Asset basic info
+            asset_name_edit = QLineEdit(data[1])
+            
+            category_combo = QComboBox()
+            category_combo.addItem("Select Category")
+            self.load_asset_categories_dialog(category_combo)
+            category_combo.setCurrentIndex(category_combo.findData(data[2]))
+            
+            subcategory_combo = QComboBox()
+            subcategory_combo.addItem("Select Subcategory")
+            self.load_subcategories_dialog(subcategory_combo, data[2])
+            subcategory_combo.setCurrentIndex(subcategory_combo.findData(data[3]))
+            
+            category_combo.currentIndexChanged.connect(
+                lambda: self.load_subcategories_dialog(
+                    subcategory_combo, 
+                    category_combo.currentData() if category_combo.currentIndex() > 0 else None
+                )
+            )
+            
+            purchase_amount_edit = QLineEdit(str(data[4]))
+            purchase_amount_edit.setValidator(QDoubleValidator(0.01, 9999999.99, 2))
+            
+            current_value_edit = QLineEdit(str(data[5]))
+            current_value_edit.setValidator(QDoubleValidator(0.01, 9999999.99, 2))
+            
+            status_combo = QComboBox()
+            status_combo.addItems(["Active", "Inactive", "Sold", "Disposed"])
+            status_combo.setCurrentText(data[6])
+            
+            purchase_date_edit = QDateEdit(QDate.fromString(data[8], "yyyy-MM-dd"))
+            purchase_date_edit.setCalendarPopup(True)
+            purchase_date_edit.setEnabled(False)  # Purchase date cannot be changed
+            
+            description_edit = QTextEdit(data[9] or "")
+            description_edit.setMaximumHeight(80)
+            
+            form_layout.addRow("Asset Name*:", asset_name_edit)
+            form_layout.addRow("Category*:", category_combo)
+            form_layout.addRow("Subcategory*:", subcategory_combo)
+            form_layout.addRow("Purchase Amount*:", purchase_amount_edit)
+            form_layout.addRow("Current Value*:", current_value_edit)
+            form_layout.addRow("Status*:", status_combo)
+            form_layout.addRow("Purchase Date:", purchase_date_edit)
+            form_layout.addRow("Description:", description_edit)
+            
+            layout.addLayout(form_layout)
+            
+            # Buttons
+            button_layout = QHBoxLayout()
+            save_btn = QPushButton("Save Changes")
+            save_btn.clicked.connect(lambda: self.save_edited_asset(
+                dialog, asset_id, asset_name_edit, subcategory_combo, purchase_amount_edit,
+                current_value_edit, status_combo, description_edit
+            ))
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(dialog.reject)
+            
+            button_layout.addStretch()
+            button_layout.addWidget(save_btn)
+            button_layout.addWidget(cancel_btn)
+            layout.addLayout(button_layout)
+            
+            dialog.exec_()
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load asset: {str(e)}")
+
+    def save_edited_asset(self, dialog, asset_id, asset_name_edit, subcategory_combo, purchase_amount_edit,
+                         current_value_edit, status_combo, description_edit):
+        """Save edited asset"""
+        # Validate inputs
+        if not all([
+            asset_name_edit.text().strip(),
+            subcategory_combo.currentIndex() > 0,
+            purchase_amount_edit.text().strip(),
+            current_value_edit.text().strip()
+        ]):
+            QMessageBox.warning(dialog, "Error", "Please fill all required fields (*)")
+            return
+        
+        asset_name = asset_name_edit.text().strip()
+        subcategory_id = subcategory_combo.currentData()
+        status = status_combo.currentText()
+        description = description_edit.toPlainText().strip()
+        
+        try:
+            purchase_amount = float(purchase_amount_edit.text())
+            current_value = float(current_value_edit.text())
+            
+            if purchase_amount <= 0 or current_value <= 0:
+                QMessageBox.warning(dialog, "Error", "Amounts must be positive")
+                return
+                
+        except ValueError:
+            QMessageBox.warning(dialog, "Error", "Please enter valid amounts")
+            return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Get the expense ID for this asset
+                c.execute("SELECT ExpenseID FROM Assets WHERE AssetID = ?", (asset_id,))
+                expense_id = c.fetchone()[0]
+                
+                # Update expenditure record
+                c.execute("""UPDATE Expenditure SET ExpeSubID=?, ExpenseAmount=?, ExpenseDesc=?
+                             WHERE ExpenseID=?""", 
+                         (subcategory_id, purchase_amount, description, expense_id))
+                
+                # Update asset record
+                updated_on = QDate.currentDate().toString("yyyy-MM-dd")
+                c.execute("""UPDATE Assets SET AssetName=?, AssetValue=?, Status=?, updatedON=?
+                             WHERE AssetID=?""", 
+                         (asset_name, current_value, status, updated_on, asset_id))
+                
+                conn.commit()
+                
+                QMessageBox.information(dialog, "Success", "Asset updated successfully")
+                dialog.accept()
+                self.load_data()
+                
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", f"Failed to update asset: {str(e)}")
+
+    def delete_asset(self, asset_id):
+        """Delete asset with confirmation"""
+        reply = QMessageBox.question(
+            self, 'Confirm Delete', 
+            f'Are you sure you want to delete this asset?\nThis will also delete the associated expenditure record.', 
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    # Get expense ID first
+                    c.execute("SELECT ExpenseID FROM Assets WHERE AssetID = ?", (asset_id,))
+                    result = c.fetchone()
+                    if result:
+                        expense_id = result[0]
+                        # Delete asset record
+                        c.execute("DELETE FROM Assets WHERE AssetID = ?", (asset_id,))
+                        # Delete associated expenditure record
+                        c.execute("DELETE FROM Expenditure WHERE ExpenseID = ?", (expense_id,))
+                        conn.commit()
+                    
+                    QMessageBox.information(self, "Success", "Asset deleted successfully")
+                    self.load_data()
+                    
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to delete asset: {str(e)}")
+
+### end of expenditure ####
 
 class Reports(QWidget):
     def __init__(self):
