@@ -12,6 +12,8 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PyQt5.QtChart import *
+from PyQt5.QtPrintSupport import QPrinter
 
 
 # Enhanced connection function with context manager
@@ -4713,10 +4715,12 @@ class Uniforms(QTabWidget):
         self.Inventory = InventoryManagement()
         self.Procurement = ProcurementManagement()
         self.Expense = ExpenseManagement()
+        self.Report = ReportGenerator()
         self.addTab(self.Dashboard,"Dashboard & Insights")
         self.addTab(self.Inventory,"Inventory")
         self.addTab(self.Procurement,"Procurement")
         self.addTab(self.Expense,"Expense")
+        self.addTab(self.Report,"Reports")
 
 class UniformDialog(QDialog):
     def __init__(self, parent=None, uniform_id=None):
@@ -6441,7 +6445,396 @@ class ExpenseManagement(QWidget):
             self.load_categories()  # Refresh categories in case we deleted the last item of a category
             self.load_data()
 
-#### This is End of the Uniforms  ####
+class ReportGenerator(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Connect to the SQLite database
+        self.db = sqlite3.connect('Database.db')
+        # Setup the user interface
+        self.setup_ui()
+        # Apply modern web-tone style
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #F5F7FA;
+            }
+            QLabel {
+                color: #2D3748;
+                font-size: 14px;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QDateEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QChartView {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E3E7;
+                border-radius: 5px;
+            }
+        """)
+        # Initial report generation
+        self.generate_report()
+
+    def setup_ui(self):
+        # Main vertical layout for the widget
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Date range selection layout
+        date_layout = QHBoxLayout()
+        date_layout.setSpacing(10)
+        from_label = QLabel("From:")
+        from_label.setStyleSheet("font-weight: bold;")
+        self.from_date = QDateEdit(QDate.currentDate().addMonths(-1))
+        to_label = QLabel("To:")
+        to_label.setStyleSheet("font-weight: bold;")
+        self.to_date = QDateEdit(QDate.currentDate())
+        generate_btn = QPushButton("Generate Report")
+        generate_btn.clicked.connect(self.generate_report)
+        date_layout.addWidget(from_label)
+        date_layout.addWidget(self.from_date)
+        date_layout.addWidget(to_label)
+        date_layout.addWidget(self.to_date)
+        date_layout.addStretch()
+        date_layout.addWidget(generate_btn)
+        layout.addLayout(date_layout)
+
+        # Export buttons layout
+        export_layout = QHBoxLayout()
+        export_layout.setSpacing(10)
+        pdf_btn = QPushButton("Export PDF")
+        pdf_btn.clicked.connect(self.export_pdf)
+        excel_btn = QPushButton("Export Excel")
+        excel_btn.clicked.connect(self.export_excel)
+        export_layout.addStretch()
+        export_layout.addWidget(pdf_btn)
+        export_layout.addWidget(excel_btn)
+        layout.addLayout(export_layout)
+
+        # Current stock summary
+        current_stock_title = QLabel("Current Stock:")
+        current_stock_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(current_stock_title)
+        self.current_stock_label = QLabel()
+        self.current_stock_label.setStyleSheet("font-size: 14px; color: #4A5568;")
+        layout.addWidget(self.current_stock_label)
+
+        # Stock summaries layout
+        stock_summary_layout = QHBoxLayout()
+        stock_summary_layout.setSpacing(20)
+
+        # Stock In
+        in_container = QWidget()
+        in_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
+        in_layout = QVBoxLayout(in_container)
+        in_title = QLabel("Stock In:")
+        in_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        in_layout.addWidget(in_title)
+        self.stock_in_label = QLabel()
+        self.stock_in_label.setStyleSheet("font-size: 14px; color: #4A5568;")
+        in_layout.addWidget(self.stock_in_label)
+        stock_summary_layout.addWidget(in_container)
+
+        # Stock Out
+        out_container = QWidget()
+        out_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
+        out_layout = QVBoxLayout(out_container)
+        out_title = QLabel("Stock Out:")
+        out_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        out_layout.addWidget(out_title)
+        self.stock_out_label = QLabel()
+        self.stock_out_label.setStyleSheet("font-size: 14px; color: #4A5568;")
+        out_layout.addWidget(self.stock_out_label)
+        stock_summary_layout.addWidget(out_container)
+
+        layout.addLayout(stock_summary_layout)
+
+        # Stock In/Out bar chart
+        chart_title = QLabel("Stock In/Out Value")
+        chart_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(chart_title)
+        self.stock_chart_view = QChartView()
+        self.stock_chart_view.setMinimumHeight(300)
+        layout.addWidget(self.stock_chart_view)
+
+        # Procurement list table
+        proc_title = QLabel("Procurement List:")
+        proc_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(proc_title)
+        self.procurement_table = QTableWidget()
+        self.procurement_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.procurement_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.procurement_table.setStyleSheet("border: 1px solid #E0E3E7; border-radius: 5px;")
+        layout.addWidget(self.procurement_table)
+
+        # Expense list table and pie chart layout
+        expense_layout = QHBoxLayout()
+        expense_layout.setSpacing(20)
+
+        # Expense table container
+        exp_table_container = QWidget()
+        exp_table_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
+        exp_table_layout = QVBoxLayout(exp_table_container)
+        exp_title = QLabel("Expense List:")
+        exp_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        exp_table_layout.addWidget(exp_title)
+        self.expense_table = QTableWidget()
+        self.expense_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.expense_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        exp_table_layout.addWidget(self.expense_table)
+        expense_layout.addWidget(exp_table_container)
+
+        # Expense pie chart container
+        exp_chart_container = QWidget()
+        exp_chart_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
+        exp_chart_layout = QVBoxLayout(exp_chart_container)
+        exp_chart_title = QLabel("Expense Categories")
+        exp_chart_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        exp_chart_layout.addWidget(exp_chart_title)
+        self.expense_chart_view = QChartView()
+        self.expense_chart_view.setMinimumWidth(400)
+        exp_chart_layout.addWidget(self.expense_chart_view)
+        expense_layout.addWidget(exp_chart_container)
+
+        layout.addLayout(expense_layout)
+
+    def generate_report(self):
+        # Get the selected date range in 'YYYY-MM-DD' format
+        from_date = self.from_date.date().toString("yyyy-MM-dd")
+        to_date = self.to_date.date().toString("yyyy-MM-dd")
+
+        cur = self.db.cursor()
+
+        # Fetch current stock: total quantity and value (not filtered by date)
+        cur.execute("SELECT SUM(Quantity), SUM(Quantity * UniformPrice) FROM Uniform")
+        current_qty, current_value = cur.fetchone()
+        self.current_stock_label.setText(f"Total Quantity: {current_qty or 0}, Total Value: {current_value or 0:.2f}")
+
+        # Fetch stock in: quantity and value over the period
+        cur.execute("""
+            SELECT SUM(Quantity), SUM(Quantity * Price) 
+            FROM UniformInventory 
+            WHERE Type = 'In' AND Date BETWEEN ? AND ?
+        """, (from_date, to_date))
+        in_qty, in_value = cur.fetchone()
+        self.stock_in_label.setText(f"Quantity: {in_qty or 0}, Value: {in_value or 0:.2f}")
+
+        # Fetch stock out: quantity and value over the period
+        cur.execute("""
+            SELECT SUM(Quantity), SUM(Quantity * Price) 
+            FROM UniformInventory 
+            WHERE Type = 'Out' AND Date BETWEEN ? AND ?
+        """, (from_date, to_date))
+        out_qty, out_value = cur.fetchone()
+        self.stock_out_label.setText(f"Quantity: {out_qty or 0}, Value: {out_value or 0:.2f}")
+
+        # Create bar chart for stock in/out values
+        in_set = QBarSet("In")
+        out_set = QBarSet("Out")
+        in_set.append(in_value or 0)
+        out_set.append(out_value or 0)
+        series = QBarSeries()
+        series.append(in_set)
+        series.append(out_set)
+        chart = QChart()
+        chart.addSeries(series)
+        chart.setTitle("Stock In/Out Value")
+        chart.setAnimationOptions(QChart.SeriesAnimations)
+        axis_y = QValueAxis()
+        chart.addAxis(axis_y, Qt.AlignLeft)
+        series.attachAxis(axis_y)
+        self.stock_chart_view.setChart(chart)
+        self.stock_chart_view.setRenderHint(QPainter.Antialiasing)
+
+        # Fetch procurement list: list of suppliers (References), items, quantity, unit price, total
+        cur.execute("""
+            SELECT "References", UniformName, UniformInventory.Quantity, Price, (UniformInventory.Quantity * Price) 
+            FROM UniformInventory 
+            JOIN Uniform ON UniformInventory.UniformID = Uniform.UniformId 
+            WHERE Type = 'In' AND Date BETWEEN ? AND ?
+        """, (from_date, to_date))
+        proc_rows = cur.fetchall()
+        self.procurement_table.setRowCount(len(proc_rows))
+        self.procurement_table.setColumnCount(5)
+        self.procurement_table.setHorizontalHeaderLabels(["Supplier", "Item", "Quantity", "Unit Price", "Total"])
+        for i, row in enumerate(proc_rows):
+            for j, val in enumerate(row):
+                self.procurement_table.setItem(i, j, QTableWidgetItem(str(val)))
+
+        # Fetch expense list: categorized totals over the period
+        cur.execute("""
+            SELECT ExpCategory, SUM(ExpAmount) 
+            FROM Expenses 
+            WHERE ExpDate BETWEEN ? AND ? 
+            GROUP BY ExpCategory
+        """, (from_date, to_date))
+        exp_rows = cur.fetchall()
+        self.expense_table.setRowCount(len(exp_rows))
+        self.expense_table.setColumnCount(2)
+        self.expense_table.setHorizontalHeaderLabels(["Category", "Total Amount"])
+        for i, (cat, total) in enumerate(exp_rows):
+            self.expense_table.setItem(i, 0, QTableWidgetItem(cat))
+            self.expense_table.setItem(i, 1, QTableWidgetItem(f"{total:.2f}"))
+
+        # Create pie chart for expenses
+        pie_series = QPieSeries()
+        for cat, total in exp_rows:
+            pie_series.append(cat, total)
+        exp_chart = QChart()
+        exp_chart.addSeries(pie_series)
+        exp_chart.setTitle("Expense Categories")
+        exp_chart.setAnimationOptions(QChart.SeriesAnimations)
+        self.expense_chart_view.setChart(exp_chart)
+        self.expense_chart_view.setRenderHint(QPainter.Antialiasing)
+
+    def export_pdf(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
+        if not file_path:
+            return
+
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(file_path)
+
+        doc = QTextDocument()
+        html = """
+        <style>
+            body { font-family: Arial, sans-serif; color: #2D3748; background-color: #F5F7FA; padding: 20px; }
+            h1 { color: #1A365D; text-align: center; }
+            h2 { color: #4299E1; border-bottom: 2px solid #E0E3E7; padding-bottom: 5px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background-color: #FFFFFF; border-radius: 5px; overflow: hidden; }
+            th { background-color: #F7FAFC; padding: 10px; text-align: left; border-bottom: 1px solid #E0E3E7; }
+            td { padding: 10px; border-bottom: 1px solid #E0E3E7; }
+            .footer { text-align: center; font-size: 12px; color: #718096; margin-top: 40px; }
+        </style>
+        <h1>Uniform Management Report</h1>
+        """
+
+        # Add current stock
+        html += "<h2>Current Stock</h2>"
+        html += f"<p>{self.current_stock_label.text()}</p>"
+
+        # Add stock in
+        html += "<h2>Stock In</h2>"
+        html += f"<p>{self.stock_in_label.text()}</p>"
+
+        # Add stock out
+        html += "<h2>Stock Out</h2>"
+        html += f"<p>{self.stock_out_label.text()}</p>"
+
+        # Add procurement table
+        html += "<h2>Procurement List</h2><table><tr><th>Supplier</th><th>Item</th><th>Quantity</th><th>Unit Price</th><th>Total</th></tr>"
+        for row in range(self.procurement_table.rowCount()):
+            html += "<tr>" + "".join(f"<td>{self.procurement_table.item(row, col).text()}</td>" for col in range(5)) + "</tr>"
+        html += "</table>"
+
+        # Add expense table
+        html += "<h2>Expense List</h2><table><tr><th>Category</th><th>Total Amount</th></tr>"
+        for row in range(self.expense_table.rowCount()):
+            html += "<tr>" + "".join(f"<td>{self.expense_table.item(row, col).text()}</td>" for col in range(2)) + "</tr>"
+        html += "</table>"
+
+        # Add footer
+        export_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        html += f'<div class="footer">Generated by Grok Report System on {export_date}</div>'
+
+        doc.setHtml(html)
+        doc.print_(printer)
+        QMessageBox.information(self, "Success", "PDF exported successfully")
+
+    def export_excel(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Excel", "", "Excel Files (*.xlsx)")
+        if not file_path:
+            return
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Report"
+        row = 1
+
+        # Title
+        ws.cell(row, 1, "Uniform Management Report").font = Font(size=16, bold=True)
+        ws.merge_cells('A1:E1')
+        ws['A1'].alignment = Alignment(horizontal='center')
+        row += 2
+
+        # Add current stock
+        ws.cell(row, 1, "Current Stock").font = Font(bold=True)
+        row += 1
+        ws.cell(row, 1, self.current_stock_label.text())
+        row += 2
+
+        # Add stock in
+        ws.cell(row, 1, "Stock In").font = Font(bold=True)
+        row += 1
+        ws.cell(row, 1, self.stock_in_label.text())
+        row += 2
+
+        # Add stock out
+        ws.cell(row, 1, "Stock Out").font = Font(bold=True)
+        row += 1
+        ws.cell(row, 1, self.stock_out_label.text())
+        row += 2
+
+        # Add procurement list
+        ws.cell(row, 1, "Procurement List").font = Font(bold=True)
+        row += 1
+        headers = ["Supplier", "Item", "Quantity", "Unit Price", "Total"]
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(row, c, h)
+            cell.font = Font(bold=True)
+            cell.border = Border(bottom=Side(style='thin'))
+        row += 1
+        for r in range(self.procurement_table.rowCount()):
+            for c in range(5):
+                val = self.procurement_table.item(r, c).text()
+                try:
+                    ws.cell(row, c+1, float(val) if c >= 3 else val)
+                except ValueError:
+                    ws.cell(row, c+1, val)
+            row += 1
+        row += 1
+
+        # Add expense list
+        ws.cell(row, 1, "Expense List").font = Font(bold=True)
+        row += 1
+        exp_headers = ["Category", "Total Amount"]
+        for c, h in enumerate(exp_headers, 1):
+            cell = ws.cell(row, c, h)
+            cell.font = Font(bold=True)
+            cell.border = Border(bottom=Side(style='thin'))
+        row += 1
+        for r in range(self.expense_table.rowCount()):
+            for c in range(2):
+                val = self.expense_table.item(r, c).text()
+                try:
+                    ws.cell(row, c+1, float(val[1:]) if c == 1 else val)  # Remove  for amount
+                except ValueError:
+                    ws.cell(row, c+1, val)
+            row += 1
+
+        # Add footer
+        row += 2
+        export_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.cell(row, 1, f"Generated by Grok Report System on {export_date}").alignment = Alignment(horizontal='center')
+        ws.merge_cells(f'A{row}:E{row}')
+
+        wb.save(file_path)
+        QMessageBox.information(self, "Success", "Excel exported successfully")#### This is End of the Uniforms  ####
 #### start of expenditure #####
 
 class Expenditure(QWidget):
