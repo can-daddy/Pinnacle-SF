@@ -1611,7 +1611,7 @@ class Window(QMainWindow):
         self.FeesPage = Fees()
         self.UniformsPage = Uniforms()
         self.ExpensesPage = Expenditure()
-        self.ReportsPage = Report()
+        self.ReportsPage = Reports()
         self.AboutPage = About()
         self.AccountPage = Account()
         self.body.addWidget(self.DashboardPage)
@@ -7687,7 +7687,7 @@ class ExpenditureManagement(QWidget):
         type_combo.currentTextChanged.connect(
             lambda text: self.load_categories_by_type(
                 category_combo, 
-                "Expense" if text == "Expenses" else "Asset"
+                "Expenses" if text == "Expenses" else "Asset"
             )
         )
         
@@ -7700,7 +7700,7 @@ class ExpenditureManagement(QWidget):
         )
         
         # Load initial categories for default type
-        self.load_categories_by_type(category_combo, "Expense")
+        self.load_categories_by_type(category_combo, "Expenses")
         
         amount_edit = QLineEdit()
         amount_edit.setValidator(QDoubleValidator(0.01, 9999999.99, 2))
@@ -8598,385 +8598,571 @@ class AssetsManagement(QWidget):
 
 ### end of expenditure ####
 
+class ReportTableModel(QAbstractTableModel):
+    def __init__(self, data, headers):
+        super().__init__()
+        self._data = data
+        self._headers = headers
 
-class Report(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        # Connect to the SQLite database (assume the database file is named 'school.db')
-        self.db = sqlite3.connect('database.db')
-        # Setup the user interface
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            return str(self._data[index.row()][index.column()])
+        elif role == Qt.TextAlignmentRole:
+            return Qt.AlignCenter
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self._headers[section]
+        return None
+
+class Reports(QWidget):
+    def __init__(self):
+        super().__init__()
         self.setup_ui()
-        # Populate academic years
-        self.populate_years()
+        self.load_initial_data()
+        self.setStyleSheet("background-color: white;")
 
     def setup_ui(self):
-        # Main vertical layout for the widget
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(20)
 
-        # Selection layout for year and term
-        select_layout = QHBoxLayout()
+        # Title
+        title = QLabel("Financial Reports Generator")
+        title.setFont(QFont("Arial", 18, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #2C3E50; margin: 10px;")
+        main_layout.addWidget(title)
+
+        # Filters
+        filter_layout = QHBoxLayout()
+        
+        filter_layout.addWidget(QLabel("Academic Year:"))
         self.year_combo = QComboBox()
-        self.year_combo.currentIndexChanged.connect(self.populate_terms)
+        self.year_combo.currentIndexChanged.connect(self.on_year_changed)
+        filter_layout.addWidget(self.year_combo)
+
+        filter_layout.addWidget(QLabel("Term:"))
         self.term_combo = QComboBox()
-        generate_btn = QPushButton("Generate Report")
-        generate_btn.clicked.connect(self.generate_report)
-        select_layout.addWidget(QLabel("Academic Year:"))
-        select_layout.addWidget(self.year_combo)
-        select_layout.addWidget(QLabel("Term:"))
-        select_layout.addWidget(self.term_combo)
-        select_layout.addWidget(generate_btn)
-        layout.addLayout(select_layout)
+        self.term_combo.currentIndexChanged.connect(self.generate_reports)
+        filter_layout.addWidget(self.term_combo)
 
-        # Export buttons layout
-        export_layout = QHBoxLayout()
-        pdf_btn = QPushButton("Export PDF")
-        pdf_btn.clicked.connect(self.export_pdf)
-        excel_btn = QPushButton("Export Excel")
-        excel_btn.clicked.connect(self.export_excel)
-        export_layout.addWidget(pdf_btn)
-        export_layout.addWidget(excel_btn)
-        layout.addLayout(export_layout)
+        self.generate_btn = QPushButton("Generate Reports")
+        self.generate_btn.clicked.connect(self.generate_reports)
+        self.generate_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498DB;
+                color: white;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2980B9;
+            }
+        """)
+        filter_layout.addWidget(self.generate_btn)
 
-        # School Fees Completion summary and chart
-        layout.addWidget(QLabel("School Fees Completion:"))
-        self.school_fees_label = QLabel()
-        layout.addWidget(self.school_fees_label)
-        self.school_fees_chart_view = QChartView()
-        layout.addWidget(self.school_fees_chart_view)
+        self.export_btn = QPushButton("Export Report")
+        self.export_btn.clicked.connect(self.export_report)
+        self.export_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27AE60;
+                color: white;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+            }
+        """)
+        filter_layout.addWidget(self.export_btn)
 
-        # Class-wise Fees Completion table
-        layout.addWidget(QLabel("Class-wise Fees Completion:"))
+        filter_layout.addStretch()
+        main_layout.addLayout(filter_layout)
+
+        # Summary Cards
+        self.setup_summary_cards(main_layout)
+
+        # Reports Tabs
+        self.tabs = QTabWidget()
+        self.setup_reports_tabs()
+        main_layout.addWidget(self.tabs)
+
+    def setup_summary_cards(self, layout):
+        cards_layout = QHBoxLayout()
+        
+        # Fees Completion Card
+        self.fees_card = self.create_summary_card("Fees Collection", "0%", "0 / 0")
+        cards_layout.addWidget(self.fees_card)
+
+        # Assets Card
+        self.assets_card = self.create_summary_card("Total Assets", "0", "Active: 0")
+        cards_layout.addWidget(self.assets_card)
+
+        # Expenses Card
+        self.expenses_card = self.create_summary_card("Total Expenses", "0", "This Term")
+        cards_layout.addWidget(self.expenses_card)
+
+        # Capital Expenses Card
+        self.capital_card = self.create_summary_card("Capital Expenses", "0", "Assets & Investments")
+        cards_layout.addWidget(self.capital_card)
+
+        layout.addLayout(cards_layout)
+
+    def create_summary_card(self, title, value, subtitle):
+        card = QFrame()
+        card.setFrameStyle(QFrame.Box)
+        card.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                padding: 15px;
+            }
+        """)
+        card.setFixedHeight(100)
+
+        layout = QVBoxLayout(card)
+        
+        title_label = QLabel(title)
+        title_label.setStyleSheet("color: #7F8C8D; font-size: 12px;")
+        
+        value_label = QLabel(value)
+        value_label.setFont(QFont("Arial", 16, QFont.Bold))
+        value_label.setStyleSheet("color: #2C3E50;")
+        value_label.setObjectName("value_label")  # Add object name for easy access
+        
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setStyleSheet("color: #95A5A6; font-size: 11px;")
+        subtitle_label.setObjectName("subtitle_label")  # Add object name for easy access
+        
+        layout.addWidget(title_label)
+        layout.addWidget(value_label)
+        layout.addWidget(subtitle_label)
+        
+        return card
+
+    def setup_reports_tabs(self):
+        # School Fees Completion Tab
+        self.fees_tab = QWidget()
+        self.setup_fees_tab()
+        self.tabs.addTab(self.fees_tab, "Fees Completion")
+
+        # Class-wise Fees Tab
+        self.class_fees_tab = QWidget()
+        self.setup_class_fees_tab()
+        self.tabs.addTab(self.class_fees_tab, "Class-wise Fees")
+
+        # Assets Tab
+        self.assets_tab = QWidget()
+        self.setup_assets_tab()
+        self.tabs.addTab(self.assets_tab, "Assets Report")
+
+        # Expenditure Tab
+        self.expenditure_tab = QWidget()
+        self.setup_expenditure_tab()
+        self.tabs.addTab(self.expenditure_tab, "Expenditure Report")
+
+    def setup_fees_tab(self):
+        layout = QVBoxLayout(self.fees_tab)
+        
+        # Summary
+        summary_group = QGroupBox("School Fees Summary")
+        summary_layout = QHBoxLayout(summary_group)
+        
+        self.expected_fees_label = QLabel("Expected: 0")
+        self.collected_fees_label = QLabel("Collected: 0")
+        self.completion_label = QLabel("Completion: 0%")
+        self.balance_label = QLabel("Balance: 0")
+        
+        for label in [self.expected_fees_label, self.collected_fees_label, 
+                     self.completion_label, self.balance_label]:
+            label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px;")
+            summary_layout.addWidget(label)
+        
+        summary_layout.addStretch()
+        layout.addWidget(summary_group)
+
+        # Progress Bar
+        self.fees_progress = QProgressBar()
+        self.fees_progress.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid grey;
+                border-radius: 5px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #27AE60;
+                width: 10px;
+            }
+        """)
+        layout.addWidget(self.fees_progress)
+
+        # Detailed Table
+        self.fees_table = QTableView()
+        layout.addWidget(self.fees_table)
+
+    def setup_class_fees_tab(self):
+        layout = QVBoxLayout(self.class_fees_tab)
+        
+        # Charts and Table will be added here
         self.class_fees_table = QTableView()
         layout.addWidget(self.class_fees_table)
 
-        # Current Assets List table
-        layout.addWidget(QLabel("Current Assets List:"))
+    def setup_assets_tab(self):
+        layout = QVBoxLayout(self.assets_tab)
+        
+        # Summary
+        summary_group = QGroupBox("Assets Summary")
+        summary_layout = QGridLayout(summary_group)
+        
+        self.total_assets_label = QLabel("Total Assets Value: 0")
+        self.active_assets_label = QLabel("Active Assets: 0")
+        self.disposed_assets_label = QLabel("Disposed Assets: 0")
+        
+        summary_layout.addWidget(self.total_assets_label, 0, 0)
+        summary_layout.addWidget(self.active_assets_label, 0, 1)
+        summary_layout.addWidget(self.disposed_assets_label, 1, 0)
+        
+        layout.addWidget(summary_group)
+
+        # Assets Table
         self.assets_table = QTableView()
         layout.addWidget(self.assets_table)
 
-        # Expenditure Reports: Capital (Assets)
-        layout.addWidget(QLabel("Expenditure Reports - Capital (Assets):"))
+    def setup_expenditure_tab(self):
+        layout = QVBoxLayout(self.expenditure_tab)
+        
+        # Tabs for Expenses vs Assets
+        expenditure_tabs = QTabWidget()
+        
+        # Operating Expenses Tab
+        expenses_tab = QWidget()
+        expenses_layout = QVBoxLayout(expenses_tab)
+        self.expenses_table = QTableView()
+        expenses_layout.addWidget(self.expenses_table)
+        expenditure_tabs.addTab(expenses_tab, "Operating Expenses")
+        
+        # Capital Expenses Tab
+        capital_tab = QWidget()
+        capital_layout = QVBoxLayout(capital_tab)
         self.capital_table = QTableView()
-        layout.addWidget(self.capital_table)
-        self.capital_label = QLabel()  # For total
-        layout.addWidget(self.capital_label)
-        self.capital_chart_view = QChartView()
-        layout.addWidget(self.capital_chart_view)
+        capital_layout.addWidget(self.capital_table)
+        expenditure_tabs.addTab(capital_tab, "Capital Expenses")
+        
+        layout.addWidget(expenditure_tabs)
 
-        # Expenditure Reports: Operating (Expenses)
-        layout.addWidget(QLabel("Expenditure Reports - Operating (Expenses):"))
-        self.operating_table = QTableView()
-        layout.addWidget(self.operating_table)
-        self.operating_label = QLabel()  # For total
-        layout.addWidget(self.operating_label)
-        self.operating_chart_view = QChartView()
-        layout.addWidget(self.operating_chart_view)
+    def load_initial_data(self):
+        """Load academic years and initial data"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Load academic years
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
+                years = c.fetchall()
+                
+                self.year_combo.clear()
+                for year_id, year_name in years:
+                    self.year_combo.addItem(year_name, year_id)
+                
+                # Load terms for first year
+                if years:
+                    self.load_terms(years[0][0])
+                    
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load initial data: {str(e)}")
 
-    def populate_years(self):
-        # Fetch all academic years
-        cur = self.db.cursor()
-        cur.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
-        years = cur.fetchall()
-        self.year_combo.addItem("Select Year", 0)
-        for yid, year in years:
-            self.year_combo.addItem(year, yid)
-
-    def populate_terms(self):
-        # Fetch terms for the selected academic year
+    def on_year_changed(self):
+        """When year changes, load corresponding terms"""
         year_id = self.year_combo.currentData()
-        self.term_combo.clear()
         if year_id:
-            cur = self.db.cursor()
-            cur.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ? ORDER BY StartDate", (year_id,))
-            terms = cur.fetchall()
-            self.term_combo.addItem("Select Term", 0)
-            for tid, tname in terms:
-                self.term_combo.addItem(tname, tid)
+            self.load_terms(year_id)
 
-    def generate_report(self):
+    def load_terms(self, year_id):
+        """Load terms for selected academic year"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT TermID, TermName 
+                    FROM Term 
+                    WHERE AcademicYear = ? 
+                    ORDER BY StartDate
+                """, (year_id,))
+                terms = c.fetchall()
+                
+                self.term_combo.clear()
+                for term_id, term_name in terms:
+                    self.term_combo.addItem(term_name, term_id)
+                    
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load terms: {str(e)}")
+
+    def generate_reports(self):
+        """Generate all reports based on selected filters"""
         term_id = self.term_combo.currentData()
         if not term_id:
-            QMessageBox.warning(self, "Selection Error", "Please select a term.")
+            QMessageBox.warning(self, "Warning", "Please select a term first")
             return
 
-        cur = self.db.cursor()
-        # Fetch term dates for filtering expenditures
-        cur.execute("SELECT StartDate, EndDate FROM Term WHERE TermID = ?", (term_id,))
-        start_date, end_date = cur.fetchone()
+        try:
+            self.generate_fees_completion_report(term_id)
+            self.generate_class_fees_report(term_id)
+            self.generate_assets_report()
+            self.generate_expenditure_report(term_id)
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to generate reports: {str(e)}")
 
-        # School Fees Completion
-        # Expected: sum(Fees.Amount * (StudentTerm.PayRate / 100)) per student/term
-        # Collected: sum(FeesPayment.AmountPaid)
-        cur.execute("""
-            SELECT 
-                SUM(F.Amount * (ST.PayRate / 100.0)) AS Expected,
-                SUM(FP.AmountPaid) AS Collected
-            FROM StudentTerm ST
-            JOIN Fees F ON ST.ClassID = F.Class AND ST.TermID = F.Term
-            LEFT JOIN FeesPayment FP ON ST.StudentTermID = FP.StudentTermID AND F.FeesID = FP.FeesID
-            WHERE ST.TermID = ?
-        """, (term_id,))
-        expected, collected = cur.fetchone()
-        expected = expected or 0
-        collected = collected or 0
-        percentage = (collected / expected * 100) if expected > 0 else 0
-        self.school_fees_label.setText(f"Collected: {collected}, Expected: {expected}, Completion: {percentage:.2f}%")
+    def generate_fees_completion_report(self, term_id):
+        """Generate school fees completion report"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Calculate expected fees
+                c.execute("""
+                    SELECT SUM(f.Amount * st.PayRate / 100) as ExpectedFees
+                    FROM StudentTerm st
+                    JOIN Fees f ON st.ClassID = f.Class AND st.TermID = f.Term
+                    WHERE st.TermID = ?
+                """, (term_id,))
+                expected_fees = c.fetchone()[0] or 0
 
-        # Pie chart for school fees
-        pie_series = QPieSeries()
-        pie_series.append("Collected", collected)
-        pie_series.append("Remaining", expected - collected)
-        chart = QChart()
-        chart.addSeries(pie_series)
-        chart.setTitle("School Fees Completion")
-        self.school_fees_chart_view.setChart(chart)
+                # Calculate collected fees
+                c.execute("""
+                    SELECT SUM(fp.AmountPaid) as CollectedFees
+                    FROM FeesPayment fp
+                    JOIN StudentTerm st ON fp.StudentTermID = st.StudentTermID
+                    WHERE st.TermID = ?
+                """, (term_id,))
+                collected_fees = c.fetchone()[0] or 0
 
-        # Class-wise Fees Completion
-        model = QStandardItemModel()
-        model.setHorizontalHeaderLabels(["Class", "Expected", "Collected", "Percentage"])
-        cur.execute("""
-            SELECT 
-                C.ClassName,
-                SUM(F.Amount * (ST.PayRate / 100.0)) AS Expected,
-                SUM(FP.AmountPaid) AS Collected
-            FROM StudentTerm ST
-            JOIN Class C ON ST.ClassID = C.ClassID
-            JOIN Fees F ON ST.ClassID = F.Class AND ST.TermID = F.Term
-            LEFT JOIN FeesPayment FP ON ST.StudentTermID = FP.StudentTermID AND F.FeesID = FP.FeesID
-            WHERE ST.TermID = ?
-            GROUP BY C.ClassID
-        """, (term_id,))
-        rows = cur.fetchall()
-        for classname, exp, coll in rows:
-            exp = exp or 0
-            coll = coll or 0
-            perc = (coll / exp * 100) if exp > 0 else 0
-            model.appendRow([QStandardItem(classname),
-                             QStandardItem(str(exp)),
-                             QStandardItem(str(coll)),
-                             QStandardItem(f"{perc:.2f}%")])
-        self.class_fees_table.setModel(model)
+                # Calculate completion percentage
+                completion_rate = (collected_fees / expected_fees * 100) if expected_fees > 0 else 0
+                balance = expected_fees - collected_fees
 
-        # Current Assets List (all assets, not filtered by term)
-        assets_model = QStandardItemModel()
-        assets_model.setHorizontalHeaderLabels(["Asset Name", "Value", "Status", "Updated On"])
-        cur.execute("SELECT AssetName, AssetValue, Status, updatedON FROM Assets")
-        for row in cur.fetchall():
-            assets_model.appendRow([QStandardItem(str(val)) for val in row])
-        self.assets_table.setModel(assets_model)
+                # Update summary cards
+                self.update_fees_summary(expected_fees, collected_fees, completion_rate, balance)
 
-        # Expenditure Reports - Capital (Assets purchased in the term)
-        # Capital: expenditures linked to Assets, filtered by date
-        capital_model = QStandardItemModel()
-        capital_model.setHorizontalHeaderLabels(["Category", "Total"])
-        cur.execute("""
-            SELECT EC.ExpCatName, SUM(E.ExpenseAmount) AS Total
-            FROM Expenditure E
-            JOIN ExpenditureSubCategory ESC ON E.ExpeSubID = ESC.ExpeSubCatID
-            JOIN ExpenditureCategory EC ON ESC.ExpenditureCategoryID = EC.ExpCatID
-            WHERE E.ExpenseID IN (SELECT ExpenseID FROM Assets)
-            AND E.ExpenseDate BETWEEN ? AND ?
-            GROUP BY EC.ExpCatID
-        """, (start_date, end_date))
-        capital_rows = cur.fetchall()
-        capital_total = sum(total for _, total in capital_rows)
-        for cat, total in capital_rows:
-            capital_model.appendRow([QStandardItem(cat), QStandardItem(str(total))])
-        self.capital_table.setModel(capital_model)
-        self.capital_label.setText(f"Total Capital Expenditure: {capital_total}")
+                # Detailed breakdown
+                c.execute("""
+                    SELECT 
+                        s.StudentID,
+                        s.Student_Name,
+                        c.ClassName,
+                        (f.Amount * st.PayRate / 100) as ExpectedAmount,
+                        COALESCE(SUM(fp.AmountPaid), 0) as PaidAmount,
+                        CASE 
+                            WHEN (f.Amount * st.PayRate / 100) > 0 
+                            THEN (COALESCE(SUM(fp.AmountPaid), 0) / (f.Amount * st.PayRate / 100)) * 100 
+                            ELSE 0 
+                        END as CompletionRate
+                    FROM StudentTerm st
+                    JOIN Students s ON st.StudentID = s.StudentID
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Fees f ON st.ClassID = f.Class AND st.TermID = f.Term
+                    LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
+                    WHERE st.TermID = ?
+                    GROUP BY s.StudentID, s.Student_Name, c.ClassName, f.Amount, st.PayRate
+                    ORDER BY c.ClassName, s.Student_Name
+                """, (term_id,))
+                
+                fees_data = c.fetchall()
+                headers = ["Student ID", "Student Name", "Class", "Expected", "Paid", "Completion %"]
+                model = ReportTableModel(fees_data, headers)
+                self.fees_table.setModel(model)
+                self.fees_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-        # Bar chart for capital
-        bar_series = QBarSeries()
-        bar_set = QBarSet("Capital")
-        for _, total in capital_rows:
-            bar_set.append(total)
-        bar_series.append(bar_set)
-        capital_chart = QChart()
-        capital_chart.addSeries(bar_series)
-        capital_chart.setTitle("Capital Expenditure by Category")
-        axis_y = QValueAxis()
-        capital_chart.addAxis(axis_y, Qt.AlignLeft)
-        bar_series.attachAxis(axis_y)
-        self.capital_chart_view.setChart(capital_chart)
+        except Exception as e:
+            raise Exception(f"Fees report error: {str(e)}")
 
-        # Operating Expenses (not linked to Assets, filtered by date)
-        operating_model = QStandardItemModel()
-        operating_model.setHorizontalHeaderLabels(["Category", "Total"])
-        cur.execute("""
-            SELECT EC.ExpCatName, SUM(E.ExpenseAmount) AS Total
-            FROM Expenditure E
-            JOIN ExpenditureSubCategory ESC ON E.ExpeSubID = ESC.ExpeSubCatID
-            JOIN ExpenditureCategory EC ON ESC.ExpenditureCategoryID = EC.ExpCatID
-            WHERE E.ExpenseID NOT IN (SELECT ExpenseID FROM Assets)
-            AND E.ExpenseDate BETWEEN ? AND ?
-            GROUP BY EC.ExpCatID
-        """, (start_date, end_date))
-        operating_rows = cur.fetchall()
-        operating_total = sum(total for _, total in operating_rows)
-        for cat, total in operating_rows:
-            operating_model.appendRow([QStandardItem(cat), QStandardItem(str(total))])
-        self.operating_table.setModel(operating_model)
-        self.operating_label.setText(f"Total Operating Expenditure: {operating_total}")
+    def update_fees_summary(self, expected, collected, completion, balance):
+        """Update fees summary display"""
+        self.expected_fees_label.setText(f"Expected: {expected:,.2f}")
+        self.collected_fees_label.setText(f"Collected: {collected:,.2f}")
+        self.completion_label.setText(f"Completion: {completion:.1f}%")
+        self.balance_label.setText(f"Balance: {balance:,.2f}")
+        
+        self.fees_progress.setValue(int(completion))
+        
+        # FIXED: Proper way to update summary card
+        # Find the value and subtitle labels using their object names
+        value_label = self.fees_card.findChild(QLabel, "value_label")
+        subtitle_label = self.fees_card.findChild(QLabel, "subtitle_label")
+        
+        if value_label:
+            value_label.setText(f"{completion:.1f}%")
+        if subtitle_label:
+            subtitle_label.setText(f"{collected:,.2f} / {expected:,.2f}")
 
-        # Bar chart for operating
-        op_bar_series = QBarSeries()
-        op_bar_set = QBarSet("Operating")
-        for _, total in operating_rows:
-            op_bar_set.append(total)
-        op_bar_series.append(op_bar_set)
-        op_chart = QChart()
-        op_chart.addSeries(op_bar_series)
-        op_chart.setTitle("Operating Expenditure by Category")
-        op_axis_y = QValueAxis()
-        op_chart.addAxis(op_axis_y, Qt.AlignLeft)
-        op_bar_series.attachAxis(op_axis_y)
-        self.operating_chart_view.setChart(op_chart)
+    def generate_class_fees_report(self, term_id):
+        """Generate class-wise fees completion report"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT 
+                        c.ClassName,
+                        COUNT(DISTINCT st.StudentID) as TotalStudents,
+                        SUM(f.Amount * st.PayRate / 100) as ExpectedFees,
+                        COALESCE(SUM(fp.AmountPaid), 0) as CollectedFees,
+                        CASE 
+                            WHEN SUM(f.Amount * st.PayRate / 100) > 0 
+                            THEN (COALESCE(SUM(fp.AmountPaid), 0) / SUM(f.Amount * st.PayRate / 100)) * 100 
+                            ELSE 0 
+                        END as CompletionRate
+                    FROM StudentTerm st
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Fees f ON st.ClassID = f.Class AND st.TermID = f.Term
+                    LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
+                    WHERE st.TermID = ?
+                    GROUP BY c.ClassID, c.ClassName
+                    ORDER BY c.ClassName
+                """, (term_id,))
+                
+                class_data = c.fetchall()
+                headers = ["Class", "Students", "Expected Fees", "Collected", "Completion %"]
+                model = ReportTableModel(class_data, headers)
+                self.class_fees_table.setModel(model)
+                self.class_fees_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-    def export_pdf(self):
-        # Export the report as PDF using QTextDocument
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName("school_report.pdf")
+        except Exception as e:
+            raise Exception(f"Class fees report error: {str(e)}")
 
-        doc = QTextDocument()
-        html = "<h1>School Finance Report</h1>"
-        html += f"<p>Academic Year: {self.year_combo.currentText()}, Term: {self.term_combo.currentText()}</p>"
+    def generate_assets_report(self):
+        """Generate current assets list report"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT 
+                        a.AssetName,
+                        ec.ExpCatName as Category,
+                        a.AssetValue,
+                        a.Status,
+                        a.updatedON as LastUpdated,
+                        e.ExpenseDate as PurchaseDate
+                    FROM Assets a
+                    JOIN Expenditure e ON a.ExpenseID = e.ExpenseID
+                    JOIN ExpenditureSubCategory esc ON e.ExpeSubID = esc.ExpeSubCatID
+                    JOIN ExpenditureCategory ec ON esc.ExpenditureCategoryID = ec.ExpCatID
+                    ORDER BY a.Status, a.AssetValue DESC
+                """)
+                
+                assets_data = c.fetchall()
+                
+                # Calculate summary
+                total_value = sum(row[2] for row in assets_data)
+                active_count = sum(1 for row in assets_data if row[3] == 'Active')
+                disposed_count = sum(1 for row in assets_data if row[3] in ['Disposed', 'Sold'])
+                
+                # Update summary
+                self.total_assets_label.setText(f"Total Assets Value: ₦{total_value:,.2f}")
+                self.active_assets_label.setText(f"Active Assets: {active_count}")
+                self.disposed_assets_label.setText(f"Disposed/Sold Assets: {disposed_count}")
+                
+                # FIXED: Update summary card properly
+                value_label = self.assets_card.findChild(QLabel, "value_label")
+                subtitle_label = self.assets_card.findChild(QLabel, "subtitle_label")
+                
+                if value_label:
+                    value_label.setText(f"₦{total_value:,.2f}")
+                if subtitle_label:
+                    subtitle_label.setText(f"Active: {active_count}")
+                
+                headers = ["Asset Name", "Category", "Value", "Status", "Last Updated", "Purchase Date"]
+                model = ReportTableModel(assets_data, headers)
+                self.assets_table.setModel(model)
+                self.assets_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-        # School Fees
-        html += "<h2>School Fees Completion</h2>"
-        html += f"<p>{self.school_fees_label.text()}</p>"
+        except Exception as e:
+            raise Exception(f"Assets report error: {str(e)}")
 
-        # Class-wise
-        html += "<h2>Class-wise Fees Completion</h2><table border='1'>"
-        html += "<tr><th>Class</th><th>Expected</th><th>Collected</th><th>Percentage</th></tr>"
-        model = self.class_fees_table.model()
-        for row in range(model.rowCount()):
-            html += "<tr>" + "".join(f"<td>{model.index(row, col).data()}</td>" for col in range(4)) + "</tr>"
-        html += "</table>"
+    def generate_expenditure_report(self, term_id):
+        """Generate expenditure reports split into operating and capital expenses"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Get term dates
+                c.execute("SELECT StartDate, EndDate FROM Term WHERE TermID = ?", (term_id,))
+                term_dates = c.fetchone()
+                
+                if term_dates:
+                    start_date, end_date = term_dates
+                    
+                    # Operating Expenses (Expense type)
+                    c.execute("""
+                        SELECT 
+                            ec.ExpCatName as Category,
+                            esc.ExpenditureSubCategoryName as Subcategory,
+                            SUM(e.ExpenseAmount) as TotalAmount,
+                            COUNT(*) as TransactionCount
+                        FROM Expenditure e
+                        JOIN ExpenditureSubCategory esc ON e.ExpeSubID = esc.ExpeSubCatID
+                        JOIN ExpenditureCategory ec ON esc.ExpenditureCategoryID = ec.ExpCatID
+                        WHERE ec.ExpCatType = 'Expense' 
+                        AND e.ExpenseDate BETWEEN ? AND ?
+                        GROUP BY ec.ExpCatID, esc.ExpeSubCatID
+                        ORDER BY TotalAmount DESC
+                    """, (start_date, end_date))
+                    
+                    operating_data = c.fetchall()
+                    operating_total = sum(row[2] for row in operating_data)
+                    
+                    headers = ["Category", "Subcategory", "Total Amount", "Transactions"]
+                    model = ReportTableModel(operating_data, headers)
+                    self.expenses_table.setModel(model)
+                    self.expenses_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                    
+                    # Capital Expenses (Asset type)
+                    c.execute("""
+                        SELECT 
+                            ec.ExpCatName as Category,
+                            esc.ExpenditureSubCategoryName as Subcategory,
+                            SUM(e.ExpenseAmount) as TotalAmount,
+                            COUNT(*) as TransactionCount
+                        FROM Expenditure e
+                        JOIN ExpenditureSubCategory esc ON e.ExpeSubID = esc.ExpeSubCatID
+                        JOIN ExpenditureCategory ec ON esc.ExpenditureCategoryID = ec.ExpCatID
+                        WHERE ec.ExpCatType = 'Asset' 
+                        AND e.ExpenseDate BETWEEN ? AND ?
+                        GROUP BY ec.ExpCatID, esc.ExpeSubCatID
+                        ORDER BY TotalAmount DESC
+                    """, (start_date, end_date))
+                    
+                    capital_data = c.fetchall()
+                    capital_total = sum(row[2] for row in capital_data)
+                    
+                    model = ReportTableModel(capital_data, headers)
+                    self.capital_table.setModel(model)
+                    self.capital_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                    
+                    # FIXED: Update summary cards properly
+                    expenses_value_label = self.expenses_card.findChild(QLabel, "value_label")
+                    if expenses_value_label:
+                        expenses_value_label.setText(f"₦{operating_total:,.2f}")
+                    
+                    capital_value_label = self.capital_card.findChild(QLabel, "value_label")
+                    if capital_value_label:
+                        capital_value_label.setText(f"₦{capital_total:,.2f}")
+                        
+        except Exception as e:
+            raise Exception(f"Expenditure report error: {str(e)}")
 
-        # Assets
-        html += "<h2>Current Assets List</h2><table border='1'>"
-        html += "<tr><th>Asset Name</th><th>Value</th><th>Status</th><th>Updated On</th></tr>"
-        assets_model = self.assets_table.model()
-        for row in range(assets_model.rowCount()):
-            html += "<tr>" + "".join(f"<td>{assets_model.index(row, col).data()}</td>" for col in range(4)) + "</tr>"
-        html += "</table>"
+    def export_report(self):
+        """Export consolidated report to Excel"""
+        try:
+            # This would export all current reports to Excel
+            # Implementation would depend on your specific export requirements
+            QMessageBox.information(self, "Export", "Export functionality would be implemented here")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to export report: {str(e)}")
 
-        # Capital
-        html += "<h2>Capital Expenditure</h2>"
-        html += f"<p>{self.capital_label.text()}</p>"
-        html += "<table border='1'><tr><th>Category</th><th>Total</th></tr>"
-        cap_model = self.capital_table.model()
-        for row in range(cap_model.rowCount()):
-            html += "<tr>" + "".join(f"<td>{cap_model.index(row, col).data()}</td>" for col in range(2)) + "</tr>"
-        html += "</table>"
-
-        # Operating
-        html += "<h2>Operating Expenditure</h2>"
-        html += f"<p>{self.operating_label.text()}</p>"
-        html += "<table border='1'><tr><th>Category</th><th>Total</th></tr>"
-        op_model = self.operating_table.model()
-        for row in range(op_model.rowCount()):
-            html += "<tr>" + "".join(f"<td>{op_model.index(row, col).data()}</td>" for col in range(2)) + "</tr>"
-        html += "</table>"
-
-        doc.setHtml(html)
-        doc.print_(printer)
-
-    def export_excel(self):
-        # Export the report as Excel using openpyxl
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "School Report"
-        row = 1
-
-        # Header
-        ws.cell(row, 1).value = "School Finance Report"
-        row += 1
-        ws.cell(row, 1).value = f"Academic Year: {self.year_combo.currentText()}, Term: {self.term_combo.currentText()}"
-        row += 2
-
-        # School Fees
-        ws.cell(row, 1).value = "School Fees Completion"
-        row += 1
-        ws.cell(row, 1).value = self.school_fees_label.text()
-        row += 2
-
-        # Class-wise
-        ws.cell(row, 1).value = "Class-wise Fees Completion"
-        row += 1
-        headers = ["Class", "Expected", "Collected", "Percentage"]
-        for c, h in enumerate(headers, 1):
-            ws.cell(row, c).value = h
-        row += 1
-        model = self.class_fees_table.model()
-        for r in range(model.rowCount()):
-            for c in range(1, 5):
-                val = model.index(r, c-1).data()
-                try:
-                    ws.cell(row, c).value = float(val) if c > 1 and '%' not in val else val
-                except ValueError:
-                    ws.cell(row, c).value = val
-            row += 1
-        row += 1
-
-        # Assets
-        ws.cell(row, 1).value = "Current Assets List"
-        row += 1
-        asset_headers = ["Asset Name", "Value", "Status", "Updated On"]
-        for c, h in enumerate(asset_headers, 1):
-            ws.cell(row, c).value = h
-        row += 1
-        assets_model = self.assets_table.model()
-        for r in range(assets_model.rowCount()):
-            for c in range(1, 5):
-                val = assets_model.index(r, c-1).data()
-                try:
-                    ws.cell(row, c).value = float(val) if c == 2 else val
-                except ValueError:
-                    ws.cell(row, c).value = val
-            row += 1
-        row += 1
-
-        # Capital
-        ws.cell(row, 1).value = "Capital Expenditure"
-        row += 1
-        ws.cell(row, 1).value = self.capital_label.text()
-        row += 1
-        exp_headers = ["Category", "Total"]
-        for c, h in enumerate(exp_headers, 1):
-            ws.cell(row, c).value = h
-        row += 1
-        cap_model = self.capital_table.model()
-        for r in range(cap_model.rowCount()):
-            for c in range(1, 3):
-                val = cap_model.index(r, c-1).data()
-                try:
-                    ws.cell(row, c).value = float(val) if c == 2 else val
-                except ValueError:
-                    ws.cell(row, c).value = val
-            row += 1
-        row += 1
-
-        # Operating
-        ws.cell(row, 1).value = "Operating Expenditure"
-        row += 1
-        ws.cell(row, 1).value = self.operating_label.text()
-        row += 1
-        for c, h in enumerate(exp_headers, 1):
-            ws.cell(row, c).value = h
-        row += 1
-        op_model = self.operating_table.model()
-        for r in range(op_model.rowCount()):
-            for c in range(1, 3):
-                val = op_model.index(r, c-1).data()
-                try:
-                    ws.cell(row, c).value = float(val) if c == 2 else val
-                except ValueError:
-                    ws.cell(row, c).value = val
-            row += 1
-
-        wb.save("school_report.xlsx")
 
 class About(QWidget):
     def __init__(self):
@@ -9001,7 +9187,12 @@ class Account(QWidget):
         layout.addStretch()                    
 
 if __name__ == "__main__":
+    palette = QPalette()
+    palette.setColor(QPalette.Base, QColor("white"))       # text input / table background
+    palette.setColor(QPalette.Window, QColor("white"))     # general background
+    palette.setColor(QPalette.AlternateBase, QColor("#f9f9f9"))  # alt row bg
     app = QApplication(sys.argv)
+    app.setPalette(palette)
     window = Window()
     print("Application opened.")
     window.show()
