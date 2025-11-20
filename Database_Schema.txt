@@ -1,0 +1,162 @@
+BEGIN TRANSACTION;
+CREATE TABLE IF NOT EXISTS "AcademicYear" (
+	"AcademicYearID"	INTEGER NOT NULL,
+	"Year"	TEXT NOT NULL,
+	PRIMARY KEY("AcademicYearID" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "Assets" (
+	"AssetID"	INTEGER,
+	"AssetName"	TEXT,
+	"Subcategory"	INTEGER NOT NULL,
+	"AssetValue"	REAL NOT NULL,
+	"Status"	TEXT NOT NULL,
+	"Last_update"	TEXT NOT NULL,
+	PRIMARY KEY("AssetID" AUTOINCREMENT),
+	FOREIGN KEY("Subcategory") REFERENCES "SubCategory"("SubCatID")
+);
+CREATE TABLE IF NOT EXISTS "AssetsRecord" (
+	"ASS_Red_ID"	INTEGER NOT NULL,
+	"AssetsID"	INTEGER NOT NULL,
+	"AssetValue"	REAL NOT NULL,
+	"Status"	TEXT NOT NULL,
+	"LastDate"	TEXT NOT NULL,
+	PRIMARY KEY("ASS_Red_ID" AUTOINCREMENT),
+	FOREIGN KEY("AssetsID") REFERENCES "Assets"("AssetID")
+);
+CREATE TABLE IF NOT EXISTS "Category" (
+	"CatID"	INTEGER NOT NULL,
+	"Type"	TEXT NOT NULL,
+	"Department"	INTEGER NOT NULL,
+	"CatName"	TEXT NOT NULL,
+	PRIMARY KEY("CatID" AUTOINCREMENT),
+	UNIQUE("Type","Department","CatName"),
+	FOREIGN KEY("Department") REFERENCES "Department"("DeptID"),
+	CHECK("Type" IN ("Asset", "Supplies", "Expenses"))
+);
+CREATE TABLE IF NOT EXISTS "Class" (
+	"ClassID"	INTEGER NOT NULL,
+	"ClassName"	TEXT NOT NULL,
+	"AcademicYear"	TEXT NOT NULL,
+	PRIMARY KEY("ClassID" AUTOINCREMENT),
+	FOREIGN KEY("AcademicYear") REFERENCES "AcademicYear"("AcademicYearID") ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS "Department" (
+	"DeptID"	INTEGER,
+	"DeptName"	TEXT NOT NULL UNIQUE,
+	PRIMARY KEY("DeptID" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "Expenses" (
+	"ExpID"	INTEGER,
+	"ExpSubCategory"	INTEGER NOT NULL,
+	"ExpAmount"	REAL NOT NULL,
+	"ExpDate"	TEXT NOT NULL,
+	"ExpDescription"	TEXT,
+	PRIMARY KEY("ExpID" AUTOINCREMENT),
+	FOREIGN KEY("ExpSubCategory") REFERENCES "SubCategory"("SubcatID")
+);
+CREATE TABLE IF NOT EXISTS "Fees" (
+	"FeesID"	INTEGER NOT NULL,
+	"Class"	TEXT NOT NULL,
+	"Term"	TEXT NOT NULL,
+	"Amount"	REAL NOT NULL,
+	PRIMARY KEY("FeesID" AUTOINCREMENT),
+	FOREIGN KEY("Class") REFERENCES "Class"("ClassID") ON DELETE RESTRICT,
+	FOREIGN KEY("Term") REFERENCES "Term"("TermID") ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS "FeesPayment" (
+	"FeesPaymentID"	INTEGER NOT NULL,
+	"StudentTermID"	INTEGER NOT NULL,
+	"FeesID"	INTEGER NOT NULL,
+	"AmountPaid"	REAL NOT NULL,
+	"TransactionDate"	TEXT NOT NULL,
+	"ReferenceNumber"	TEXT NOT NULL,
+	"DoneOn"	TEXT NOT NULL,
+	PRIMARY KEY("FeesPaymentID" AUTOINCREMENT),
+	FOREIGN KEY("FeesID") REFERENCES "Fees"("FeesID") ON DELETE RESTRICT,
+	FOREIGN KEY("StudentTermID") REFERENCES "StudentTerm"("StudentTermID") ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS "StudentTerm" (
+	"StudentTermID"	INTEGER NOT NULL,
+	"StudentID"	TEXT NOT NULL,
+	"ClassID"	INTEGER NOT NULL,
+	"TermID"	INTEGER NOT NULL,
+	"PayRate"	INTEGER NOT NULL,
+	UNIQUE("StudentID","ClassID","TermID"),
+	PRIMARY KEY("StudentTermID"),
+	FOREIGN KEY("ClassID") REFERENCES "Class"("ClassID") ON DELETE RESTRICT,
+	FOREIGN KEY("StudentID") REFERENCES "Students"("StudentID") ON DELETE CASCADE,
+	FOREIGN KEY("TermID") REFERENCES "Term"("TermID") ON DELETE SET NULL,
+	CHECK("PayRate" >= 0 AND "PayRate" <= 100)
+);
+CREATE TABLE IF NOT EXISTS "Students" (
+	"StudentID"	TEXT NOT NULL,
+	"Student_Name"	TEXT NOT NULL,
+	"FeePayer"	TEXT NOT NULL,
+	"PayRate"	INTEGER NOT NULL,
+	"Parent_Name"	TEXT NOT NULL,
+	"Parent_Contact"	TEXT NOT NULL,
+	"Parent_Contact2"	TEXT,
+	PRIMARY KEY("StudentID")
+);
+CREATE TABLE IF NOT EXISTS "SubCategory" (
+	"SubCatID"	INTEGER NOT NULL,
+	"CategoryID"	INTEGER NOT NULL,
+	"SubCategoryName"	TEXT NOT NULL,
+	UNIQUE("CategoryID","SubcategoryName"),
+	PRIMARY KEY("SubCatID" AUTOINCREMENT),
+	FOREIGN KEY("CategoryID") REFERENCES "Category"("CatID")
+);
+CREATE TABLE IF NOT EXISTS "Supplies" (
+	"SuppliesID"	INTEGER NOT NULL,
+	"Name"	TEXT NOT NULL,
+	"Subcategory"	INTEGER NOT NULL,
+	"Quantity"	INTEGER NOT NULL,
+	"Unit"	TEXT NOT NULL,
+	PRIMARY KEY("SuppliesID" AUTOINCREMENT),
+	FOREIGN KEY("Subcategory") REFERENCES "SubCategory"("SubCatID")
+);
+CREATE TABLE IF NOT EXISTS "SuppliesInventory" (
+	"Sup_Inv_ID"	INTEGER NOT NULL,
+	"Supplies_ID"	INTEGER NOT NULL,
+	"Type"	TEXT NOT NULL,
+	"Quantity"	INTEGER NOT NULL,
+	"Price"	REAL NOT NULL,
+	"Date"	TEXT NOT NULL,
+	"ReferencesNotes"	TEXT,
+	PRIMARY KEY("Sup_Inv_ID" AUTOINCREMENT),
+	FOREIGN KEY("Supplies_ID") REFERENCES "Supplies"("SuppliesID"),
+	CHECK("Type" IN ('In', 'Out')),
+	CHECK("Quantity" > 0),
+	CHECK("Price" >= 0)
+);
+CREATE TABLE IF NOT EXISTS "Term" (
+	"TermID"	INTEGER NOT NULL,
+	"TermName"	TEXT NOT NULL,
+	"AcademicYear"	TEXT NOT NULL,
+	"StartDate"	TEXT NOT NULL,
+	"EndDate"	TEXT NOT NULL,
+	PRIMARY KEY("TermID" AUTOINCREMENT),
+	FOREIGN KEY("AcademicYear") REFERENCES "AcademicYear"("AcademicYearID") ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS "Uniform" (
+	"UniformId"	INTEGER NOT NULL,
+	"UniformName"	TEXT NOT NULL,
+	"UniformPrice"	REAL NOT NULL,
+	"Quantity"	INTEGER NOT NULL,
+	PRIMARY KEY("UniformId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "UniformInventory" (
+	"UniformInventoryID"	INTEGER NOT NULL,
+	"UniformID"	INTEGER NOT NULL,
+	"Type"	TEXT NOT NULL,
+	"Quantity"	INTEGER NOT NULL,
+	"Price"	REAL NOT NULL,
+	"Date"	TEXT NOT NULL,
+	"ReferencesNotes"	TEXT,
+	PRIMARY KEY("UniformInventoryID" AUTOINCREMENT),
+	FOREIGN KEY("UniformID") REFERENCES "Uniform"("UniformID"),
+	CHECK("Type" IN ('In', 'Out')),
+	CHECK("Quantity" > 0),
+	CHECK("Price" >= 0)
+);
+COMMIT;
