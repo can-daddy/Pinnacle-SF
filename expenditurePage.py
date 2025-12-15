@@ -100,11 +100,9 @@ class Expenditure(QTabWidget):
         self.tab1 = Supplies()
         self.tab2 = SuppliesInventory()
         self.tab3 = Expense()
-        self.tab4 = Assets()
         self.tabs.addTab(self.tab1, "Supplies")
         self.tabs.addTab(self.tab2, "Supplies Inventory")
         self.tabs.addTab(self.tab3, "Expenses")
-        self.tabs.addTab(self.tab4, "Assets")
         layout.addWidget(self.tabs)
         self.setLayout(layout)
         
@@ -668,9 +666,40 @@ class Expense(QWidget):
         super().__init__()
         layout = QVBoxLayout()
         self.setLayout(layout)
+
+        # Stylesheet for consistency with Supplies/Supplies Inventory
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QLineEdit {
+                padding: 8px;
+                border: 1px solid #E2E8F0;
+                border-radius: 5px;
+            }
+            QTableWidget {
+                border: 1px solid #E2E8F0;
+                gridline-color: #E2E8F0;
+            }
+            QHeaderView::section {
+                background-color: #F7FAFC;
+                padding: 8px;
+                border: none;
+                font-weight: bold;
+            }
+        """)
+
         self.header = QHBoxLayout()
         self.Heading = QLabel("Expenses")
-        self.Heading.setStyleSheet("font-size:18px;font-weight:bold;")
+        self.Heading.setStyleSheet("font-size: 18px; font-weight: bold; color: #2D3748;")
         self.searchbar = QLineEdit()
         self.searchbar.setPlaceholderText("Search Expenses...")
         self.searchbar.textChanged.connect(self.load_data)
@@ -683,11 +712,12 @@ class Expense(QWidget):
         layout.addLayout(self.header)
 
         self.table = QTableWidget()
-        # Hidden ExpID, Category, Subcategory, Amount, Date, Description, Actions
         self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["ID","Category","Subcategory","Amount","Date","Description","Actions"])
+        self.table.setHorizontalHeaderLabels(["ID", "Category", "Subcategory", "Amount", "Date", "Description", "Actions"])
         self.table.hideColumn(0)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Fixed)
+        self.table.setColumnWidth(6, 180)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         layout.addWidget(self.table)
@@ -972,357 +1002,7 @@ class Expense(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Delete failed: {e}")
 
-class Assets(QWidget):
-    """Simple Assets management UI with CRUD and record popup."""
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout()
-        self.setLayout(layout)
 
-        self.header = QHBoxLayout()
-        self.Heading = QLabel("Assets")
-        self.Heading.setStyleSheet("font-size:18px;font-weight:bold;")
-        self.searchbar = QLineEdit()
-        self.searchbar.setPlaceholderText("Search Assets...")
-        self.searchbar.textChanged.connect(self.load_data)
-        self.addbtn = QPushButton("Add Asset")
-        self.addbtn.clicked.connect(self.add_asset)
-
-        self.header.addWidget(self.Heading)
-        self.header.addStretch()
-        self.header.addWidget(self.searchbar)
-        self.header.addWidget(self.addbtn)
-        layout.addLayout(self.header)
-
-        self.table = QTableWidget()
-        # Hidden AssetID, Name, Subcategory, Value, Status, Last_update, Actions
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["ID","Name","Subcategory","Value","Status","Last Update","Actions"])
-        self.table.hideColumn(0)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        layout.addWidget(self.table)
-
-        self.load_data()
-
-    def load_data(self):
-        try:
-            with get_db_connection() as (conn, c):
-                query = (
-                    "SELECT a.AssetID, a.AssetName, sc.SubCategoryName, a.AssetValue, a.Status, a.Last_update "
-                    "FROM Assets a LEFT JOIN SubCategory sc ON a.Subcategory = sc.SubCatID"
-                )
-                params = []
-                s = self.searchbar.text().strip()
-                if s:
-                    query += " WHERE a.AssetName LIKE ? OR sc.SubCategoryName LIKE ? OR a.Status LIKE ?"
-                    params.extend([f"%{s}%", f"%{s}%", f"%{s}%"])
-
-                query += " ORDER BY a.Last_update DESC"
-                c.execute(query, params)
-                rows = c.fetchall()
-
-                self.table.setRowCount(0)
-                for idx, row in enumerate(rows):
-                    self.table.insertRow(idx)
-                    self.table.setItem(idx, 0, QTableWidgetItem(str(row[0] if row[0] is not None else "")))
-                    self.table.setItem(idx, 1, QTableWidgetItem(str(row[1] if row[1] else "")))
-                    self.table.setItem(idx, 2, QTableWidgetItem(str(row[2] if row[2] else "")))
-                    self.table.setItem(idx, 3, QTableWidgetItem(str(row[3] if row[3] is not None else "")))
-                    self.table.setItem(idx, 4, QTableWidgetItem(str(row[4] if row[4] else "")))
-                    self.table.setItem(idx, 5, QTableWidgetItem(str(row[5] if row[5] else "")))
-
-                    action_widget = QWidget()
-                    action_layout = QHBoxLayout(action_widget)
-                    action_layout.setContentsMargins(5, 2, 5, 2)
-
-                    rec_btn = QPushButton("Record")
-                    rec_btn.setStyleSheet("background-color: #805AD5; color: white;")
-                    rec_btn.clicked.connect(lambda _, aid=row[0], aname=row[1]: self.show_records(aid, aname))
-
-                    edit_btn = QPushButton("Edit")
-                    edit_btn.setStyleSheet("background-color: #38A169; color: white;")
-                    edit_btn.clicked.connect(lambda _, aid=row[0]: self.edit_asset(aid))
-
-                    del_btn = QPushButton("Delete")
-                    del_btn.setStyleSheet("background-color: #E53E3E; color: white;")
-                    del_btn.clicked.connect(lambda _, aid=row[0]: self.delete_asset(aid))
-
-                    action_layout.addWidget(rec_btn)
-                    action_layout.addWidget(edit_btn)
-                    action_layout.addWidget(del_btn)
-                    self.table.setCellWidget(idx, 6, action_widget)
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load assets: {e}")
-
-    def add_asset(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add Asset")
-        dialog.setMinimumWidth(500)
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-
-        name_input = QLineEdit()
-        dept_combo = QComboBox()
-        cat_combo = QComboBox()
-        subcat_combo = QComboBox()
-        value_input = QLineEdit()
-        value_input.setValidator(QDoubleValidator(0.0, 1e12, 2))
-        status_combo = QComboBox()
-        status_combo.addItems(["Active", "Disposed", "Maintenance", "Unknown"])
-        last_update = QDateEdit()
-        last_update.setDate(QDate.currentDate())
-        last_update.setCalendarPopup(True)
-
-        # Populate Departments
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT DeptID, DeptName FROM Department")
-                depts = c.fetchall()
-                dept_combo.addItem("Select Department", None)
-                for d in depts:
-                    dept_combo.addItem(d[1], d[0])
-        except Exception:
-            pass
-
-        def update_cats():
-            cat_combo.clear()
-            cat_combo.addItem("Select Category", None)
-            dept_id = dept_combo.currentData()
-            if dept_id:
-                with get_db_connection() as (conn, c):
-                    c.execute("SELECT CatID, CatName FROM Category WHERE Department = ? AND Type='Asset'", (dept_id,))
-                    cats = c.fetchall()
-                    for cat in cats:
-                        cat_combo.addItem(cat[1], cat[0])
-
-        def update_subcats():
-            subcat_combo.clear()
-            subcat_combo.addItem("Select Subcategory", None)
-            cat_id = cat_combo.currentData()
-            if cat_id:
-                with get_db_connection() as (conn, c):
-                    c.execute("SELECT SubCatID, SubCategoryName FROM SubCategory WHERE CategoryID = ?", (cat_id,))
-                    subs = c.fetchall()
-                    for s in subs:
-                        subcat_combo.addItem(s[1], s[0])
-
-        dept_combo.currentIndexChanged.connect(update_cats)
-        cat_combo.currentIndexChanged.connect(update_subcats)
-
-        form.addRow("Asset Name:", name_input)
-        form.addRow("Department:", dept_combo)
-        form.addRow("Category:", cat_combo)
-        form.addRow("Subcategory:", subcat_combo)
-        form.addRow("Value:", value_input)
-        form.addRow("Status:", status_combo)
-        form.addRow("Last Update:", last_update)
-
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_asset(dialog, name_input, subcat_combo, value_input, status_combo, last_update))
-
-        layout.addLayout(form)
-        layout.addWidget(save_btn)
-        dialog.exec_()
-
-    def save_asset(self, dialog, name_input, subcat_combo, value_input, status_combo, last_update):
-        name = name_input.text().strip()
-        subcat = subcat_combo.currentData()
-        value_text = value_input.text().strip()
-        status = status_combo.currentText()
-        last_date = last_update.date().toString("yyyy-MM-dd")
-
-        if not all([name, subcat, value_text]):
-            QMessageBox.warning(dialog, "Missing Data", "Please fill name, subcategory and value.")
-            return
-
-        try:
-            value = float(value_text)
-            with get_db_connection() as (conn, c):
-                c.execute("INSERT INTO Assets (AssetName, Subcategory, AssetValue, Status, Last_update) VALUES (?, ?, ?, ?, ?)",
-                          (name, subcat, value, status, last_date))
-                conn.commit()
-            dialog.accept()
-            self.load_data()
-            QMessageBox.information(self, "Success", "Asset added.")
-        except Exception as e:
-            QMessageBox.critical(dialog, "Error", f"Failed to save asset: {e}")
-
-    def edit_asset(self, asset_id):
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT AssetName, Subcategory, AssetValue, Status, Last_update FROM Assets WHERE AssetID=?", (asset_id,))
-                row = c.fetchone()
-            if not row:
-                return
-
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Edit Asset")
-            dialog.setMinimumWidth(500)
-            layout = QVBoxLayout(dialog)
-            form = QFormLayout()
-
-            name_input = QLineEdit(row[0])
-            dept_combo = QComboBox()
-            cat_combo = QComboBox()
-            subcat_combo = QComboBox()
-            value_input = QLineEdit(str(row[2]))
-            value_input.setValidator(QDoubleValidator(0.0, 1e12, 2))
-            status_combo = QComboBox()
-            status_combo.addItems(["Active", "Disposed", "Maintenance", "Unknown"])
-            status_combo.setCurrentText(row[3] if row[3] else "Active")
-            last_update = QDateEdit()
-            last_update.setDate(QDate.fromString(row[4], "yyyy-MM-dd") if row[4] else QDate.currentDate())
-            last_update.setCalendarPopup(True)
-
-            # populate departments and categories similar to add
-            try:
-                with get_db_connection() as (conn, c):
-                    c.execute("SELECT DeptID, DeptName FROM Department")
-                    depts = c.fetchall()
-                    dept_combo.addItem("Select Department", None)
-                    for d in depts:
-                        dept_combo.addItem(d[1], d[0])
-            except Exception:
-                pass
-
-            def update_cats():
-                cat_combo.clear()
-                cat_combo.addItem("Select Category", None)
-                dept_id = dept_combo.currentData()
-                if dept_id:
-                    with get_db_connection() as (conn, c):
-                        c.execute("SELECT CatID, CatName FROM Category WHERE Department = ? AND Type='Asset'", (dept_id,))
-                        cats = c.fetchall()
-                        for cat in cats:
-                            cat_combo.addItem(cat[1], cat[0])
-
-            def update_subcats():
-                subcat_combo.clear()
-                subcat_combo.addItem("Select Subcategory", None)
-                cat_id = cat_combo.currentData()
-                if cat_id:
-                    with get_db_connection() as (conn, c):
-                        c.execute("SELECT SubCatID, SubCategoryName FROM SubCategory WHERE CategoryID = ?", (cat_id,))
-                        subs = c.fetchall()
-                        for s in subs:
-                            subcat_combo.addItem(s[1], s[0])
-
-            dept_combo.currentIndexChanged.connect(update_cats)
-            cat_combo.currentIndexChanged.connect(update_subcats)
-
-            # Attempt to pre-select category/department based on existing subcategory
-            existing_subcat = row[1]
-            if existing_subcat:
-                try:
-                    with get_db_connection() as (conn, c):
-                        c.execute("SELECT CategoryID FROM SubCategory WHERE SubCatID = ?", (existing_subcat,))
-                        cres = c.fetchone()
-                        if cres:
-                            cat_id = cres[0]
-                            # find department for this category
-                            c.execute("SELECT Department FROM Category WHERE CatID = ?", (cat_id,))
-                            dres = c.fetchone()
-                            if dres:
-                                dept_id = dres[0]
-                                for i in range(dept_combo.count()):
-                                    if dept_combo.itemData(i) == dept_id:
-                                        dept_combo.setCurrentIndex(i)
-                                        break
-                                update_cats()
-                                for j in range(cat_combo.count()):
-                                    if cat_combo.itemData(j) == cat_id:
-                                        cat_combo.setCurrentIndex(j)
-                                        break
-                                update_subcats()
-                                for k in range(subcat_combo.count()):
-                                    if subcat_combo.itemData(k) == existing_subcat:
-                                        subcat_combo.setCurrentIndex(k)
-                                        break
-                except Exception:
-                    pass
-
-            form.addRow("Asset Name:", name_input)
-            form.addRow("Department:", dept_combo)
-            form.addRow("Category:", cat_combo)
-            form.addRow("Subcategory:", subcat_combo)
-            form.addRow("Value:", value_input)
-            form.addRow("Status:", status_combo)
-            form.addRow("Last Update:", last_update)
-
-            save_btn = QPushButton("Update")
-            save_btn.clicked.connect(lambda: self.update_asset(dialog, asset_id, name_input, subcat_combo, value_input, status_combo, last_update))
-
-            layout.addLayout(form)
-            layout.addWidget(save_btn)
-            dialog.exec_()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error preparing edit: {e}")
-
-    def update_asset(self, dialog, asset_id, name_input, subcat_combo, value_input, status_combo, last_update):
-        name = name_input.text().strip()
-        subcat = subcat_combo.currentData()
-        value_text = value_input.text().strip()
-        status = status_combo.currentText()
-        last_date = last_update.date().toString("yyyy-MM-dd")
-
-        if not all([name, subcat, value_text]):
-            QMessageBox.warning(dialog, "Missing Data", "Please fill name, subcategory and value.")
-            return
-
-        try:
-            value = float(value_text)
-            with get_db_connection() as (conn, c):
-                c.execute("UPDATE Assets SET AssetName=?, Subcategory=?, AssetValue=?, Status=?, Last_update=? WHERE AssetID=?",
-                          (name, subcat, value, status, last_date, asset_id))
-                conn.commit()
-            dialog.accept()
-            self.load_data()
-            QMessageBox.information(self, "Success", "Asset updated.")
-        except Exception as e:
-            QMessageBox.critical(dialog, "Error", f"Failed to update asset: {e}")
-
-    def delete_asset(self, asset_id):
-        reply = QMessageBox.question(self, "Confirm Delete", "Delete this asset and its records?",
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            try:
-                with get_db_connection() as (conn, c):
-                    c.execute("DELETE FROM AssetsRecord WHERE AssetsID=?", (asset_id,))
-                    c.execute("DELETE FROM Assets WHERE AssetID=?", (asset_id,))
-                    conn.commit()
-                self.load_data()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Delete failed: {e}")
-
-    def show_records(self, asset_id, asset_name):
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Asset Records: {asset_name}")
-        dialog.setMinimumWidth(500)
-        layout = QVBoxLayout(dialog)
-
-        list_widget = QListWidget()
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT AssetValue, Status, LastDate FROM AssetsRecord WHERE AssetsID=? ORDER BY LastDate DESC", (asset_id,))
-                rows = c.fetchall()
-                for r in rows:
-                    val = r[0]
-                    status = r[1]
-                    dt = r[2]
-                    item_text = f"{dt} — {status} — Value: {val}"
-                    list_widget.addItem(item_text)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load records: {e}")
-
-        layout.addWidget(list_widget)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.accept)
-        layout.addWidget(close_btn)
-        dialog.exec_()
 
 
 if __name__ == "__main__":

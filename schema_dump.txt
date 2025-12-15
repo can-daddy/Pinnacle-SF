@@ -1,0 +1,171 @@
+--- Table: sqlite_sequence ---
+CREATE TABLE sqlite_sequence(name,seq)
+
+--- Table: Class ---
+CREATE TABLE "Class"(
+    "ClassID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "ClassName" TEXT NOT NULL,
+    "AcademicYear" TEXT NOT NULL,
+    FOREIGN KEY("AcademicYear") REFERENCES "AcademicYear"("AcademicYearID")
+     ON DELETE RESTRICT
+)
+
+--- Table: Fees ---
+CREATE TABLE "Fees"(
+    "FeesID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "Class" TEXT NOT NULL,
+    "Term" TEXT NOT NULL,
+    "Amount" REAL NOT NULL,
+    FOREIGN KEY("Class") REFERENCES "Class"("ClassID")
+     ON DELETE RESTRICT,
+    FOREIGN KEY("Term") REFERENCES "Term"("TermID")
+     ON DELETE RESTRICT
+)
+
+--- Table: FeesPayment ---
+CREATE TABLE "FeesPayment"(
+    "FeesPaymentID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "StudentTermID" INTEGER NOT NULL,
+    "FeesID" INTEGER NOT NULL,
+    "AmountPaid" REAL NOT NULL,
+    "TransactionDate" TEXT NOT NULL,
+    "ReferenceNumber" TEXT NOT NULL,
+    "DoneOn" TEXT NOT NULL,
+    FOREIGN KEY("StudentTermID") REFERENCES "StudentTerm"("StudentTermID")
+     ON DELETE CASCADE,
+    FOREIGN KEY("FeesID") REFERENCES "Fees"("FeesID")
+     ON DELETE RESTRICT
+)
+
+--- Table: AcademicYear ---
+CREATE TABLE "AcademicYear"(
+    "AcademicYearID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "Year" TEXT NOT NULL
+)
+
+--- Table: Term ---
+CREATE TABLE "Term"(
+    "TermID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "TermName" TEXT NOT NULL,
+    "AcademicYear" TEXT NOT NULL,
+    "StartDate" TEXT NOT NULL,
+    "EndDate" TEXT NOT NULL,
+    FOREIGN KEY("AcademicYear") REFERENCES "AcademicYear"("AcademicYearID")
+     ON DELETE RESTRICT
+)
+
+--- Table: StudentTerm ---
+CREATE TABLE "StudentTerm"(
+    "StudentTermID" INTEGER NOT NULL PRIMARY KEY,
+    "StudentID" TEXT NOT NULL,
+    "ClassID" INTEGER NOT NULL,
+    "TermID" INTEGER NOT NULL,
+    "PayRate" INTEGER NOT NULL,
+    CHECK(PayRate>=0 AND PayRate<=100),
+    FOREIGN KEY("StudentID") REFERENCES "Students"("StudentID")
+     ON DELETE CASCADE,
+    FOREIGN KEY("ClassID") REFERENCES "Class"("ClassID")
+     ON DELETE RESTRICT,
+    FOREIGN KEY("TermID") REFERENCES "Term"("TermID")
+     ON DELETE SET NULL,
+    UNIQUE(StudentID,ClassID,TermID)
+    
+)
+
+--- Table: Students ---
+CREATE TABLE "Students"(
+ "StudentID" TEXT NOT NULL PRIMARY KEY,
+ "Student_Name" TEXT NOT NULL,
+ "FeePayer" TEXT NOT NULL,
+ "PayRate" INTEGER NOT NULL,
+ "Parent_Name" TEXT NOT NULL,
+ "Parent_Contact" TEXT NOT NULL,
+ "Parent_Contact2" TEXT
+ )
+
+--- Table: Uniform ---
+CREATE TABLE "Uniform"( 
+"UniformId" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, 
+"UniformName" TEXT NOT NULL,
+"UniformPrice" REAL NOT NULL,
+"Quantity" INTEGER NOT NULL
+)
+
+--- Table: UniformInventory ---
+CREATE TABLE "UniformInventory"(
+"UniformInventoryID" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+"UniformID" INTEGER NOT NULL ,
+"Type" TEXT NOT NULL ,
+"Quantity" INTEGER NOT NULL,
+"Price" REAL NOT NULL,
+"Date" TEXT NOT NULL,
+"ReferencesNotes" TEXT,
+FOREIGN KEY("UniformID") REFERENCES "Uniform"("UniformID")
+CHECK("Type" IN('In','Out'))
+CHECK("Quantity" > 0)
+CHECK("Price" >= 0)
+)
+
+--- Table: SuppliesInventory ---
+CREATE TABLE "SuppliesInventory"(
+"Sup_Inv_ID" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+"Supplies_ID" INTEGER NOT NULL,
+"Type" TEXT NOT NULL ,
+"Quantity" INTEGER NOT NULL,
+"Price" REAL NOT NULL,
+"Date" TEXT NOT NULL,
+"ReferencesNotes" TEXT,
+FOREIGN KEY("Supplies_ID") REFERENCES "Supplies"("SuppliesID"),
+CHECK("Type" IN('In','Out')),
+CHECK("Quantity" > 0),
+CHECK("Price" >= 0)
+)
+
+--- Table: Supplies ---
+CREATE TABLE "Supplies"(
+"SuppliesID" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+"Name" TEXT NOT NULL,
+"Subcategory" INTEGER not NULL,
+"Quantity" INTEGER not NULL,
+"Unit" TEXT not NULL,
+FOREIGN KEY("Subcategory") REFERENCES SubCategory(SubCatID)
+)
+
+--- Table: Expenses ---
+CREATE TABLE "Expenses" (
+"ExpID" INTEGER PRIMARY KEY AUTOINCREMENT,
+"ExpSubCategory" INTEGER NOT NULL,
+"ExpAmount" REAL NOT NULL,
+"ExpDate" TEXT NOT NULL,
+"ExpReference" TEXT, ExpDescription TEXT,
+FOREIGN KEY("ExpSubCategory") REFERENCES SubCategory("SubcatID")
+)
+
+--- Table: Department ---
+CREATE TABLE Department (
+   DeptID INTEGER PRIMARY KEY AUTOINCREMENT,
+   DeptName TEXT UNIQUE NOT NULL
+)
+
+--- Table: Category ---
+CREATE TABLE "Category" (
+	"CatID"	INTEGER NOT NULL,
+	"Type"	TEXT NOT NULL,
+	"Department"	INTEGER NOT NULL,
+	"CatName"	TEXT NOT NULL,
+	PRIMARY KEY("CatID" AUTOINCREMENT),
+	UNIQUE("Type","Department","CatName"),
+	FOREIGN KEY("Department") REFERENCES "Department"("DeptID"),
+	CHECK("Type" IN ('Supplies', 'Expenses'))
+)
+
+--- Table: SubCategory ---
+CREATE TABLE "SubCategory" (
+             "SubCatID" INTEGER NOT NULL,
+             "CategoryID"	INTEGER NOT NULL,
+             "SubCategoryName" TEXT NOT NULL,
+             PRIMARY KEY("SubCatID" AUTOINCREMENT),
+             FOREIGN KEY("CategoryID") REFERENCES "Category"("CatID") ON DELETE CASCADE,
+             UNIQUE(CategoryID,SubcategoryName)
+)
+
