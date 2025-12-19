@@ -6024,27 +6024,28 @@ class ReportGenerator(QWidget):
         proc_rows = cur.fetchall()
         self.procurement_table.setRowCount(len(proc_rows))
         self.procurement_table.setColumnCount(5)
-        self.procurement_table.setHorizontalHeaderLabels(["Supplier", "Item", "Quantity", "Unit Price", "Total"])
+        # Populate procurement table
         for i, row in enumerate(proc_rows):
             for j, val in enumerate(row):
                 self.procurement_table.setItem(i, j, QTableWidgetItem(str(val)))
 
-        # Fetch expense list: categorized totals over the period
+        # Fetch expense rows grouped by category
         cur.execute("""
-            SELECT ExpSubCategory, SUM(ExpAmount) 
-            FROM Expenses 
-            WHERE ExpDate BETWEEN ? AND ? 
-            GROUP BY ExpSubCategory
+            SELECT sc.SubCategoryName, SUM(e.ExpAmount)
+            FROM Expenses e
+            JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
+            WHERE e.ExpDate BETWEEN ? AND ?
+            GROUP BY sc.SubCategoryName
         """, (from_date, to_date))
         exp_rows = cur.fetchall()
+
+        # Populate expense table and create pie chart for expenses
         self.expense_table.setRowCount(len(exp_rows))
         self.expense_table.setColumnCount(2)
         self.expense_table.setHorizontalHeaderLabels(["Category", "Total Amount"])
         for i, (cat, total) in enumerate(exp_rows):
             self.expense_table.setItem(i, 0, QTableWidgetItem(cat))
             self.expense_table.setItem(i, 1, QTableWidgetItem(f"{total:.2f}"))
-
-        # Create pie chart for expenses
         pie_series = QPieSeries()
         for cat, total in exp_rows:
             pie_series.append(cat, total)
@@ -6054,7 +6055,6 @@ class ReportGenerator(QWidget):
         exp_chart.setAnimationOptions(QChart.SeriesAnimations)
         self.expense_chart_view.setChart(exp_chart)
         self.expense_chart_view.setRenderHint(QPainter.Antialiasing)
-
     def export_pdf(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
         if not file_path:
