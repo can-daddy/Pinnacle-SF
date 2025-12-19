@@ -10,100 +10,188 @@ class ReportGenerator:
     def __init__(self, school_name="Pinnacle School"):
         self.school_name = school_name
 
-    def generate_pdf(self, filepath, term_name, start_date, end_date, fees_data, expenses_total, supplies_total):
+    def generate_pdf(self, filepath, term_name, start_date, end_date, fees_summary, fees_breakdown, supplies_total, supplies_breakdown, supplies_details, expenses_total, expenses_breakdown, expenses_details):
         doc = SimpleDocTemplate(filepath, pagesize=letter)
         styles = getSampleStyleSheet()
         story = []
 
-        # Title
+        # Styles
         title_style = styles['Title']
-        story.append(Paragraph(f"{self.school_name} - Financial Summary Report", title_style))
-        story.append(Spacer(1, 12))
-
-        # Term Info
+        heading_style = styles['Heading2']
         normal_style = styles['Normal']
+        
+        # --- Title Page / Header ---
+        story.append(Paragraph(f"{self.school_name} - Financial Report", title_style))
+        story.append(Spacer(1, 12))
         story.append(Paragraph(f"<b>Term:</b> {term_name}", normal_style))
-        story.append(Paragraph(f"<b>Date Range:</b> {start_date} to {end_date}", normal_style))
+        story.append(Paragraph(f"<b>Period:</b> {start_date} to {end_date}", normal_style))
+        story.append(Spacer(1, 24))
+
+        # --- 1. FEES SECTION ---
+        story.append(Paragraph("1. Fees Overview", heading_style))
+        
+        # Explanation
+        collected_pct = (fees_summary['collected'] / fees_summary['expected'] * 100) if fees_summary['expected'] > 0 else 0
+        outstanding_pct = (fees_summary['outstanding'] / fees_summary['expected'] * 100) if fees_summary['expected'] > 0 else 0
+        
+        explanation = f"Out of the expected fees of <b>{fees_summary['expected']:,.2f}</b> for this term, " \
+                      f"<b>{fees_summary['collected']:,.2f} ({collected_pct:.1f}%)</b> has been collected, " \
+                      f"leaving <b>{fees_summary['outstanding']:,.2f} ({outstanding_pct:.1f}%)</b> outstanding."
+        story.append(Paragraph(explanation, normal_style))
         story.append(Spacer(1, 12))
 
-        # Disclaimer
-        disclaimer_style = ParagraphStyle(
-            'Disclaimer',
-            parent=styles['Normal'],
-            textColor=colors.red,
-            fontSize=10,
-            leading=12
-        )
-        story.append(Paragraph("<b>IMPORTANT NOTE:</b> This report does not include donations, grants, rentals, or other external income sources. It reflects only the data recorded in this system.", disclaimer_style))
+        # Fees Breakdown Table
+        if fees_breakdown:
+            data = [['Class', 'Expected', 'Collected', 'Outstanding', '% Out']]
+            for item in fees_breakdown:
+                data.append([
+                    item['class_name'],
+                    f"{item['expected']:,.2f}", 
+                    f"{item['collected']:,.2f}",
+                    f"{item['balance']:,.2f}",
+                    f"{item['percentage']:.1f}%"
+                ])
+            
+            t = Table(data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch, 1*inch])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(t)
         story.append(Spacer(1, 24))
 
-        # Summary Table
-        data = [
-            ['Category', 'Amount'],
-            ['Fees Expected', f"{fees_data['expected']:,.2f}"],
-            ['Fees Collected', f"{fees_data['collected']:,.2f}"],
-            ['Outstanding Fees', f"{fees_data['outstanding']:,.2f}"],
-            ['Total Expenses', f"{expenses_total:,.2f}"],
-            ['Supplies Cost', f"{supplies_total:,.2f}"]
-        ]
-
-        t = Table(data, colWidths=[3*inch, 2*inch])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        story.append(t)
-        story.append(Spacer(1, 24))
-
-        # Explanation
-        story.append(Paragraph("<b>Explanation:</b>", normal_style))
-        story.append(Paragraph("This financial summary reflects only the data recorded in this system. Other school income sources are managed outside this report.", normal_style))
+        # --- 2. SUPPLIES SECTION ---
+        story.append(Paragraph("2. Supplies Spending", heading_style))
         
+        # Summary & Explanation
+        story.append(Paragraph(f"<b>Total Spent on Supplies:</b> {supplies_total:,.2f}", normal_style))
+        
+        if supplies_breakdown:
+            top_cat = supplies_breakdown[0]
+            explanation = f"Most supply spending this term was on <b>{top_cat[0]} ({top_cat[2]:.1f}%)</b>."
+            if len(supplies_breakdown) > 1:
+                second_cat = supplies_breakdown[1]
+                explanation += f" Followed by <b>{second_cat[0]} ({second_cat[2]:.1f}%)</b>."
+            story.append(Paragraph(explanation, normal_style))
+        story.append(Spacer(1, 12))
+
+        # Supplies Breakdown Table
+        if supplies_breakdown:
+            data = [['Category', 'Amount', '% of Total']]
+            for item in supplies_breakdown:
+                data.append([
+                    item[0],
+                    f"{item[1]:,.2f}",
+                    f"{item[2]:.1f}%"
+                ])
+            
+            t = Table(data, colWidths=[3*inch, 2*inch, 1.5*inch])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(t)
+        story.append(Spacer(1, 24))
+
+        # --- 3. EXPENSES SECTION ---
+        story.append(Paragraph("3. Operational Expenses", heading_style))
+        
+        # Summary & Explanation
+        story.append(Paragraph(f"<b>Total Expenses:</b> {expenses_total:,.2f}", normal_style))
+        
+        if expenses_breakdown:
+            top_cat = expenses_breakdown[0]
+            explanation = f"Operational expenses were mainly driven by <b>{top_cat[0]}</b>, which accounted for <b>{top_cat[2]:.1f}%</b> of total expenses."
+            story.append(Paragraph(explanation, normal_style))
+        story.append(Spacer(1, 12))
+
+        # Expenses Breakdown Table
+        if expenses_breakdown:
+            data = [['Category', 'Amount', '% of Total']]
+            for item in expenses_breakdown:
+                data.append([
+                    item[0],
+                    f"{item[1]:,.2f}",
+                    f"{item[2]:.1f}%"
+                ])
+            
+            t = Table(data, colWidths=[3*inch, 2*inch, 1.5*inch])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(t)
+        
+        # Disclaimer Footer
+        story.append(Spacer(1, 36))
+        disclaimer_style = ParagraphStyle('Disclaimer', parent=styles['Normal'], textColor=colors.red, fontSize=9)
+        story.append(Paragraph("Note: This report reflects only system-recorded data.", disclaimer_style))
+
         doc.build(story)
 
-    def generate_excel(self, filepath, term_name, start_date, end_date, fees_data, expenses_total, supplies_total, fees_breakdown, expenses_breakdown):
+    def generate_excel(self, filepath, term_name, start_date, end_date, fees_summary, fees_breakdown, supplies_total, supplies_breakdown, supplies_details, expenses_total, expenses_breakdown, expenses_details):
         with pd.ExcelWriter(filepath, engine='xlsxwriter') as writer:
-            # Summary Sheet
-            summary_data = {
-                'Metric': ['School Name', 'Term', 'Date Range', 'Fees Expected', 'Fees Collected', 'Outstanding Fees', 'Total Expenses', 'Supplies Cost', 'Note'],
+            workbook = writer.book
+            money_fmt = workbook.add_format({'num_format': '#,##0.00'})
+            
+            # --- 1. Fees Summary Sheet ---
+            fees_data = {
+                'Metric': ['Expected Fees', 'Collected Fees', 'Outstanding Fees', 'Collection Rate'],
                 'Value': [
-                    self.school_name,
-                    term_name,
-                    f"{start_date} to {end_date}",
-                    fees_data['expected'],
-                    fees_data['collected'],
-                    fees_data['outstanding'],
-                    expenses_total,
-                    supplies_total,
-                    "This report does not include donations, grants, rentals, or other external income sources."
+                    fees_summary['expected'],
+                    fees_summary['collected'],
+                    fees_summary['outstanding'],
+                    f"{(fees_summary['collected']/fees_summary['expected']*100) if fees_summary['expected'] > 0 else 0:.1f}%"
                 ]
             }
-            df_summary = pd.DataFrame(summary_data)
-            df_summary.to_excel(writer, sheet_name='Summary', index=False)
+            pd.DataFrame(fees_data).to_excel(writer, sheet_name='Fees Summary', index=False)
             
-            # Formatting Summary
-            workbook = writer.book
-            worksheet = writer.sheets['Summary']
-            money_fmt = workbook.add_format({'num_format': '#,##0.00'})
-            worksheet.set_column('B:B', 20, money_fmt)
-            worksheet.set_column('A:A', 30)
-
-            # Fees Breakdown Sheet
             if fees_breakdown:
                 df_fees = pd.DataFrame(fees_breakdown)
-                # Rename keys to nice headers if needed, assuming keys match
-                df_fees.to_excel(writer, sheet_name='Fees Breakdown', index=False)
-                worksheet_fees = writer.sheets['Fees Breakdown']
-                worksheet_fees.set_column('B:D', 15, money_fmt)
+                # Ensure columns exist before selecting
+                cols = ['class_name', 'expected', 'collected', 'balance', 'percentage']
+                # Map to nice names
+                df_fees = df_fees[cols].rename(columns={
+                    'class_name': 'Class',
+                    'expected': 'Expected',
+                    'collected': 'Collected',
+                    'balance': 'Outstanding',
+                    'percentage': '% Outstanding'
+                })
+                df_fees.to_excel(writer, sheet_name='Fees Summary', startrow=6, index=False)
+                
+            worksheet = writer.sheets['Fees Summary']
+            worksheet.set_column('B:B', 20, money_fmt)
 
-            # Expenses Breakdown Sheet
+            # --- 2. Supplies Sheet ---
+            if supplies_breakdown:
+                df_sup_cat = pd.DataFrame(supplies_breakdown, columns=['Category', 'Amount', 'Percentage'])
+                df_sup_cat.to_excel(writer, sheet_name='Supplies', startrow=0, index=False)
+            
+            if supplies_details:
+                df_sup_det = pd.DataFrame(supplies_details)
+                df_sup_det.to_excel(writer, sheet_name='Supplies', startrow=len(supplies_breakdown) + 5, index=False)
+                
+            worksheet = writer.sheets['Supplies']
+            worksheet.set_column('B:B', 15, money_fmt)
+
+            # --- 3. Expenses Sheet ---
             if expenses_breakdown:
-                df_expenses = pd.DataFrame(expenses_breakdown, columns=['Category', 'Amount'])
-                df_expenses.to_excel(writer, sheet_name='Expenses Breakdown', index=False)
-                worksheet_exp = writer.sheets['Expenses Breakdown']
-                worksheet_exp.set_column('B:B', 15, money_fmt)
+                df_exp_cat = pd.DataFrame(expenses_breakdown, columns=['Category', 'Amount', 'Percentage'])
+                df_exp_cat.to_excel(writer, sheet_name='Expenses', startrow=0, index=False)
+            
+            if expenses_details:
+                df_exp_det = pd.DataFrame(expenses_details)
+                df_exp_det.to_excel(writer, sheet_name='Expenses', startrow=len(expenses_breakdown) + 5, index=False)
+                
+            worksheet = writer.sheets['Expenses']
+            worksheet.set_column('B:B', 15, money_fmt)

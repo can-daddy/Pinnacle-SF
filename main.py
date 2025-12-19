@@ -15,6 +15,7 @@ from matplotlib.figure import Figure
 from PyQt5.QtChart import *
 from PyQt5.QtPrintSupport import QPrinter
 from dashboard import Dashboard
+from reports_page import Reports
 
 
 
@@ -1613,7 +1614,7 @@ class Window(QMainWindow):
         self.FeesPage = Fees()
         self.UniformsPage = Uniforms()
         self.ExpensesPage = Expenditure()
-        # self.ReportsPage = Reports()
+        self.ReportsPage = Reports()
         self.AboutPage = About()
         self.AccountPage = Account()
         self.body.addWidget(self.DashboardPage)
@@ -1623,7 +1624,7 @@ class Window(QMainWindow):
         self.body.addWidget(self.ExpensesPage)
         self.body.addWidget(self.ClassPage)
         self.body.addWidget(self.AcademicYearTermPage)
-        # self.body.addWidget(self.ReportsPage)
+        self.body.addWidget(self.ReportsPage)
         self.body.addWidget(self.AboutPage)
         self.body.addWidget(self.AccountPage)
         self.body_layout = QVBoxLayout(self.body)
@@ -1647,7 +1648,7 @@ class Window(QMainWindow):
             "Expenditure": self.ExpensesPage,
             "Classes": self.ClassPage,
             "Academic Calendar": self.AcademicYearTermPage,
-            # "Reports": self.ReportsPage,
+            "Reports": self.ReportsPage,
             "About": self.AboutPage,
             "Account": self.AccountPage
         }

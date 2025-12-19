@@ -94,6 +94,32 @@ class FinanceService:
             data = c.fetchall()
             return [(row[0], row[1]) for row in data]
 
+    def get_expenses_by_category_with_percentage(self, start_date, end_date):
+        """Returns list of (CategoryName, Amount, Percentage) tuples."""
+        with get_db_connection() as (conn, c):
+            # First get total for percentage calculation
+            c.execute("""
+                SELECT SUM(ExpAmount) 
+                FROM Expenses 
+                WHERE ExpDate BETWEEN ? AND ?
+            """, (start_date, end_date))
+            total_expenses = c.fetchone()[0] or 0.0
+
+            if total_expenses == 0:
+                return []
+
+            c.execute("""
+                SELECT c.CatName, SUM(e.ExpAmount) as Amount
+                FROM Expenses e
+                JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE e.ExpDate BETWEEN ? AND ?
+                GROUP BY c.CatName
+                ORDER BY Amount DESC
+            """, (start_date, end_date))
+            data = c.fetchall()
+            return [(row['CatName'], row['Amount'], (row['Amount']/total_expenses)*100) for row in data]
+
     def get_outstanding_fees_by_class(self, term_id, limit=10):
         """Returns list of dictionaries with class_name, expected, collected, balance, percentage."""
         with get_db_connection() as (conn, c):
@@ -125,10 +151,16 @@ class FinanceService:
                     percent = (balance / expected * 100) if expected > 0 else 0
                     result.append({
                         "class_name": row['ClassName'],
+                        "expected": expected,
+                        "collected": collected,
                         "balance": balance,
                         "percentage": percent
                     })
             return result
+
+    def get_term_fees_breakdown_by_class(self, term_id):
+        """Returns list of dictionaries with class_name, expected, collected, balance, percentage."""
+        return self.get_outstanding_fees_by_class(term_id, limit=-1)
 
     def get_top_supplies(self, start_date, end_date, limit=5):
         """Returns list of (Name, Quantity, Cost) tuples."""
@@ -145,6 +177,76 @@ class FinanceService:
             
             data = c.fetchall()
             return [(row[0], row[1], row[2]) for row in data]
+
+    def get_supplies_by_category(self, start_date, end_date):
+        """Returns list of (CategoryName, Amount, Percentage) tuples."""
+        with get_db_connection() as (conn, c):
+            # First get total for percentage calculation
+            c.execute("""
+                SELECT SUM(si.Price)
+                FROM SuppliesInventory si
+                WHERE si.Type = 'In' AND si.Date BETWEEN ? AND ?
+            """, (start_date, end_date))
+            total_supplies = c.fetchone()[0] or 0.0
+
+            if total_supplies == 0:
+                return []
+
+            c.execute("""
+                SELECT c.CatName, SUM(si.Price) as Amount
+                FROM SuppliesInventory si
+                JOIN Supplies s ON si.Supplies_ID = s.SuppliesID
+                JOIN SubCategory sc ON s.Subcategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE si.Type = 'In' AND si.Date BETWEEN ? AND ?
+                GROUP BY c.CatName
+                ORDER BY Amount DESC
+            """, (start_date, end_date))
+            
+            data = c.fetchall()
+            return [(row['CatName'], row['Amount'], (row['Amount']/total_supplies)*100) for row in data]
+
+    def get_supplies_details(self, start_date, end_date):
+        """Returns list of dictionaries for detailed supplies report."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT si.Date, c.CatName, s.Name, si.Quantity, si.Price
+                FROM SuppliesInventory si
+                JOIN Supplies s ON si.Supplies_ID = s.SuppliesID
+                JOIN SubCategory sc ON s.Subcategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE si.Type = 'In' AND si.Date BETWEEN ? AND ?
+                ORDER BY si.Date DESC
+            """, (start_date, end_date))
+            
+            rows = c.fetchall()
+            return [{
+                'date': row['Date'],
+                'category': row['CatName'],
+                'item': row['Name'],
+                'quantity': row['Quantity'],
+                'cost': row['Price']
+            } for row in rows]
+
+    def get_expenses_details(self, start_date, end_date):
+        """Returns list of dictionaries for detailed expenses report."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT e.ExpDate, c.CatName, e.ExpDescription, e.ExpAmount
+                FROM Expenses e
+                JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE e.ExpDate BETWEEN ? AND ?
+                ORDER BY e.ExpDate DESC
+            """, (start_date, end_date))
+            
+            rows = c.fetchall()
+            return [{
+                'date': row['ExpDate'],
+                'category': row['CatName'],
+                'description': row['ExpDescription'],
+                'amount': row['ExpAmount']
+            } for row in rows]
 
     def get_all_terms(self):
         """Returns list of all terms ordered by ID desc."""
