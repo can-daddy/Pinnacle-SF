@@ -75,32 +75,12 @@ class Reports(QWidget):
         
         btn_pdf = QPushButton("Generate PDF Report")
         btn_pdf.setCursor(Qt.PointingHandCursor)
-        btn_pdf.setStyleSheet("""
-            QPushButton {
-                background-color: #E53E3E; 
-                color: white; 
-                padding: 12px 24px; 
-                font-weight: bold;
-                border-radius: 6px;
-                font-size: 14px;
-            }
-            QPushButton:hover { background-color: #C53030; }
-        """)
+        btn_pdf.setObjectName("largeDangerButton")
         btn_pdf.clicked.connect(self.export_pdf)
         
         btn_excel = QPushButton("Generate Excel Report")
         btn_excel.setCursor(Qt.PointingHandCursor)
-        btn_excel.setStyleSheet("""
-            QPushButton {
-                background-color: #38A169; 
-                color: white; 
-                padding: 12px 24px; 
-                font-weight: bold;
-                border-radius: 6px;
-                font-size: 14px;
-            }
-            QPushButton:hover { background-color: #2F855A; }
-        """)
+        btn_excel.setObjectName("largeSuccessButton")
         btn_excel.clicked.connect(self.export_excel)
         
         btn_layout.addWidget(btn_pdf)

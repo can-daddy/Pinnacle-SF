@@ -54,33 +54,8 @@ class StudentManagement(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
 
-        # Header for the entire page
-        header_layout = QHBoxLayout()
-        title = QLabel("Students Management")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
-
         # Tab widget to separate Students and Enrollments
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-            }
-            QTabBar::tab {
-                background: #F7FAFC;
-                border: 1px solid #E0E3E7;
-                border-bottom: none;
-                padding: 10px 20px;
-                min-width: 100px;
-            }
-            QTabBar::tab:selected {
-                background: #FFFFFF;
-                font-weight: bold;
-            }
-        """)
         self.students_tab = StudentsTab()
         self.enrollments_tab = EnrollmentsTab()
         self.tabs.addTab(self.students_tab, "Students Info")
@@ -90,70 +65,6 @@ class StudentManagement(QWidget):
 class StudentsTab(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("""
-            QLabel {
-                color: #2D3748;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QLineEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QComboBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QCheckBox {
-                spacing: 5px;
-                font-size: 14px;
-                color: #2D3748;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 3px;
-                border: 1px solid #E0E3E7;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #4299E1;
-                border: 1px solid #4299E1;
-            }
-            QTableWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-                gridline-color: #E0E3E7;
-                selection-background-color: #EDF2F7;
-            }
-            QTableWidget::item {
-                padding: 10px;
-                color: #2D3748;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 10px;
-                border: none;
-                border-bottom: 1px solid #E0E3E7;
-                font-weight: bold;
-                color: #4A5568;
-            }
-        """)
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
@@ -305,36 +216,58 @@ class StudentsTab(QWidget):
                 rows = c.fetchall()
                 
                 # Set column headers including Actions column
-                self.table.setColumnCount(8)  # 7 data columns + 1 actions column
+                self.table.setColumnCount(8) 
                 self.table.setHorizontalHeaderLabels([
                     "Student ID", "Student Name", "Fee Payer", "PayRate", 
                     "Parent Name", "Parent Contact", "Parent Contact2", "Actions"
                 ])
                 
-                # Configure column resize modes
+                # Configure column resize modes with optimized widths
                 header = self.table.horizontalHeader()
-                for col in range(7):  # First 7 columns are data
-                    header.setSectionResizeMode(col, QHeaderView.Stretch)
-                header.setSectionResizeMode(7, QHeaderView.Fixed)  # Actions column fixed width
-                header.resizeSection(7, 150)  # Wider width for action buttons
+                
+                # Set specific widths for columns
+                header.setSectionResizeMode(0, QHeaderView.Fixed)  # Student ID
+                header.resizeSection(0, 100)
+                
+                header.setSectionResizeMode(1, QHeaderView.Stretch)  # Student Name
+                
+                header.setSectionResizeMode(2, QHeaderView.Fixed)  # Fee Payer
+                header.resizeSection(2, 120)
+                
+                header.setSectionResizeMode(3, QHeaderView.Fixed)  # PayRate
+                header.resizeSection(3, 80)
+                
+                header.setSectionResizeMode(4, QHeaderView.Stretch)  # Parent Name
+                
+                header.setSectionResizeMode(5, QHeaderView.Fixed)  # Parent Contact
+                header.resizeSection(5, 130)
+                
+                header.setSectionResizeMode(6, QHeaderView.Fixed)  # Parent Contact2
+                header.resizeSection(6, 130)
+                
+                # Actions column - Fixed width to ensure combobox fits perfectly
+                header.setSectionResizeMode(7, QHeaderView.Fixed)
+                header.resizeSection(7, 160)  # Ensure enough space for combobox
                 
                 self.table.setRowCount(0)
                 for row_data in rows:
                     row = self.table.rowCount()
                     self.table.insertRow(row)
+                    self.table.setRowHeight(row, 36)
                     
                     # Add data columns
                     for col, data in enumerate(row_data):
                         item = QTableWidgetItem(str(data) if data else "")
-                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make non-editable
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                         self.table.setItem(row, col, item)
                     
-                    # Create actions widget with proper sizing
+                    # Create action buttons widget
+                    student_id = row_data[0]
+                    
                     actions_widget = QWidget()
-                    actions_widget.setFixedWidth(140)  # Fixed width for the widget
                     actions_layout = QHBoxLayout(actions_widget)
-                    actions_layout.setContentsMargins(5, 2, 5, 2)  # Reduced margins
-                    actions_layout.setSpacing(8)  # Slightly more spacing
+                    actions_layout.setContentsMargins(2, 2, 2, 2)
+                    actions_layout.setSpacing(4)
                     
                     # Edit button with fixed size
                     edit_btn = QPushButton("Edit")
@@ -382,14 +315,15 @@ class StudentsTab(QWidget):
                     actions_layout.addWidget(delete_btn)
                     actions_layout.addStretch()
                     
-                    # Set the widget in the Actions column (column 7)
+                    # Set the widget
                     self.table.setCellWidget(row, 7, actions_widget)
-                    
-                    # Set row height to accommodate buttons
-                    self.table.setRowHeight(row, 40)
                 
+                # Update results count
                 count = self.table.rowCount()
                 self.results_label.setText(f"{count} results")
+                
+                # Ensure column widths are applied properly
+                self.table.horizontalHeader().setStretchLastSection(False)
                 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
@@ -477,55 +411,6 @@ class StudentsTab(QWidget):
 class EnrollmentsTab(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("""
-            QLabel {
-                color: #2D3748;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QLineEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QComboBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QTableWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-                gridline-color: #E0E3E7;
-                selection-background-color: #EDF2F7;
-            }
-            QTableWidget::item {
-                padding: 10px;
-                color: #2D3748;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 10px;
-                border: none;
-                border-bottom: 1px solid #E0E3E7;
-                font-weight: bold;
-                color: #4A5568;
-            }
-        """)
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
@@ -700,7 +585,7 @@ class EnrollmentsTab(QWidget):
                     actions_widget = QWidget()
                     actions_widget.setFixedWidth(210)  # Increased width for 3 buttons
                     actions_layout = QHBoxLayout(actions_widget)
-                    actions_layout.setContentsMargins(5, 2, 5, 2)
+                    actions_layout.setContentsMargins(0, 0, 0, 0)
                     actions_layout.setSpacing(5)
                     
                     # Pay Fee button
@@ -769,10 +654,8 @@ class EnrollmentsTab(QWidget):
                     actions_layout.addWidget(pay_btn)
                     actions_layout.addWidget(edit_btn)
                     actions_layout.addWidget(delete_btn)
-                    actions_layout.addStretch()
                     
-                    # Set the widget in the Actions column (column 5)
-                    self.table.setCellWidget(row, 5, actions_widget)
+                    self.table.setCellWidget(row, 6, actions_widget)
                     
                     # Set row height to accommodate buttons
                     self.table.setRowHeight(row, 40)
@@ -1737,74 +1620,6 @@ class Window(QMainWindow):
 class AcademicYearTerm(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("""
-            QLabel {
-                color: #2D3748;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QLineEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QComboBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QTableWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-                gridline-color: #E0E3E7;
-                selection-background-color: #0c3157;
-            }
-            QTableWidget::item {
-                padding: 10px;
-                color: #2D3748;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 10px;
-                border: none;
-                border-bottom: 1px solid #E0E3E7;
-                font-weight: bold;
-                color: #4A5568;
-            }
-            QTableWidget QPushButton {
-                background-color: transparent;
-                color: #4299E1;
-                padding: 5px 10px;
-                border: 1px solid #4299E1;
-                border-radius: 3px;
-                font-size: 12px;
-            }
-            QTableWidget QPushButton:hover {
-                background-color: #EDF2F7;
-            }
-            QTableWidget QPushButton#delete {
-                color: #E53E3E;
-                border: 1px solid #E53E3E;
-            }
-            QTableWidget QPushButton#delete:hover {
-                background-color: #FED7D7;
-            }
-        """)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
@@ -1817,27 +1632,8 @@ class AcademicYearTerm(QWidget):
         header_layout.addStretch()
         # Action ComboBox for Academic Year
         self.year_action_combo = QComboBox()
-        self.year_action_combo.setStyleSheet("""
-            QComboBox {
-            background-color: #4299E1;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 5px;
-            font-size: 14px;
-            }
-            QComboBox::drop-down {
-            border: none;
-            }
-            QComboBox QAbstractItemView {
-            background-color: #FFFFFF;
-            border: 1px solid #E0E3E7;
-            selection-background-color: #EDF2F7;
-            color: #2D3748;
-            font-size: 14px;
-            }
-        """)
-        self.year_action_combo.addItem("Year ▼", None)
+        
+        self.year_action_combo.addItem("Year", None)
         self.year_action_combo.addItem("Add Year", "add")
         self.year_action_combo.addItem("Edit Year", "edit")
         self.year_action_combo.addItem("Delete Year", "delete")
@@ -1897,8 +1693,7 @@ class AcademicYearTerm(QWidget):
         # Add Load data
         self.Load_Data()
         self.update_results_count()
-    
-        
+            
     def Load_Data(self):
         try:
             with get_db_connection() as (conn, c):
@@ -2712,74 +2507,6 @@ class AcademicYearTerm(QWidget):
 class Class(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("""
-            QLabel {
-            color: #2D3748;
-            }
-            QPushButton {
-            background-color: #4299E1;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 5px;
-            font-size: 14px;
-            }
-            QPushButton:hover {
-            background-color: #3182CE;
-            }
-            QLineEdit {
-            background-color: #FFFFFF;
-            border: 1px solid #E0E3E7;
-            padding: 8px;
-            border-radius: 5px;
-            font-size: 14px;
-            }
-            QComboBox {
-            background-color: #FFFFFF;
-            border: 1px solid #E0E3E7;
-            padding: 8px;
-            border-radius: 5px;
-            font-size: 14px;
-            }
-            QTableWidget {
-            background-color: #FFFFFF;
-            border: 1px solid #E0E3E7;
-            border-radius: 5px;
-            gridline-color: #E0E3E7;
-            selection-background-color: #0c3157;
-            }
-            QTableWidget::item {
-            padding: 10px;
-            color: #2D3748;
-            }
-            QHeaderView::section {
-            background-color: #F7FAFC;
-            padding: 10px;
-            border: none;
-            border-bottom: 1px solid #E0E3E7;
-            font-weight: bold;
-            color: #4A5568;
-            }
-            QTableWidget QPushButton {
-            background-color: transparent;
-            color: #4299E1;
-            padding: 5px 10px;
-            border: 1px solid #4299E1;
-            border-radius: 3px;
-            font-size: 12px;
-            }
-            QTableWidget QPushButton:hover {
-            background-color: #EDF2F7;
-            }
-            QTableWidget QPushButton#delete {
-            color: #E53E3E;
-            border: 1px solid #E53E3E;
-            }
-            QTableWidget QPushButton#delete:hover {
-            background-color: #FED7D7;
-            }
-        """)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
@@ -3149,130 +2876,23 @@ class Class(QWidget):
 class Fees(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("""
-            QLabel {
-                color: #2D3748;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QPushButton#nav_btn {
-                background-color: transparent;
-                color: #4299E1;
-                padding: 5px 10px;
-                font-size: 16px;
-            }
-            QPushButton#nav_btn:selected {
-                background-color: #EDF2F7;
-                font-weight: bold;
-            }
-            QLineEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QComboBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QCheckBox {
-                spacing: 5px;
-                font-size: 14px;
-                color: #2D3748;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 3px;
-                border: 1px solid #E0E3E7;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #4299E1;
-                border: 1px solid #4299E1;
-            }
-            QTableWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-                gridline-color: #E0E3E7;
-                selection-background-color: #EDF2F7;
-            }
-            QTableWidget::item {
-                padding: 10px;
-                color: #2D3748;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 10px;
-                border: none;
-                border-bottom: 1px solid #E0E3E7;
-                font-weight: bold;
-                color: #4A5568;
-            }
-        """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
-
-        # Navigation links
-        nav_layout = QHBoxLayout()
-        nav_layout.setSpacing(20)
-        self.management_btn = QPushButton("Fees Management")
-        self.management_btn.setObjectName("nav_btn")
-        self.management_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
-        self.payment_btn = QPushButton("Fees Payment Insight")
-        self.payment_btn.setObjectName("nav_btn")
-        self.payment_btn.clicked.connect(lambda: self.stack.setCurrentIndex(1))
-        self.rawFeePayments = QPushButton("Payments History")
-        self.rawFeePayments.setObjectName("nav_btn")
-        self.rawFeePayments.clicked.connect(lambda: self.stack.setCurrentIndex(2))
-        nav_layout.addWidget(self.management_btn)
-        nav_layout.addWidget(self.payment_btn)
-        nav_layout.addWidget(self.rawFeePayments)
-        nav_layout.addStretch()
-        layout.addLayout(nav_layout)
-
-        # Stacked widget for sub-pages
-        self.stack = QStackedWidget()
-        self.management_page = FeesManagementPage()
-        self.payment_page = FeesPaymentPage()
-        self.PaymentHistoryPage = PaymentHistoryPage()
-        self.stack.addWidget(self.management_page)
-        self.stack.addWidget(self.payment_page)
-        self.stack.addWidget(self.PaymentHistoryPage)
-        layout.addWidget(self.stack)
-
-        # Initial selection
-        self.management_btn.setStyleSheet("font-weight: bold; background-color: #EDF2F7;")
-        self.stack.setCurrentIndex(0)
+        Tab = QTabWidget()
+        self.Feesmanagement = FeesManagementPage()
+        Tab.addTab(self.Feesmanagement,"Fees")
+        self.FeesPayment = FeesPaymentPage()
+        Tab.addTab(self.FeesPayment,"Payment")
+        self.PaymentHistory = PaymentHistoryPage()
+        Tab.addTab(self.PaymentHistory,"History")
+        layout.addWidget(Tab)
 
 class FeesManagementPage(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
-
-        # Header
-        header_layout = QHBoxLayout()
-        title = QLabel("Fees Management")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
-
         # Filters and add buttons
         filter_layout = QHBoxLayout()
         search_input = QLineEdit()
@@ -3361,7 +2981,7 @@ class FeesManagementPage(QWidget):
                     # Add action buttons - pass FeesID for edit/delete operations
                     fees_id = row_data[0]  # First column is FeesID
                     self.add_action_buttons(row, fees_id)
-                
+                    self.table.setRowHeight(row, 40)
                 # Update results count
                 count = self.table.rowCount()
                 if hasattr(self, 'results_label'):
@@ -3379,7 +2999,7 @@ class FeesManagementPage(QWidget):
         """Add edit and delete buttons to table row for fees"""
         actions_widget = QWidget()
         actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(5, 5, 5, 5)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(5)
         
         # Edit button
@@ -3665,13 +3285,6 @@ class FeesPaymentPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
-        # Header
-        header_layout = QHBoxLayout()
-        title = QLabel("Fees Payment")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
 
         # Filters
         filter_layout = QHBoxLayout()
@@ -3733,8 +3346,10 @@ class FeesPaymentPage(QWidget):
         ])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        layout.addWidget(self.table)
-        
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)        
         # Load initial data
         self.load_data()
 
@@ -3871,6 +3486,9 @@ class FeesPaymentPage(QWidget):
                     )
                     
                     self.table.setCellWidget(row, 7, history_btn)
+                    self.table.setRowHeight(row,40)
+                    
+
                 
         except Exception as e:
             print(f"Error loading data: {e}")
@@ -4229,11 +3847,14 @@ class FeesPaymentPage(QWidget):
                         amount_paid = float(amount_to_pay_str)
                         
                         # Basic validations
-                        if amount_paid <= 0:
-                            errors.append(f"Row {row}: Amount must be greater than zero.")
+                        if amount_paid < 0:
+                            errors.append(f"Row {row}: Amount must not be less than zero.")
                             continue
                         if not transaction_date:
                             errors.append(f"Row {row}: Transaction date required.")
+                            continue
+                        if reference_number is None:
+                            errors.append(f"Row {row}: Reference number required.")
                             continue
                         
                         # Real-time DB fetch and validations
@@ -4402,10 +4023,11 @@ class PaymentHistoryPage(QWidget):
             "Payment ID", "Student", "Student ID", "Class", "Term", 
             "Year", "Amount Paid", "Transaction Date", "Reference", "Recorded On"
         ])
+        
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSortingEnabled(True)
-        
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
         # Set column widths
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Payment ID
@@ -4538,6 +4160,7 @@ class PaymentHistoryPage(QWidget):
                                 item.setForeground(QColor(0, 100, 0))  # Dark green
                         
                         self.table.setItem(row_idx, col_idx, item)
+                    self.table.setRowHeight(row_idx, 40)    
                 
                 # Update summary
                 self.summary_label.setText(
@@ -4805,41 +4428,6 @@ class UniformDialog(QDialog):
 class UniformDashBoard(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("""
-            QLabel {
-                color: #2D3748;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QTableWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-                gridline-color: #E0E3E7;
-                selection-background-color: #EDF2F7;
-            }
-            QTableWidget::item {
-                padding: 10px;
-                color: #2D3748;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 10px;
-                border: none;
-                border-bottom: 1px solid #E0E3E7;
-                font-weight: bold;
-                color: #4A5568;
-            }
-        """)
         main_layout = QHBoxLayout(self)
         main_layout.setSpacing(20)
 
@@ -7186,12 +6774,16 @@ class Account(QWidget):
         layout.addStretch()                    
 
 if __name__ == "__main__":
-    palette = QPalette()
-    palette.setColor(QPalette.Base, QColor("white"))       # text input / table background
-    palette.setColor(QPalette.Window, QColor("white"))     # general background
-    palette.setColor(QPalette.AlternateBase, QColor("#f9f9f9"))  # alt row bg
     app = QApplication(sys.argv)
-    app.setPalette(palette)
+    
+    # Load global stylesheet
+    try:
+        with open("theme.qss", "r") as f:
+            stylesheet = f.read()
+            app.setStyleSheet(stylesheet)
+    except FileNotFoundError:
+        print("Warning: theme.qss not found. Running without global stylesheet.")
+    
     window = Window()
     print("Application opened.")
     window.show()
