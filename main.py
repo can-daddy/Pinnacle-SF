@@ -5989,66 +5989,224 @@ class ReportGenerator(QWidget):
         self.expense_chart_view.setChart(chart)
 
     def export_pdf(self):
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        
         file_path, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
         if not file_path:
             return
 
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName(file_path)
-
-        doc = QTextDocument()
-        html = """
-        <style>
-            body { font-family: 'Segoe UI', Arial, sans-serif; color: #2D3748; }
-            h1 { color: #1A365D; text-align: center; margin-bottom: 20px; }
-            h2 { color: #2B6CB0; border-bottom: 2px solid #E2E8F0; padding-bottom: 5px; margin-top: 20px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            th { background-color: #F7FAFC; padding: 8px; text-align: left; border-bottom: 2px solid #E2E8F0; color: #4A5568; }
-            td { padding: 8px; border-bottom: 1px solid #E2E8F0; }
-            .summary { margin: 20px 0; padding: 15px; background-color: #F7FAFC; border-radius: 5px; }
-            .summary-item { margin-bottom: 5px; font-size: 14px; }
-        </style>
-        """
-        
-        html += f"<h1>Uniforms Report</h1>"
-        html += f"<p style='text-align: center; color: #718096;'>Period: {self.from_date.text()} to {self.to_date.text()}</p>"
-        
-        # Summary Section
-        html += "<div class='summary'>"
-        html += f"<div class='summary-item'><b>Current Stock Value:</b> {self.card_stock_value.value_label.text()}</div>"
-        html += f"<div class='summary-item'><b>Total Stock In:</b> {self.card_stock_in.value_label.text()}</div>"
-        html += f"<div class='summary-item'><b>Total Stock Out:</b> {self.card_stock_out.value_label.text()}</div>"
-        html += f"<div class='summary-item'><b>Total Expenses:</b> {self.card_expenses.value_label.text()}</div>"
-        html += "</div>"
-
-        # Procurement Table
-        html += "<h2>Procurement List (Stock In)</h2>"
-        html += "<table><tr><th>Supplier</th><th>Item</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>"
-        for row in range(self.procurement_table.rowCount()):
-            html += "<tr>"
-            for col in range(5):
-                item = self.procurement_table.item(row, col)
-                html += f"<td>{item.text() if item else ''}</td>"
-            html += "</tr>"
-        html += "</table>"
-
-        # Expense Table
-        html += "<h2>Expense List</h2>"
-        html += "<table><tr><th>Category</th><th>Total Amount</th></tr>"
-        for row in range(self.expense_table.rowCount()):
-            html += "<tr>"
-            for col in range(2):
-                item = self.expense_table.item(row, col)
-                html += f"<td>{item.text() if item else ''}</td>"
-            html += "</tr>"
-        html += "</table>"
-        
-        html += f"<p style='margin-top: 30px; font-size: 10px; color: #A0AEC0; text-align: center;'>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
-
-        doc.setHtml(html)
-        doc.print_(printer)
-        QMessageBox.information(self, "Success", "PDF exported successfully")
+        try:
+            from_date = self.from_date.date().toString("yyyy-MM-dd")
+            to_date = self.to_date.date().toString("yyyy-MM-dd")
+            
+            doc = SimpleDocTemplate(file_path, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+            styles = getSampleStyleSheet()
+            story = []
+            
+            # Custom Styles
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=24,
+                textColor=colors.HexColor('#1A365D'),
+                spaceAfter=6,
+                alignment=1
+            )
+            
+            heading_style = ParagraphStyle(
+                'CustomHeading',
+                parent=styles['Heading2'],
+                fontSize=14,
+                textColor=colors.HexColor('#2C5282'),
+                spaceAfter=12,
+                spaceBefore=12,
+                textTransform='uppercase'
+            )
+            
+            normal_style = styles['Normal']
+            normal_style.fontSize = 11
+            
+            # --- HEADER ---
+            story.append(Paragraph("Uniform Stock Report", title_style))
+            story.append(Paragraph(f"<b>Period:</b> {from_date} to {to_date}", normal_style))
+            story.append(Spacer(1, 0.3*inch))
+            
+            # --- SECTION 1: SUMMARY ---
+            story.append(Paragraph("1. Summary Overview", heading_style))
+            
+            summary_data = [
+                ['Metric', 'Value'],
+                ['Current Stock Value', self.card_stock_value.value_label.text()],
+                ['Stock In (Period)', self.card_stock_in.value_label.text()],
+                ['Stock Out (Period)', self.card_stock_out.value_label.text()],
+                ['Total Expenses (Period)', self.card_expenses.value_label.text()],
+            ]
+            
+            summary_table = Table(summary_data, colWidths=[3*inch, 2*inch])
+            summary_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C5282')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#CBD5E0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F7FAFC')]),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            story.append(summary_table)
+            story.append(Spacer(1, 0.3*inch))
+            
+            # --- SECTION 2: CURRENT STOCK ---
+            story.append(Paragraph("2. Current Stock Details by Item", heading_style))
+            
+            stock_data = [['Uniform Item', 'Qty', 'Unit Price', 'Stock Value']]
+            total_stock = 0
+            
+            try:
+                with get_db_connection() as (conn, cur):
+                    cur.execute("""
+                        SELECT UniformName, Quantity, UniformPrice, (Quantity * UniformPrice)
+                        FROM Uniform
+                        ORDER BY UniformName
+                    """)
+                    for name, qty, price, value in cur.fetchall():
+                        qty = qty or 0
+                        price = price or 0
+                        value = value or 0
+                        total_stock += value
+                        stock_data.append([name, str(qty), f"{price:,.2f}", f"{value:,.2f}"])
+                    
+                    stock_data.append(['TOTAL', '', '', f"{total_stock:,.2f}"])
+            except Exception as e:
+                stock_data.append(['Error', str(e), '', ''])
+            
+            stock_table = Table(stock_data, colWidths=[2.5*inch, 0.8*inch, 1.2*inch, 1.5*inch])
+            stock_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C5282')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#CBD5E0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#F7FAFC')]),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#EDF2F7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            story.append(stock_table)
+            story.append(Spacer(1, 0.3*inch))
+            
+            # --- SECTION 3: INVENTORY MOVEMENT ---
+            story.append(Paragraph("3. Inventory Movement (Purchases & Sales)", heading_style))
+            
+            inv_data = [['Reference', 'Item', 'Type', 'Qty', 'Unit Price', 'Total Value', 'Date']]
+            
+            try:
+                with get_db_connection() as (conn, cur):
+                    cur.execute(f"""
+                        SELECT ReferencesNotes, UniformName, Type, ui.Quantity, Price, (ui.Quantity * Price), Date
+                        FROM UniformInventory ui
+                        JOIN Uniform u ON ui.UniformID = u.UniformId 
+                        WHERE Date BETWEEN '{from_date}' AND '{to_date}'
+                        ORDER BY Date DESC
+                    """)
+                    for ref, name, itype, qty, price, value, date in cur.fetchall():
+                        inv_data.append([
+                            ref if ref else '-',
+                            name,
+                            itype,
+                            str(qty),
+                            f"{price:,.2f}",
+                            f"{value:,.2f}",
+                            date
+                        ])
+            except Exception as e:
+                inv_data.append(['Error', str(e), '', '', '', '', ''])
+            
+            inv_table = Table(inv_data, colWidths=[0.9*inch, 1.5*inch, 0.7*inch, 0.6*inch, 0.9*inch, 1.0*inch, 0.9*inch])
+            inv_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C5282')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (3, 0), (-1, -1), 'RIGHT'),
+                ('ALIGN', (0, 0), (2, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#CBD5E0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F7FAFC')]),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(inv_table)
+            story.append(Spacer(1, 0.3*inch))
+            
+            # --- SECTION 4: EXPENSES ---
+            story.append(Paragraph("4. Expenses Details", heading_style))
+            
+            exp_data = [['Category', 'Amount', '% of Total']]
+            total_expenses = 0
+            
+            try:
+                with get_db_connection() as (conn, cur):
+                    cur.execute(f"""
+                        SELECT sc.SubCategoryName, SUM(ue.U_ExpAmount)
+                        FROM UniformExpenses ue
+                        JOIN SubCategory sc ON ue.U_SubCategory = sc.SubCatID
+                        WHERE ue.U_ExpDate BETWEEN '{from_date}' AND '{to_date}'
+                        GROUP BY sc.SubCategoryName
+                        ORDER BY SUM(ue.U_ExpAmount) DESC
+                    """)
+                    expense_list = cur.fetchall()
+                    total_expenses = sum(amount for _, amount in expense_list) if expense_list else 0
+                    
+                    for category, amount in expense_list:
+                        percentage = (amount / total_expenses * 100) if total_expenses > 0 else 0
+                        exp_data.append([category, f"{amount:,.2f}", f"{percentage:.1f}%"])
+                    
+                    exp_data.append(['TOTAL EXPENSES', f"{total_expenses:,.2f}", '100.0%'])
+            except Exception as e:
+                exp_data.append(['Error', str(e), ''])
+            
+            exp_table = Table(exp_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
+            exp_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C5282')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#CBD5E0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#F7FAFC')]),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#FFE5B4')),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            story.append(exp_table)
+            story.append(Spacer(1, 0.5*inch))
+            
+            # --- FOOTER ---
+            footer_style = ParagraphStyle(
+                'Footer',
+                parent=styles['Normal'],
+                fontSize=9,
+                textColor=colors.HexColor('#718096'),
+                alignment=1
+            )
+            story.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", footer_style))
+            story.append(Paragraph("School Finance MIS — System-managed data only", footer_style))
+            
+            doc.build(story)
+            QMessageBox.information(self, "Success", "PDF Report exported successfully!")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to export PDF: {str(e)}")
 
     def export_excel(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Excel", "", "Excel Files (*.xlsx)")
@@ -6056,85 +6214,389 @@ class ReportGenerator(QWidget):
             return
 
         try:
+            from_date = self.from_date.date().toString("yyyy-MM-dd")
+            to_date = self.to_date.date().toString("yyyy-MM-dd")
+            
             wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Uniform Report"
             
-            # Styles
-            header_font = Font(bold=True, color="FFFFFF")
-            header_fill = PatternFill(start_color="1A365D", end_color="1A365D", fill_type="solid")
+            # Remove default sheet and create our sheets
+            wb.remove(wb.active)
             
-            row = 1
-            ws.cell(row, 1, "Uniforms Report").font = Font(size=16, bold=True, color="1A365D")
-            row += 1
-            ws.cell(row, 1, f"Period: {self.from_date.text()} to {self.to_date.text()}")
-            row += 2
+            # Sheet 1: Summary
+            ws_summary = wb.create_sheet("Summary", 0)
+            ws_summary = self._create_summary_sheet(ws_summary, from_date, to_date)
             
-            # Summary
-            ws.cell(row, 1, "Summary").font = Font(bold=True, size=12)
-            row += 1
-            ws.cell(row, 1, "Current Stock Value"); ws.cell(row, 2, self.card_stock_value.value_label.text())
-            row += 1
-            ws.cell(row, 1, "Total Stock In"); ws.cell(row, 2, self.card_stock_in.value_label.text())
-            row += 1
-            ws.cell(row, 1, "Total Stock Out"); ws.cell(row, 2, self.card_stock_out.value_label.text())
-            row += 1
-            ws.cell(row, 1, "Total Expenses"); ws.cell(row, 2, self.card_expenses.value_label.text())
-            row += 2
+            # Sheet 2: Current Stock
+            ws_stock = wb.create_sheet("Current Stock", 1)
+            ws_stock = self._create_stock_sheet(ws_stock)
             
-            # Procurement
-            ws.cell(row, 1, "Procurement List").font = Font(bold=True, size=12)
-            row += 1
-            headers = ["Supplier", "Item", "Qty", "Unit Price", "Total"]
-            for col, h in enumerate(headers, 1):
-                cell = ws.cell(row, col, h)
-                cell.font = header_font
-                cell.fill = header_fill
-            row += 1
+            # Sheet 3: Inventory Movement
+            ws_inventory = wb.create_sheet("Inventory Movement", 2)
+            ws_inventory = self._create_inventory_sheet(ws_inventory, from_date, to_date)
             
-            for r in range(self.procurement_table.rowCount()):
-                for c in range(5):
-                    val = self.procurement_table.item(r, c).text()
-                    ws.cell(row, c+1, val)
-                row += 1
-            row += 2
+            # Sheet 4: Expenses
+            ws_expenses = wb.create_sheet("Expenses", 3)
+            ws_expenses = self._create_expenses_sheet(ws_expenses, from_date, to_date)
             
-            # Expenses
-            ws.cell(row, 1, "Expense List").font = Font(bold=True, size=12)
-            row += 1
-            headers = ["Category", "Total Amount"]
-            for col, h in enumerate(headers, 1):
-                cell = ws.cell(row, col, h)
-                cell.font = header_font
-                cell.fill = header_fill
-            row += 1
-            
-            for r in range(self.expense_table.rowCount()):
-                for c in range(2):
-                    val = self.expense_table.item(r, c).text()
-                    ws.cell(row, c+1, val)
-                row += 1
-                
             wb.save(file_path)
-            QMessageBox.information(self, "Success", "Excel exported successfully")
+            QMessageBox.information(self, "Success", "Excel Report exported successfully!\n\nFile: " + file_path)
+            
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to export Excel: {str(e)}")
 
-            val = self.expense_table.item(r, c).text()
-            try:
-                ws.cell(row, c+1, float(val[1:]) if c == 1 else val)  # Remove  for amount
-            except ValueError:
-                ws.cell(row, c+1, val)
+    def _create_summary_sheet(self, ws, from_date, to_date):
+        """Create Summary sheet with overview"""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
+        # Styles
+        title_font = Font(size=18, bold=True, color="FFFFFF")
+        title_fill = PatternFill(start_color="1A365D", end_color="1A365D", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_fill = PatternFill(start_color="2C5282", end_color="2C5282", fill_type="solid")
+        summary_fill = PatternFill(start_color="EDF2F7", end_color="EDF2F7", fill_type="solid")
+        border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                    top=Side(style='thin'), bottom=Side(style='thin'))
+        
+        # Title
+        ws.merge_cells('A1:D1')
+        title_cell = ws['A1']
+        title_cell.value = "Uniform Stock Report - Summary"
+        title_cell.font = title_font
+        title_cell.fill = title_fill
+        title_cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[1].height = 30
+        
+        # Period
+        ws.merge_cells('A2:D2')
+        period_cell = ws['A2']
+        period_cell.value = f"Report Period: {from_date} to {to_date}"
+        period_cell.font = Font(size=11, color="718096")
+        period_cell.alignment = Alignment(horizontal='center')
+        
+        # Summary Section
+        ws.merge_cells('A4:D4')
+        summary_header = ws['A4']
+        summary_header.value = "SUMMARY OVERVIEW"
+        summary_header.font = header_font
+        summary_header.fill = header_fill
+        
+        # Summary Data
+        row = 6
+        summary_items = [
+            ("Current Stock Value", self.card_stock_value.value_label.text()),
+            ("Total Stock In (Period)", self.card_stock_in.value_label.text()),
+            ("Total Stock Out (Period)", self.card_stock_out.value_label.text()),
+            ("Total Expenses (Period)", self.card_expenses.value_label.text()),
+        ]
+        
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['B'].width = 25
+        
+        for label, value in summary_items:
+            ws[f'A{row}'] = label
+            ws[f'A{row}'].font = Font(bold=True, size=11)
+            ws[f'B{row}'] = value
+            ws[f'B{row}'].font = Font(size=11)
+            ws[f'B{row}'].fill = summary_fill
+            ws[f'B{row}'].alignment = Alignment(horizontal='right')
+            ws[f'A{row}'].border = border
+            ws[f'B{row}'].border = border
             row += 1
+        
+        # Generated date
+        ws.merge_cells('A13:D13')
+        footer = ws['A13']
+        footer.value = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        footer.font = Font(size=9, italic=True, color="A0AEC0")
+        footer.alignment = Alignment(horizontal='center')
+        
+        return ws
 
-        # Add footer
-        row += 2
-        export_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ws.cell(row, 1, f"Generated by Grok Report System on {export_date}").alignment = Alignment(horizontal='center')
-        ws.merge_cells(f'A{row}:E{row}')
+    def _create_stock_sheet(self, ws):
+        """Create Current Stock Details sheet"""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_fill = PatternFill(start_color="2C5282", end_color="2C5282", fill_type="solid")
+        total_fill = PatternFill(start_color="E8EFFB", end_color="E8EFFB", fill_type="solid")
+        border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                    top=Side(style='thin'), bottom=Side(style='thin'))
+        
+        # Title
+        ws.merge_cells('A1:D1')
+        title = ws['A1']
+        title.value = "Current Stock Details by Item"
+        title.font = Font(size=14, bold=True, color="1A365D")
+        title.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[1].height = 25
+        
+        # Headers
+        headers = ["Uniform Item", "Current Qty", "Unit Price", "Stock Value"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=3, column=col)
+            cell.value = header
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+        
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['B'].width = 15
+        ws.column_dimensions['C'].width = 15
+        ws.column_dimensions['D'].width = 18
+        ws.row_dimensions[3].height = 20
+        
+        # Data
+        try:
+            with get_db_connection() as (conn, cur):
+                cur.execute("""
+                    SELECT UniformName, Quantity, UniformPrice, (Quantity * UniformPrice)
+                    FROM Uniform
+                    ORDER BY UniformName
+                """)
+                items = cur.fetchall()
+                
+                row = 4
+                total_value = 0
+                
+                for name, qty, price, value in items:
+                    ws.cell(row, 1).value = name
+                    ws.cell(row, 2).value = qty if qty else 0
+                    ws.cell(row, 3).value = price if price else 0
+                    ws.cell(row, 4).value = value if value else 0
+                    
+                    ws.cell(row, 2).alignment = Alignment(horizontal='center')
+                    ws.cell(row, 3).alignment = Alignment(horizontal='right')
+                    ws.cell(row, 4).alignment = Alignment(horizontal='right')
+                    ws.cell(row, 3).number_format = '#,##0.00'
+                    ws.cell(row, 4).number_format = '#,##0.00'
+                    
+                    for col in range(1, 5):
+                        ws.cell(row, col).border = border
+                    
+                    total_value += value if value else 0
+                    row += 1
+                
+                # Total Row
+                ws.cell(row, 1).value = "TOTAL"
+                ws.cell(row, 1).font = Font(bold=True, size=11)
+                ws.cell(row, 4).value = total_value
+                ws.cell(row, 4).font = Font(bold=True, size=11)
+                ws.cell(row, 4).number_format = '#,##0.00'
+                ws.cell(row, 4).alignment = Alignment(horizontal='right')
+                
+                for col in range(1, 5):
+                    ws.cell(row, col).fill = total_fill
+                    ws.cell(row, col).border = border
+        
+        except Exception as e:
+            ws['A4'] = f"Error loading data: {str(e)}"
+        
+        return ws
 
-        wb.save(file_path)
-        QMessageBox.information(self, "Success", "Excel exported successfully")#### This is End of the Uniforms  ####
+    def _create_inventory_sheet(self, ws, from_date, to_date):
+        """Create Inventory Movement sheet (Purchases & Sales)"""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
+        header_font = Font(bold=True, color="FFFFFF", size=10)
+        header_fill = PatternFill(start_color="2C5282", end_color="2C5282", fill_type="solid")
+        in_fill = PatternFill(start_color="D4EDDA", end_color="D4EDDA", fill_type="solid")
+        out_fill = PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid")
+        border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                    top=Side(style='thin'), bottom=Side(style='thin'))
+        
+        # Title
+        ws.merge_cells('A1:G1')
+        title = ws['A1']
+        title.value = "Inventory Movement (Purchases & Sales)"
+        title.font = Font(size=14, bold=True, color="1A365D")
+        title.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[1].height = 25
+        
+        # Period
+        ws.merge_cells('A2:G2')
+        period = ws['A2']
+        period.value = f"Period: {from_date} to {to_date}"
+        period.font = Font(size=10, italic=True)
+        period.alignment = Alignment(horizontal='center')
+        
+        # Headers
+        headers = ["Reference", "Uniform Item", "Type", "Quantity", "Unit Price", "Total Value", "Date"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=4, column=col)
+            cell.value = header
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+        
+        ws.column_dimensions['A'].width = 20
+        ws.column_dimensions['B'].width = 25
+        ws.column_dimensions['C'].width = 10
+        ws.column_dimensions['D'].width = 12
+        ws.column_dimensions['E'].width = 12
+        ws.column_dimensions['F'].width = 15
+        ws.column_dimensions['G'].width = 15
+        ws.row_dimensions[4].height = 20
+        
+        # Data
+        try:
+            with get_db_connection() as (conn, cur):
+                cur.execute(f"""
+                    SELECT ReferencesNotes, UniformName, Type, ui.Quantity, Price, (ui.Quantity * Price), Date
+                    FROM UniformInventory ui
+                    JOIN Uniform u ON ui.UniformID = u.UniformId 
+                    WHERE Date BETWEEN '{from_date}' AND '{to_date}'
+                    ORDER BY Date DESC
+                """)
+                items = cur.fetchall()
+                
+                row = 5
+                total_in = 0
+                total_out = 0
+                
+                for ref, name, itype, qty, price, value, date in items:
+                    ws.cell(row, 1).value = ref if ref else "-"
+                    ws.cell(row, 2).value = name
+                    ws.cell(row, 3).value = itype
+                    ws.cell(row, 4).value = qty
+                    ws.cell(row, 5).value = price if price else 0
+                    ws.cell(row, 6).value = value if value else 0
+                    ws.cell(row, 7).value = date
+                    
+                    # Apply color based on type
+                    row_fill = in_fill if itype == "In" else out_fill
+                    
+                    for col in range(1, 8):
+                        ws.cell(row, col).border = border
+                        ws.cell(row, col).fill = row_fill
+                    
+                    ws.cell(row, 3).alignment = Alignment(horizontal='center', vertical='center')
+                    ws.cell(row, 4).alignment = Alignment(horizontal='center')
+                    ws.cell(row, 5).alignment = Alignment(horizontal='right')
+                    ws.cell(row, 5).number_format = '#,##0.00'
+                    ws.cell(row, 6).alignment = Alignment(horizontal='right')
+                    ws.cell(row, 6).number_format = '#,##0.00'
+                    ws.cell(row, 7).alignment = Alignment(horizontal='center')
+                    
+                    if itype == "In":
+                        total_in += value if value else 0
+                    else:
+                        total_out += value if value else 0
+                    
+                    row += 1
+                
+                # Summary row
+                ws.cell(row, 2).value = "TOTALS"
+                ws.cell(row, 2).font = Font(bold=True)
+                ws.cell(row, 6).value = total_in + total_out
+                ws.cell(row, 6).font = Font(bold=True)
+                ws.cell(row, 6).number_format = '#,##0.00'
+                
+                for col in range(1, 8):
+                    ws.cell(row, col).fill = PatternFill(start_color="E8EFFB", end_color="E8EFFB", fill_type="solid")
+                    ws.cell(row, col).border = border
+        
+        except Exception as e:
+            ws['A5'] = f"Error loading data: {str(e)}"
+        
+        return ws
+
+    def _create_expenses_sheet(self, ws, from_date, to_date):
+        """Create Expenses Details sheet"""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_fill = PatternFill(start_color="2C5282", end_color="2C5282", fill_type="solid")
+        total_fill = PatternFill(start_color="FFE5B4", end_color="FFE5B4", fill_type="solid")
+        border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                    top=Side(style='thin'), bottom=Side(style='thin'))
+        
+        # Title
+        ws.merge_cells('A1:C1')
+        title = ws['A1']
+        title.value = "Expenses Details"
+        title.font = Font(size=14, bold=True, color="1A365D")
+        title.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[1].height = 25
+        
+        # Period
+        ws.merge_cells('A2:C2')
+        period = ws['A2']
+        period.value = f"Period: {from_date} to {to_date}"
+        period.font = Font(size=10, italic=True)
+        period.alignment = Alignment(horizontal='center')
+        
+        # Headers
+        headers = ["Category", "Amount", "Percentage"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=4, column=col)
+            cell.value = header
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+        
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['B'].width = 18
+        ws.column_dimensions['C'].width = 15
+        ws.row_dimensions[4].height = 20
+        
+        # Data
+        try:
+            with get_db_connection() as (conn, cur):
+                cur.execute(f"""
+                    SELECT sc.SubCategoryName, SUM(ue.U_ExpAmount)
+                    FROM UniformExpenses ue
+                    JOIN SubCategory sc ON ue.U_SubCategory = sc.SubCatID
+                    WHERE ue.U_ExpDate BETWEEN '{from_date}' AND '{to_date}'
+                    GROUP BY sc.SubCategoryName
+                    ORDER BY SUM(ue.U_ExpAmount) DESC
+                """)
+                items = cur.fetchall()
+                
+                row = 5
+                total_expenses = sum(amount for _, amount in items) if items else 0
+                
+                for category, amount in items:
+                    percentage = (amount / total_expenses * 100) if total_expenses > 0 else 0
+                    
+                    ws.cell(row, 1).value = category
+                    ws.cell(row, 2).value = amount if amount else 0
+                    ws.cell(row, 3).value = percentage if percentage else 0
+                    
+                    ws.cell(row, 2).alignment = Alignment(horizontal='right')
+                    ws.cell(row, 2).number_format = '#,##0.00'
+                    ws.cell(row, 3).alignment = Alignment(horizontal='right')
+                    ws.cell(row, 3).number_format = '0.0"%"'
+                    
+                    for col in range(1, 4):
+                        ws.cell(row, col).border = border
+                    
+                    row += 1
+                
+                # Total Row
+                ws.cell(row, 1).value = "TOTAL EXPENSES"
+                ws.cell(row, 1).font = Font(bold=True, size=11)
+                ws.cell(row, 2).value = total_expenses
+                ws.cell(row, 2).font = Font(bold=True, size=11)
+                ws.cell(row, 2).number_format = '#,##0.00'
+                ws.cell(row, 2).alignment = Alignment(horizontal='right')
+                ws.cell(row, 3).value = 100.0
+                ws.cell(row, 3).font = Font(bold=True, size=11)
+                ws.cell(row, 3).number_format = '0.0"%"'
+                ws.cell(row, 3).alignment = Alignment(horizontal='right')
+                
+                for col in range(1, 4):
+                    ws.cell(row, col).fill = total_fill
+                    ws.cell(row, col).border = border
+        
+        except Exception as e:
+            ws['A5'] = f"Error loading data: {str(e)}"
+        
+        return ws
+
+
 #### start of expenditure #####
 def recalculate_supply_stock(supply_id):
     try:
