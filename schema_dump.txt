@@ -37,12 +37,6 @@ CREATE TABLE "FeesPayment"(
      ON DELETE RESTRICT
 )
 
---- Table: AcademicYear ---
-CREATE TABLE "AcademicYear"(
-    "AcademicYearID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    "Year" TEXT NOT NULL
-)
-
 --- Table: Term ---
 CREATE TABLE "Term"(
     "TermID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -167,5 +161,23 @@ CREATE TABLE "SubCategory" (
              PRIMARY KEY("SubCatID" AUTOINCREMENT),
              FOREIGN KEY("CategoryID") REFERENCES "Category"("CatID") ON DELETE CASCADE,
              UNIQUE(CategoryID,SubcategoryName)
+)
+
+--- Table: AcademicYear ---
+CREATE TABLE "AcademicYear"(
+    "AcademicYearID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "Year" TEXT NOT NULL,
+    UNIQUE("Year")
+)
+
+--- Table: UniformExpenses ---
+CREATE TABLE UniformExpenses (
+"U_ExpID" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+"U_SubCategory" INTEGER NOT NULL,
+"U_ExpAmount" REAL NOT NULL,
+"U_ExpDate" TEXT NOT NULL,
+"U_ExpReference" TEXT,
+"U_ExpDescription" TEXT NOT NULL,
+FOREIGN KEY("U_subCategory") REFERENCES SubCategory(SubCatID)
 )
 

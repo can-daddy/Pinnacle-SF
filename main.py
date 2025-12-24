@@ -3942,6 +3942,8 @@ class PaymentHistoryPage(QWidget):
         super().__init__()
         self.setup_ui()
         self.load_data()
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
         
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -3957,7 +3959,38 @@ class PaymentHistoryPage(QWidget):
         # Export button
         export_btn = QPushButton("Export to Excel")
         export_btn.clicked.connect(self.export_to_excel)
+        export_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+        """)
         header_layout.addWidget(export_btn)
+        
+        # Delete selected button
+        delete_selected_btn = QPushButton("Delete Selected")
+        delete_selected_btn.clicked.connect(self.delete_selected_payments)
+        delete_selected_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #E53E3E;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #C53030;
+            }
+        """)
+        header_layout.addWidget(delete_selected_btn)
         
         layout.addLayout(header_layout)
 
@@ -3983,11 +4016,6 @@ class PaymentHistoryPage(QWidget):
         self.date_to.setDisplayFormat("yyyy-MM-dd")
         self.date_to.dateChanged.connect(self.load_data)
         
-        # Student filter
-        self.student_combo = QComboBox()
-        self.student_combo.addItem("All Students", None)
-        self.student_combo.currentIndexChanged.connect(self.load_data)
-        
         # Class filter
         self.class_combo = QComboBox()
         self.class_combo.addItem("All Classes", None)
@@ -4007,8 +4035,6 @@ class PaymentHistoryPage(QWidget):
         filter_layout.addWidget(self.date_from)
         filter_layout.addWidget(QLabel("To:"))
         filter_layout.addWidget(self.date_to)
-        filter_layout.addWidget(QLabel("Student:"))
-        filter_layout.addWidget(self.student_combo)
         filter_layout.addWidget(QLabel("Class:"))
         filter_layout.addWidget(self.class_combo)
         filter_layout.addWidget(QLabel("Term:"))
@@ -4016,16 +4042,17 @@ class PaymentHistoryPage(QWidget):
         
         layout.addLayout(filter_layout)
 
-        # Table for raw payment data
+        # Table for raw payment data with Actions column
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)  # Added Actions column
         self.table.setHorizontalHeaderLabels([
             "Payment ID", "Student", "Student ID", "Class", "Term", 
-            "Year", "Amount Paid", "Transaction Date", "Reference", "Recorded On"
+            "Year", "Amount Paid", "Transaction Date", "Reference", "Recorded On", "Actions"
         ])
         
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.MultiSelection)  # Allow multiple selection
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
         # Set column widths
@@ -4040,6 +4067,7 @@ class PaymentHistoryPage(QWidget):
         header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Transaction Date
         header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Reference
         header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Recorded On
+        header.setSectionResizeMode(10, QHeaderView.ResizeToContents)  # Actions
         
         layout.addWidget(self.table)
         
@@ -4052,12 +4080,6 @@ class PaymentHistoryPage(QWidget):
         """Load filter options from database"""
         try:
             with get_db_connection() as (conn, c):
-                # Load students
-                c.execute("SELECT StudentID, Student_Name FROM Students ORDER BY Student_Name")
-                students = c.fetchall()
-                for student_id, student_name in students:
-                    self.student_combo.addItem(f"{student_name} ({student_id})", student_id)
-                
                 # Load classes
                 c.execute("SELECT DISTINCT ClassName FROM Class ORDER BY ClassName")
                 classes = c.fetchall()
@@ -4088,13 +4110,16 @@ class PaymentHistoryPage(QWidget):
                     fp.AmountPaid,
                     fp.TransactionDate,
                     fp.ReferenceNumber,
-                    fp.DoneOn
+                    fp.DoneOn,
+                    st.StudentTermID,
+                    f.FeesID
                 FROM FeesPayment fp
                 JOIN StudentTerm st ON fp.StudentTermID = st.StudentTermID
                 JOIN Students s ON st.StudentID = s.StudentID
                 JOIN Class c ON st.ClassID = c.ClassID
                 JOIN Term t ON st.TermID = t.TermID
                 JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                JOIN Fees f ON f.Class= c.ClassID AND f.Term= t.TermID
                 WHERE 1=1
                 """
                 
@@ -4116,11 +4141,6 @@ class PaymentHistoryPage(QWidget):
                 filters.append("fp.TransactionDate BETWEEN ? AND ?")
                 params.extend([date_from, date_to])
                 
-                # Apply student filter
-                selected_student = self.student_combo.currentData()
-                if selected_student:
-                    filters.append("s.StudentID = ?")
-                    params.append(selected_student)
                 
                 # Apply class filter
                 selected_class = self.class_combo.currentData()
@@ -4149,7 +4169,8 @@ class PaymentHistoryPage(QWidget):
                 for row_idx, row_data in enumerate(rows):
                     total_amount += float(row_data[6] or 0)  # AmountPaid
                     
-                    for col_idx, data in enumerate(row_data):
+                    for col_idx in range(10):  # Only display first 10 columns (not StudentTermID and FeesID)
+                        data = row_data[col_idx]
                         item = QTableWidgetItem(str(data) if data is not None else "")
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                         
@@ -4160,6 +4181,9 @@ class PaymentHistoryPage(QWidget):
                                 item.setForeground(QColor(0, 100, 0))  # Dark green
                         
                         self.table.setItem(row_idx, col_idx, item)
+                    
+                    # Add Action buttons
+                    self.add_action_buttons(row_idx, row_data[0], row_data[10], row_data[11])
                     self.table.setRowHeight(row_idx, 40)    
                 
                 # Update summary
@@ -4172,6 +4196,295 @@ class PaymentHistoryPage(QWidget):
         except Exception as e:
             print(f"Error loading payment history: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load payment history: {str(e)}")
+
+    def add_action_buttons(self, row, payment_id, student_term_id, fees_id):
+        """Add edit and delete action buttons to the Actions column"""
+        actions_widget = QWidget()
+        actions_layout = QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(5, 2, 5, 2)
+        actions_layout.setSpacing(5)
+        
+        # Edit button
+        edit_btn = QPushButton("Edit")
+        edit_btn.setFixedSize(60, 28)
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #48BB78;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #38A169;
+            }
+            QPushButton:pressed {
+                background-color: #2F855A;
+            }
+        """)
+        edit_btn.clicked.connect(lambda: self.edit_payment(payment_id, student_term_id, fees_id))
+        
+        # Delete button
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFixedSize(60, 28)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F56565;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #E53E3E;
+            }
+            QPushButton:pressed {
+                background-color: #C53030;
+            }
+        """)
+        delete_btn.clicked.connect(lambda: self.delete_payment(payment_id))
+        
+        actions_layout.addWidget(edit_btn)
+        actions_layout.addWidget(delete_btn)
+        actions_layout.addStretch()
+        
+        self.table.setCellWidget(row, 10, actions_widget)  # Actions column is column 10
+
+    def edit_payment(self, payment_id, student_term_id, fees_id):
+        """Open edit dialog for payment record"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Fetch payment details
+                c.execute("""
+                    SELECT 
+                        fp.FeesPaymentID,
+                        s.Student_Name,
+                        c.ClassName,
+                        t.TermName,
+                        t.TermID,
+                        f.Amount,
+                        fp.AmountPaid,
+                        fp.TransactionDate,
+                        fp.ReferenceNumber,
+                        st.StudentTermID
+                    FROM FeesPayment fp
+                    JOIN StudentTerm st ON fp.StudentTermID = st.StudentTermID
+                    JOIN Students s ON st.StudentID = s.StudentID
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Term t ON st.TermID = t.TermID
+                    JOIN Fees f ON f.FeesID = ?
+                    WHERE fp.FeesPaymentID = ?
+                """, (fees_id, payment_id))
+                
+                payment_data = c.fetchone()
+                
+                if payment_data:
+                    dialog = QDialog(self)
+                    dialog.setWindowTitle(f"Edit Payment - {payment_data[1]}")
+                    dialog.setFixedSize(500, 350)
+                    dialog.setStyleSheet("""
+                        QDialog {
+                            background-color: #F7FAFC;
+                        }
+                        QLabel {
+                            color: #2D3748;
+                            font-weight: 500;
+                        }
+                        QLineEdit, QDateEdit {
+                            background-color: white;
+                            border: 1px solid #CBD5E0;
+                            border-radius: 4px;
+                            padding: 8px;
+                            font-size: 11px;
+                        }
+                        QLineEdit:focus, QDateEdit:focus {
+                            border: 2px solid #4299E1;
+                        }
+                    """)
+                    
+                    layout = QVBoxLayout()
+                    
+                    # Student info (read-only)
+                    info_layout = QHBoxLayout()
+                    info_layout.addWidget(QLabel(f"<b>Student:</b> {payment_data[1]}"))
+                    info_layout.addWidget(QLabel(f"<b>Class:</b> {payment_data[2]}"))
+                    layout.addLayout(info_layout)
+                    
+                    # Form layout
+                    form = QFormLayout()
+                    form.setSpacing(10)
+                    
+                    # Term (read-only)
+                    term_label = QLabel(payment_data[3])
+                    form.addRow(QLabel("Term:"), term_label)
+                    
+                    # Original Fee (read-only)
+                    fee_label = QLabel(f"{payment_data[5]:,.2f}")
+                    form.addRow(QLabel("Original Fee:"), fee_label)
+                    
+                    # Amount Paid
+                    amount_input = QLineEdit()
+                    amount_input.setText(str(payment_data[6]))
+                    amount_input.setValidator(QDoubleValidator(0, 99999999, 2))
+                    form.addRow(QLabel("Amount Paid:"), amount_input)
+                    
+                    # Reference Number
+                    ref_input = QLineEdit()
+                    ref_input.setText(str(payment_data[8] or ""))
+                    form.addRow(QLabel("Reference Number:"), ref_input)
+                    
+                    # Transaction Date
+                    date_input = QDateEdit()
+                    date_input.setDate(QDate.fromString(str(payment_data[7]), "yyyy-MM-dd"))
+                    date_input.setCalendarPopup(True)
+                    date_input.setDisplayFormat("yyyy-MM-dd")
+                    form.addRow(QLabel("Transaction Date:"), date_input)
+                    
+                    layout.addLayout(form)
+                    
+                    # Buttons
+                    button_layout = QHBoxLayout()
+                    
+                    save_btn = QPushButton("Save")
+                    save_btn.setFixedSize(100, 35)
+                    save_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #48BB78;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #38A169;
+                        }
+                    """)
+                    save_btn.clicked.connect(
+                        lambda: self.save_edited_payment(
+                            dialog, payment_id, amount_input, ref_input, date_input
+                        )
+                    )
+                    
+                    cancel_btn = QPushButton("Cancel")
+                    cancel_btn.setFixedSize(100, 35)
+                    cancel_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #A0AEC0;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #718096;
+                        }
+                    """)
+                    cancel_btn.clicked.connect(dialog.reject)
+                    
+                    button_layout.addStretch()
+                    button_layout.addWidget(save_btn)
+                    button_layout.addWidget(cancel_btn)
+                    
+                    layout.addLayout(button_layout)
+                    dialog.setLayout(layout)
+                    dialog.exec_()
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load payment for editing: {str(e)}")
+
+    def save_edited_payment(self, dialog, payment_id, amount_input, ref_input, date_input):
+        """Save edited payment details to database"""
+        try:
+            amount = float(amount_input.text())
+            reference = ref_input.text().strip()
+            transaction_date = date_input.date().toString("yyyy-MM-dd")
+            
+            # Validate inputs
+            if amount < 0:
+                QMessageBox.warning(self, "Invalid Input", "Amount paid cannot be negative.")
+                return
+            
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    UPDATE FeesPayment
+                    SET AmountPaid = ?, ReferenceNumber = ?, TransactionDate = ?
+                    WHERE FeesPaymentID = ?
+                """, (amount, reference, transaction_date, payment_id))
+                
+                conn.commit()
+                
+                QMessageBox.information(self, "Success", "Payment record updated successfully!")
+                dialog.accept()
+                self.load_data()  # Reload table
+                
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input", "Please enter a valid amount (numeric value).")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to update payment: {str(e)}")
+
+    def delete_payment(self, payment_id):
+        """Delete a single payment record with confirmation"""
+        reply = QMessageBox.question(
+            self, 
+            "Confirm Delete", 
+            "Are you sure you want to delete this payment record?\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM FeesPayment WHERE FeesPaymentID = ?", (payment_id,))
+                    conn.commit()
+                    
+                    QMessageBox.information(self, "Success", "Payment record deleted successfully!")
+                    self.load_data()  # Reload table
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete payment: {str(e)}")
+
+    def delete_selected_payments(self):
+        """Delete multiple selected payment records with confirmation"""
+        selected_rows = self.table.selectionModel().selectedRows()
+        
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select at least one payment record to delete.")
+            return
+        
+        # Get payment IDs from selected rows
+        payment_ids = []
+        for row in selected_rows:
+            payment_id = self.table.item(row.row(), 0).text()
+            payment_ids.append(payment_id)
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete Multiple Records",
+            f"Are you sure you want to delete {len(payment_ids)} payment record(s)?\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    for payment_id in payment_ids:
+                        c.execute("DELETE FROM FeesPayment WHERE FeesPaymentID = ?", (payment_id,))
+                    
+                    conn.commit()
+                    
+                    QMessageBox.information(
+                        self, 
+                        "Success", 
+                        f"{len(payment_ids)} payment record(s) deleted successfully!"
+                    )
+                    self.load_data()  # Reload table
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete payment records: {str(e)}")
 
     def export_to_excel(self):
         """Export payment history to Excel"""
@@ -4191,14 +4504,14 @@ class PaymentHistoryPage(QWidget):
                 data = []
                 headers = []
                 
-                # Get headers
-                for col in range(self.table.columnCount()):
+                # Get headers (exclude Actions column)
+                for col in range(self.table.columnCount() - 1):  # Exclude Actions column
                     headers.append(self.table.horizontalHeaderItem(col).text())
                 
                 # Get data
                 for row in range(self.table.rowCount()):
                     row_data = []
-                    for col in range(self.table.columnCount()):
+                    for col in range(self.table.columnCount() - 1):  # Exclude Actions column
                         item = self.table.item(row, col)
                         row_data.append(item.text() if item else "")
                     data.append(row_data)
@@ -4247,7 +4560,7 @@ class PaymentHistoryPage(QWidget):
         selected_row = self.table.currentRow()
         if selected_row >= 0:
             row_data = []
-            for col in range(self.table.columnCount()):
+            for col in range(self.table.columnCount() - 1):  # Exclude Actions column
                 item = self.table.item(selected_row, col)
                 row_data.append(item.text() if item else "")
             
@@ -4275,7 +4588,7 @@ class PaymentHistoryPage(QWidget):
                 JOIN Class c ON st.ClassID = c.ClassID
                 JOIN Term t ON st.TermID = t.TermID
                 JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
-                JOIN Fees f ON f.Class = c.ClassID AND f.Term = t.TermID
+                JOIN Fees f ON f.Class= c.ClassID AND f.Term= t.TermID
                 WHERE fp.FeesPaymentID = ?
                 """, (payment_id,))
                 
@@ -4428,25 +4741,60 @@ class UniformDialog(QDialog):
 class UniformDashBoard(QWidget):
     def __init__(self):
         super().__init__()
-        main_layout = QHBoxLayout(self)
+        self.init_ui()
+        self.load_data()
+
+    def init_ui(self):
+        # Main Layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
 
-        # Left column: Pie charts and last 5 inventory table
-        left_layout = QVBoxLayout()
-        left_layout.setSpacing(15)
+        # Header
+        header_layout = QHBoxLayout()
+        title_label = QLabel("Uniform Dashboard & Insights")
+        title_label.setObjectName("pageTitle") # Use global style
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        
+        # Add Refresh Button
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setObjectName("infoButton")
+        refresh_btn.clicked.connect(self.load_data)
+        header_layout.addWidget(refresh_btn)
+        
+        main_layout.addLayout(header_layout)
 
-        # Pie charts section
-        charts_layout = QHBoxLayout()
-        self.in_canvas = self.create_pie_canvas("Stock In (Current Month)")
-        self.out_canvas = self.create_pie_canvas("Stock Out (Current Month)")
+        # Content Layout (Grid for better space utilization)
+        content_layout = QGridLayout()
+        content_layout.setSpacing(20)
+
+        # --- Section 1: Charts (Top) ---
+        charts_frame = QFrame()
+        charts_frame.setObjectName("summaryCard") # Use global style
+        charts_layout = QHBoxLayout(charts_frame)
+        
+        self.in_canvas = self.create_pie_canvas("Stock In")
+        self.out_canvas = self.create_pie_canvas("Stock Out")
+        
         charts_layout.addWidget(self.in_canvas)
         charts_layout.addWidget(self.out_canvas)
-        left_layout.addLayout(charts_layout)
+        
+        # Add to grid (Row 0, Col 0, RowSpan 1, ColSpan 2)
+        content_layout.addWidget(charts_frame, 0, 0, 1, 2)
 
-        # Last 5 inventory table
-        inventory_title = QLabel("Recent Inventory Entries")
-        inventory_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        left_layout.addWidget(inventory_title)
+        # --- Section 2: Recent Inventory (Bottom Left) ---
+        inventory_frame = QFrame()
+        inventory_frame.setObjectName("summaryCard")
+        inventory_layout = QVBoxLayout(inventory_frame)
+        
+        inv_header = QHBoxLayout()
+        inv_title = QLabel("Recent Inventory Entries")
+        inv_title.setObjectName("sectionTitle")
+        inv_header.addWidget(inv_title)
+        inv_header.addStretch()
+        inventory_layout.addLayout(inv_header)
+
         self.inventory_table = QTableWidget()
         self.inventory_table.setColumnCount(6)
         self.inventory_table.setHorizontalHeaderLabels(["ID", "Uniform", "Type", "Quantity", "Date", "Reference"])
@@ -4455,24 +4803,29 @@ class UniformDashBoard(QWidget):
         self.inventory_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.inventory_table.setShowGrid(True)
         self.inventory_table.verticalHeader().setVisible(False)
-        self.inventory_table.setMaximumHeight(200)
-        left_layout.addWidget(self.inventory_table)
-
-        # Right column: Uniform list and add button
-        right_layout = QVBoxLayout()
-        right_layout.setSpacing(15)
-
-        uniform_title = QLabel("Uniform List")
-        uniform_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        right_layout.addWidget(uniform_title)
+        inventory_layout.addWidget(self.inventory_table)
         
-        # Add filter for uniform list
-        filter_layout = QHBoxLayout()
+        # Add to grid (Row 1, Col 0)
+        content_layout.addWidget(inventory_frame, 1, 0)
+
+        # --- Section 3: Uniform List (Bottom Right) ---
+        uniform_frame = QFrame()
+        uniform_frame.setObjectName("summaryCard")
+        uniform_layout = QVBoxLayout(uniform_frame)
+        
+        uni_header = QHBoxLayout()
+        uni_title = QLabel("Uniform List")
+        uni_title.setObjectName("sectionTitle")
+        uni_header.addWidget(uni_title)
+        
+        # Search
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search uniforms...")
-        self.search_input.textChanged.connect(self.load_data)
-        filter_layout.addWidget(self.search_input)
-        right_layout.addLayout(filter_layout)
+        self.search_input.setFixedWidth(200)
+        self.search_input.textChanged.connect(self.load_uniform_list) # Separate loader for list
+        uni_header.addWidget(self.search_input)
+        
+        uniform_layout.addLayout(uni_header)
         
         self.uniform_table = QTableWidget()
         self.uniform_table.setColumnCount(5)
@@ -4482,21 +4835,26 @@ class UniformDashBoard(QWidget):
         self.uniform_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.uniform_table.setShowGrid(True)
         self.uniform_table.verticalHeader().setVisible(False)
-        right_layout.addWidget(self.uniform_table)
+        uniform_layout.addWidget(self.uniform_table)
 
         add_uniform_btn = QPushButton("Add New Uniform")
+        add_uniform_btn.setObjectName("successButton")
         add_uniform_btn.clicked.connect(self.show_add_uniform_dialog)
-        right_layout.addWidget(add_uniform_btn, alignment=Qt.AlignBottom)
+        uniform_layout.addWidget(add_uniform_btn, alignment=Qt.AlignRight)
 
-        main_layout.addLayout(left_layout, 2)  # 2/3 of space
-        main_layout.addLayout(right_layout, 1)  # 1/3 of space
+        # Add to grid (Row 1, Col 1)
+        content_layout.addWidget(uniform_frame, 1, 1)
 
-        self.load_data()
+        # Set stretch factors
+        content_layout.setColumnStretch(0, 3) # Inventory table wider
+        content_layout.setColumnStretch(1, 2) # Uniform list narrower
+        
+        main_layout.addLayout(content_layout)
 
     def create_pie_canvas(self, title):
         fig = Figure(figsize=(5, 4), dpi=100)
         canvas = FigureCanvas(fig)
-        canvas.setMinimumHeight(300)
+        canvas.setMinimumHeight(250)
         return canvas
 
     def update_pie_chart(self, canvas, title, data, color):
@@ -4512,18 +4870,10 @@ class UniformDashBoard(QWidget):
             
             ax = fig.add_subplot(111)
             wedges, texts, autotexts = ax.pie(sizes, explode=explode, labels=labels, colors=colors,
-                                            autopct='%1.1f%%', shadow=False, startangle=90)
+                                            autopct='', shadow=False, startangle=90)
             
-            # Style the "No Data" text
-            for text in texts:
-                text.set_fontsize(12)
-                text.set_color('#666666')
-            for autotext in autotexts:
-                autotext.set_color('#666666')
-                autotext.set_fontsize(10)
-            
-            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
-            ax.axis('equal')  # Equal aspect ratio ensures pie is drawn as circle
+            ax.set_title(title, fontsize=12, fontweight='bold', pad=10, color='#2D3748')
+            ax.axis('equal')
             
         else:
             # Normal pie chart with data
@@ -4549,63 +4899,96 @@ class UniformDashBoard(QWidget):
             for autotext in autotexts:
                 autotext.set_color('white')
                 autotext.set_fontweight('bold')
+                autotext.set_fontsize(9)
             
-            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+            for text in texts:
+                text.set_fontsize(9)
+            
+            ax.set_title(title, fontsize=12, fontweight='bold', pad=10, color='#2D3748')
             ax.axis('equal')
         
+        fig.tight_layout()
         canvas.draw()
 
     def load_data(self):
-        current_month = datetime.now().strftime('%Y-%m')
-        search_text = self.search_input.text().strip()
+        self.load_charts_and_inventory()
+        self.load_uniform_list()
+
+    def load_charts_and_inventory(self):
+        # Dynamic date ranges: Current Month -> 3 Months -> 6 Months -> 1 Year
+        date_ranges = [
+            (1, "Current Month"),
+            (3, "Last 3 Months"),
+            (6, "Last 6 Months"),
+            (12, "Last Year")
+        ]
         
         try:
             with get_db_connection() as (conn, c):
                 
-                # Get stock in distribution by uniform type for current month
-                c.execute("""
-                    SELECT u.UniformName, SUM(ui.Quantity) as TotalQuantity
-                    FROM UniformInventory ui
-                    JOIN Uniform u ON ui.UniformID = u.UniformId
-                    WHERE ui.Type = 'In' AND strftime('%Y-%m', ui.Date) = ?
-                    GROUP BY u.UniformId
-                    ORDER BY TotalQuantity DESC
-                """, (current_month,))
-                stock_in_data = c.fetchall()
+                stock_in_data = []
+                stock_out_data = []
+                found_range_label = "Current Month"
                 
-                # Get stock out distribution by uniform type for current month
-                c.execute("""
-                    SELECT u.UniformName, SUM(ui.Quantity) as TotalQuantity
-                    FROM UniformInventory ui
-                    JOIN Uniform u ON ui.UniformID = u.UniformId
-                    WHERE ui.Type = 'Out' AND strftime('%Y-%m', ui.Date) = ?
-                    GROUP BY u.UniformId
-                    ORDER BY TotalQuantity DESC
-                """, (current_month,))
-                stock_out_data = c.fetchall()
+                # Loop through date ranges to find data
+                for months, label in date_ranges:
+                    # Calculate date threshold
+                    date_threshold = QDate.currentDate().addMonths(-months).toString("yyyy-MM-dd")
+                    
+                    # Get stock in
+                    c.execute("""
+                        SELECT u.UniformName, SUM(ui.Quantity) as TotalQuantity
+                        FROM UniformInventory ui
+                        JOIN Uniform u ON ui.UniformID = u.UniformId
+                        WHERE ui.Type = 'In' AND ui.Date >= ?
+                        GROUP BY u.UniformId
+                        ORDER BY TotalQuantity DESC
+                    """, (date_threshold,))
+                    stock_in_data = c.fetchall()
+                    
+                    # Get stock out
+                    c.execute("""
+                        SELECT u.UniformName, SUM(ui.Quantity) as TotalQuantity
+                        FROM UniformInventory ui
+                        JOIN Uniform u ON ui.UniformID = u.UniformId
+                        WHERE ui.Type = 'Out' AND ui.Date >= ?
+                        GROUP BY u.UniformId
+                        ORDER BY TotalQuantity DESC
+                    """, (date_threshold,))
+                    stock_out_data = c.fetchall()
+                    
+                    if stock_in_data or stock_out_data:
+                        found_range_label = label
+                        break # Stop if we found data
                 
-                # Update in pie chart
-                self.update_pie_chart(self.in_canvas, "Stock In  (Current Month)", 
+                # Update charts
+                self.update_pie_chart(self.in_canvas, f"Stock In ({found_range_label})", 
                                     stock_in_data, '#2E8B57')
                 
-                # Update out pie chart
-                self.update_pie_chart(self.out_canvas, "Stock Out  (Current Month)", 
+                self.update_pie_chart(self.out_canvas, f"Stock Out ({found_range_label})", 
                                     stock_out_data, '#CD5C5C')
                 
-                # Recent inventory entries (last 10 instead of 5 for better overview)
+                # Recent inventory entries (Always show last 15 regardless of date range for better context)
                 c.execute("""
                     SELECT ui.UniformInventoryID, u.UniformName, ui.Type, ui.Quantity, ui.Date, ui.ReferencesNotes
                     FROM UniformInventory ui
                     LEFT JOIN Uniform u ON ui.UniformID = u.UniformId
                     ORDER BY ui.Date DESC, ui.UniformInventoryID DESC
-                    LIMIT 10
+                    LIMIT 15
                 """)
                 inventory_rows = c.fetchall()
                 self.inventory_table.setRowCount(len(inventory_rows))
                 for i, row in enumerate(inventory_rows):
                     for j in range(len(row)):
                         self.inventory_table.setItem(i, j, QTableWidgetItem(str(row[j])))
-                
+                    
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load dashboard data: {str(e)}")
+
+    def load_uniform_list(self):
+        search_text = self.search_input.text().strip()
+        try:
+            with get_db_connection() as (conn, c):
                 # Uniform list with search filter
                 if search_text:
                     c.execute("""
@@ -4625,10 +5008,9 @@ class UniformDashBoard(QWidget):
                     
                     # Add action buttons
                     self.add_uniform_action_buttons(i, row[0])
-                    
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load dashboard data: {str(e)}")
-    
+            print(f"Error loading uniform list: {e}")
+
     def generate_colors(self, n, base_color):
         """Generate a color palette based on a base color"""
         # For simplicity, using matplotlib's default color cycle
@@ -4661,13 +5043,13 @@ class UniformDashBoard(QWidget):
         """Show dialog to add new uniform"""
         dialog = UniformDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            self.load_data()
+            self.load_uniform_list()
 
     def edit_uniform(self, uniform_id):
         """Edit existing uniform"""
         dialog = UniformDialog(self, uniform_id)
         if dialog.exec_() == QDialog.Accepted:
-            self.load_data()
+            self.load_uniform_list()
 
     def delete_uniform(self, uniform_id):
         """Delete uniform after checking for inventory constraints"""
@@ -4695,7 +5077,7 @@ class UniformDashBoard(QWidget):
                     c.execute("DELETE FROM Uniform WHERE UniformId = ?", (uniform_id,))
                     conn.commit()
                     QMessageBox.information(self, "Success", "Uniform deleted successfully")
-                    self.load_data()
+                    self.load_uniform_list()
                     
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to delete uniform: {str(e)}")
@@ -4703,55 +5085,6 @@ class UniformDashBoard(QWidget):
 class InventoryManagement(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("""
-            QLabel {
-                color: #2D3748;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QLineEdit, QDateEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QComboBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QTableWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-                gridline-color: #E0E3E7;
-                selection-background-color: #EDF2F7;
-            }
-            QTableWidget::item {
-                padding: 10px;
-                color: #2D3748;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 10px;
-                border: none;
-                border-bottom: 1px solid #E0E3E7;
-                font-weight: bold;
-                color: #4A5568;
-            }
-        """)
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
@@ -4870,6 +5203,7 @@ class InventoryManagement(QWidget):
                         high_out = qty
                     # Add actions
                     self.add_action_buttons(i, row[0])
+                    self.table.setRowHeight(i, 40)
                 
                 self.results_label.setText(f"{len(rows)} results retrieved")
                 self.high_in_label.setText(f"High Qty In: {high_in}")
@@ -5391,259 +5725,269 @@ class InventoryManagement(QWidget):
 class ReportGenerator(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Connect to the SQLite database
         self.db = sqlite3.connect('Database.db')
-        # Setup the user interface
         self.setup_ui()
-        # Apply modern web-tone style
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #F5F7FA;
-            }
-            QLabel {
-                color: #2D3748;
-                font-size: 14px;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QDateEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QChartView {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
-                border-radius: 5px;
-            }
-        """)
-        # Initial report generation
         self.generate_report()
 
     def setup_ui(self):
-        # Main vertical layout for the widget
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(20, 20, 20, 20)
+        # Main Layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
 
-        # Date range selection layout
-        date_layout = QHBoxLayout()
-        date_layout.setSpacing(10)
-        from_label = QLabel("From:")
-        from_label.setStyleSheet("font-weight: bold;")
+        # --- Header Section ---
+        header_layout = QHBoxLayout()
+        
+        title_label = QLabel("Uniforms Report")
+        title_label.setObjectName("pageTitle")
+        header_layout.addWidget(title_label)
+        
+        header_layout.addStretch()
+        
+        # Date Range
+        date_container = QFrame()
+        date_container.setObjectName("cardFrame") # Simple frame for controls
+        date_container.setStyleSheet(".QFrame { background-color: white; border: 1px solid #E2E8F0; border-radius: 5px; }")
+        date_layout = QHBoxLayout(date_container)
+        date_layout.setContentsMargins(10, 5, 10, 5)
+        
         self.from_date = QDateEdit(QDate.currentDate().addMonths(-1))
-        to_label = QLabel("To:")
-        to_label.setStyleSheet("font-weight: bold;")
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDisplayFormat("yyyy-MM-dd")
+        
         self.to_date = QDateEdit(QDate.currentDate())
-        generate_btn = QPushButton("Generate Report")
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDisplayFormat("yyyy-MM-dd")
+        
+        generate_btn = QPushButton("Generate")
+        generate_btn.setObjectName("infoButton")
         generate_btn.clicked.connect(self.generate_report)
-        date_layout.addWidget(from_label)
+        
+        date_layout.addWidget(QLabel("From:"))
         date_layout.addWidget(self.from_date)
-        date_layout.addWidget(to_label)
+        date_layout.addWidget(QLabel("To:"))
         date_layout.addWidget(self.to_date)
-        date_layout.addStretch()
         date_layout.addWidget(generate_btn)
-        layout.addLayout(date_layout)
-
-        # Export buttons layout
-        export_layout = QHBoxLayout()
-        export_layout.setSpacing(10)
-        pdf_btn = QPushButton("Export PDF")
+        
+        header_layout.addWidget(date_container)
+        
+        # Export Buttons
+        pdf_btn = QPushButton("PDF")
+        pdf_btn.setObjectName("dangerButton") # Red for PDF
         pdf_btn.clicked.connect(self.export_pdf)
-        excel_btn = QPushButton("Export Excel")
+        
+        excel_btn = QPushButton("Excel")
+        excel_btn.setObjectName("successButton") # Green for Excel
         excel_btn.clicked.connect(self.export_excel)
-        export_layout.addStretch()
-        export_layout.addWidget(pdf_btn)
-        export_layout.addWidget(excel_btn)
-        layout.addLayout(export_layout)
+        
+        header_layout.addWidget(pdf_btn)
+        header_layout.addWidget(excel_btn)
+        
+        main_layout.addLayout(header_layout)
 
-        # Current stock summary
-        current_stock_title = QLabel("Current Stock:")
-        current_stock_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        layout.addWidget(current_stock_title)
-        self.current_stock_label = QLabel()
-        self.current_stock_label.setStyleSheet("font-size: 14px; color: #4A5568;")
-        layout.addWidget(self.current_stock_label)
+        # --- Summary Cards Section ---
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(15)
+        
+        self.card_stock_value = self.create_summary_card("Current Stock Value", "0.00", "#3182CE")
+        self.card_stock_in = self.create_summary_card("Stock In (Period)", "0.00", "#38A169")
+        self.card_stock_out = self.create_summary_card("Stock Out (Period)", "0.00", "#E53E3E")
+        self.card_expenses = self.create_summary_card("Expenses (Period)", "0.00", "#DD6B20")
+        
+        cards_layout.addWidget(self.card_stock_value)
+        cards_layout.addWidget(self.card_stock_in)
+        cards_layout.addWidget(self.card_stock_out)
+        cards_layout.addWidget(self.card_expenses)
+        
+        main_layout.addLayout(cards_layout)
 
-        # Stock summaries layout
-        stock_summary_layout = QHBoxLayout()
-        stock_summary_layout.setSpacing(20)
-
-        # Stock In
-        in_container = QWidget()
-        in_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
-        in_layout = QVBoxLayout(in_container)
-        in_title = QLabel("Stock In:")
-        in_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        in_layout.addWidget(in_title)
-        self.stock_in_label = QLabel()
-        self.stock_in_label.setStyleSheet("font-size: 14px; color: #4A5568;")
-        in_layout.addWidget(self.stock_in_label)
-        stock_summary_layout.addWidget(in_container)
-
-        # Stock Out
-        out_container = QWidget()
-        out_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
-        out_layout = QVBoxLayout(out_container)
-        out_title = QLabel("Stock Out:")
-        out_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        out_layout.addWidget(out_title)
-        self.stock_out_label = QLabel()
-        self.stock_out_label.setStyleSheet("font-size: 14px; color: #4A5568;")
-        out_layout.addWidget(self.stock_out_label)
-        stock_summary_layout.addWidget(out_container)
-
-        layout.addLayout(stock_summary_layout)
-
-        # Stock In/Out bar chart
-        chart_title = QLabel("Stock In/Out Value")
-        chart_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        layout.addWidget(chart_title)
+        # --- Charts Section ---
+        charts_layout = QHBoxLayout()
+        charts_layout.setSpacing(20)
+        
+        # Stock Chart Frame
+        stock_chart_frame = QFrame()
+        stock_chart_frame.setObjectName("summaryCard")
+        stock_chart_layout = QVBoxLayout(stock_chart_frame)
+        stock_chart_layout.addWidget(QLabel("Stock Movement (In vs Out)"))
         self.stock_chart_view = QChartView()
         self.stock_chart_view.setMinimumHeight(300)
-        layout.addWidget(self.stock_chart_view)
-
-        # Procurement list table
-        proc_title = QLabel("Procurement List:")
-        proc_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        layout.addWidget(proc_title)
-        self.procurement_table = QTableWidget()
-        self.procurement_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.procurement_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.procurement_table.setStyleSheet("border: 1px solid #E0E3E7; border-radius: 5px;")
-        layout.addWidget(self.procurement_table)
-
-        # Expense list table and pie chart layout
-        expense_layout = QHBoxLayout()
-        expense_layout.setSpacing(20)
-
-        # Expense table container
-        exp_table_container = QWidget()
-        exp_table_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
-        exp_table_layout = QVBoxLayout(exp_table_container)
-        exp_title = QLabel("Expense List:")
-        exp_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        exp_table_layout.addWidget(exp_title)
-        self.expense_table = QTableWidget()
-        self.expense_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.expense_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        exp_table_layout.addWidget(self.expense_table)
-        expense_layout.addWidget(exp_table_container)
-
-        # Expense pie chart container
-        exp_chart_container = QWidget()
-        exp_chart_container.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E0E3E7; border-radius: 5px; padding: 10px;")
-        exp_chart_layout = QVBoxLayout(exp_chart_container)
-        exp_chart_title = QLabel("Expense Categories")
-        exp_chart_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        exp_chart_layout.addWidget(exp_chart_title)
+        self.stock_chart_view.setRenderHint(QPainter.Antialiasing)
+        stock_chart_layout.addWidget(self.stock_chart_view)
+        
+        # Expense Chart Frame
+        exp_chart_frame = QFrame()
+        exp_chart_frame.setObjectName("summaryCard")
+        exp_chart_layout = QVBoxLayout(exp_chart_frame)
+        exp_chart_layout.addWidget(QLabel("Expenses by Category"))
         self.expense_chart_view = QChartView()
-        self.expense_chart_view.setMinimumWidth(400)
+        self.expense_chart_view.setMinimumHeight(300)
+        self.expense_chart_view.setRenderHint(QPainter.Antialiasing)
         exp_chart_layout.addWidget(self.expense_chart_view)
-        expense_layout.addWidget(exp_chart_container)
+        
+        charts_layout.addWidget(stock_chart_frame)
+        charts_layout.addWidget(exp_chart_frame)
+        
+        main_layout.addLayout(charts_layout)
 
-        layout.addLayout(expense_layout)
+        # --- Detailed Tables Section (Tabs) ---
+        tabs = QTabWidget()
+        tabs.setMinimumHeight(300)
+        
+        # Procurement Tab
+        self.procurement_table = QTableWidget()
+        self.procurement_table.setColumnCount(5)
+        self.procurement_table.setHorizontalHeaderLabels(["Supplier/Ref", "Item", "Qty", "Unit Price", "Total"])
+        self.procurement_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.procurement_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.procurement_table.setAlternatingRowColors(True)
+        tabs.addTab(self.procurement_table, "Procurement List (Stock In)")
+        
+        # Expenses Tab
+        self.expense_table = QTableWidget()
+        self.expense_table.setColumnCount(2)
+        self.expense_table.setHorizontalHeaderLabels(["Category", "Total Amount"])
+        self.expense_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.expense_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.expense_table.setAlternatingRowColors(True)
+        tabs.addTab(self.expense_table, "Expense List")
+        
+        main_layout.addWidget(tabs)
+
+    def create_summary_card(self, title, value, color):
+        card = QFrame()
+        card.setObjectName("summaryCard")
+        card.setStyleSheet(f"border-left: 5px solid {color};")
+        layout = QVBoxLayout(card)
+        
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("color: #718096; font-size: 12px; font-weight: bold;")
+        
+        value_lbl = QLabel(value)
+        value_lbl.setStyleSheet("color: #2D3748; font-size: 20px; font-weight: bold;")
+        card.value_label = value_lbl # Store ref
+        
+        layout.addWidget(title_lbl)
+        layout.addWidget(value_lbl)
+        return card
 
     def generate_report(self):
-        # Get the selected date range in 'YYYY-MM-DD' format
         from_date = self.from_date.date().toString("yyyy-MM-dd")
         to_date = self.to_date.date().toString("yyyy-MM-dd")
 
-        cur = self.db.cursor()
+        try:
+            with get_db_connection() as (conn, cur):
+                # 1. Current Stock Value (All time)
+                cur.execute("SELECT SUM(Quantity), SUM(Quantity * UniformPrice) FROM Uniform")
+                current_qty, current_value = cur.fetchone()
+                self.card_stock_value.value_label.setText(f"{current_value or 0:,.2f}")
 
-        # Fetch current stock: total quantity and value (not filtered by date)
-        cur.execute("SELECT SUM(Quantity), SUM(Quantity * UniformPrice) FROM Uniform")
-        current_qty, current_value = cur.fetchone()
-        self.current_stock_label.setText(f"Total Quantity: {current_qty or 0}, Total Value: {current_value or 0:.2f}")
+                # 2. Stock In (Period)
+                cur.execute("""
+                    SELECT SUM(Quantity), SUM(Quantity * Price) 
+                    FROM UniformInventory 
+                    WHERE Type = 'In' AND Date BETWEEN ? AND ?
+                """, (from_date, to_date))
+                in_qty, in_value = cur.fetchone()
+                self.card_stock_in.value_label.setText(f"{in_value or 0:,.2f}")
 
-        # Fetch stock in: quantity and value over the period
-        cur.execute("""
-            SELECT SUM(Quantity), SUM(Quantity * Price) 
-            FROM UniformInventory 
-            WHERE Type = 'In' AND Date BETWEEN ? AND ?
-        """, (from_date, to_date))
-        in_qty, in_value = cur.fetchone()
-        self.stock_in_label.setText(f"Quantity: {in_qty or 0}, Value: {in_value or 0:.2f}")
+                # 3. Stock Out (Period)
+                cur.execute("""
+                    SELECT SUM(Quantity), SUM(Quantity * Price) 
+                    FROM UniformInventory 
+                    WHERE Type = 'Out' AND Date BETWEEN ? AND ?
+                """, (from_date, to_date))
+                out_qty, out_value = cur.fetchone()
+                self.card_stock_out.value_label.setText(f"{out_value or 0:,.2f}")
+                
+                # 4. Expenses (Period) - FROM UniformExpenses
+                cur.execute("""
+                    SELECT SUM(U_ExpAmount)
+                    FROM UniformExpenses
+                    WHERE U_ExpDate BETWEEN ? AND ?
+                """, (from_date, to_date))
+                exp_total = cur.fetchone()[0]
+                self.card_expenses.value_label.setText(f"{exp_total or 0:,.2f}")
 
-        # Fetch stock out: quantity and value over the period
-        cur.execute("""
-            SELECT SUM(Quantity), SUM(Quantity * Price) 
-            FROM UniformInventory 
-            WHERE Type = 'Out' AND Date BETWEEN ? AND ?
-        """, (from_date, to_date))
-        out_qty, out_value = cur.fetchone()
-        self.stock_out_label.setText(f"Quantity: {out_qty or 0}, Value: {out_value or 0:.2f}")
+                # 5. Stock Chart
+                self.update_stock_chart(in_value or 0, out_value or 0)
 
-        # Create bar chart for stock in/out values
-        in_set = QBarSet("In")
-        out_set = QBarSet("Out")
-        in_set.append(in_value or 0)
-        out_set.append(out_value or 0)
+                # 6. Procurement Table
+                cur.execute("""
+                    SELECT ReferencesNotes, UniformName, ui.Quantity, Price, (ui.Quantity * Price) 
+                    FROM UniformInventory ui
+                    JOIN Uniform u ON ui.UniformID = u.UniformId 
+                    WHERE Type = 'In' AND Date BETWEEN ? AND ?
+                    ORDER BY Date DESC
+                """, (from_date, to_date))
+                proc_rows = cur.fetchall()
+                self.procurement_table.setRowCount(len(proc_rows))
+                for i, row in enumerate(proc_rows):
+                    for j, val in enumerate(row):
+                        self.procurement_table.setItem(i, j, QTableWidgetItem(str(val)))
+
+                # 7. Expense Table & Chart - FROM UniformExpenses
+                cur.execute("""
+                    SELECT sc.SubCategoryName, SUM(ue.U_ExpAmount)
+                    FROM UniformExpenses ue
+                    JOIN SubCategory sc ON ue.U_SubCategory = sc.SubCatID
+                    WHERE ue.U_ExpDate BETWEEN ? AND ?
+                    GROUP BY sc.SubCategoryName
+                    ORDER BY SUM(ue.U_ExpAmount) DESC
+                """, (from_date, to_date))
+                exp_rows = cur.fetchall()
+                
+                self.expense_table.setRowCount(len(exp_rows))
+                for i, (cat, total) in enumerate(exp_rows):
+                    self.expense_table.setItem(i, 0, QTableWidgetItem(cat))
+                    self.expense_table.setItem(i, 1, QTableWidgetItem(f"{total:,.2f}"))
+                
+                self.update_expense_chart(exp_rows)
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to generate report: {str(e)}")
+
+    def update_stock_chart(self, in_val, out_val):
+        set0 = QBarSet("Value")
+        set0.append([in_val, out_val])
+        
         series = QBarSeries()
-        series.append(in_set)
-        series.append(out_set)
+        series.append(set0)
+        
         chart = QChart()
         chart.addSeries(series)
-        chart.setTitle("Stock In/Out Value")
+        chart.setTitle("Stock Value Movement")
         chart.setAnimationOptions(QChart.SeriesAnimations)
+        
+        categories = ["Stock In", "Stock Out"]
+        axis_x = QBarCategoryAxis()
+        axis_x.append(categories)
+        chart.addAxis(axis_x, Qt.AlignBottom)
+        series.attachAxis(axis_x)
+        
         axis_y = QValueAxis()
         chart.addAxis(axis_y, Qt.AlignLeft)
         series.attachAxis(axis_y)
+        
+        chart.legend().setVisible(False)
         self.stock_chart_view.setChart(chart)
-        self.stock_chart_view.setRenderHint(QPainter.Antialiasing)
 
-        # Fetch procurement list: list of suppliers (References), items, quantity, unit price, total
-        cur.execute("""
-            SELECT "References", UniformName, UniformInventory.Quantity, Price, (UniformInventory.Quantity * Price) 
-            FROM UniformInventory 
-            JOIN Uniform ON UniformInventory.UniformID = Uniform.UniformId 
-            WHERE Type = 'In' AND Date BETWEEN ? AND ?
-        """, (from_date, to_date))
-        proc_rows = cur.fetchall()
-        self.procurement_table.setRowCount(len(proc_rows))
-        self.procurement_table.setColumnCount(5)
-        # Populate procurement table
-        for i, row in enumerate(proc_rows):
-            for j, val in enumerate(row):
-                self.procurement_table.setItem(i, j, QTableWidgetItem(str(val)))
+    def update_expense_chart(self, data):
+        series = QPieSeries()
+        for cat, total in data:
+            series.append(cat, total)
+        
+        if not data:
+             series.append("No Expenses", 1)
+        
+        chart = QChart()
+        chart.addSeries(series)
+        chart.setTitle("Expenses by Category")
+        chart.setAnimationOptions(QChart.SeriesAnimations)
+        chart.legend().setAlignment(Qt.AlignRight)
+        
+        self.expense_chart_view.setChart(chart)
 
-        # Fetch expense rows grouped by category
-        cur.execute("""
-            SELECT sc.SubCategoryName, SUM(e.ExpAmount)
-            FROM Expenses e
-            JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
-            WHERE e.ExpDate BETWEEN ? AND ?
-            GROUP BY sc.SubCategoryName
-        """, (from_date, to_date))
-        exp_rows = cur.fetchall()
-
-        # Populate expense table and create pie chart for expenses
-        self.expense_table.setRowCount(len(exp_rows))
-        self.expense_table.setColumnCount(2)
-        self.expense_table.setHorizontalHeaderLabels(["Category", "Total Amount"])
-        for i, (cat, total) in enumerate(exp_rows):
-            self.expense_table.setItem(i, 0, QTableWidgetItem(cat))
-            self.expense_table.setItem(i, 1, QTableWidgetItem(f"{total:.2f}"))
-        pie_series = QPieSeries()
-        for cat, total in exp_rows:
-            pie_series.append(cat, total)
-        exp_chart = QChart()
-        exp_chart.addSeries(pie_series)
-        exp_chart.setTitle("Expense Categories")
-        exp_chart.setAnimationOptions(QChart.SeriesAnimations)
-        self.expense_chart_view.setChart(exp_chart)
-        self.expense_chart_view.setRenderHint(QPainter.Antialiasing)
     def export_pdf(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
         if not file_path:
@@ -5656,44 +6000,51 @@ class ReportGenerator(QWidget):
         doc = QTextDocument()
         html = """
         <style>
-            body { font-family: Arial, sans-serif; color: #2D3748; background-color: #F5F7FA; padding: 20px; }
-            h1 { color: #1A365D; text-align: center; }
-            h2 { color: #4299E1; border-bottom: 2px solid #E0E3E7; padding-bottom: 5px; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background-color: #FFFFFF; border-radius: 5px; overflow: hidden; }
-            th { background-color: #F7FAFC; padding: 10px; text-align: left; border-bottom: 1px solid #E0E3E7; }
-            td { padding: 10px; border-bottom: 1px solid #E0E3E7; }
-            .footer { text-align: center; font-size: 12px; color: #718096; margin-top: 40px; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; color: #2D3748; }
+            h1 { color: #1A365D; text-align: center; margin-bottom: 20px; }
+            h2 { color: #2B6CB0; border-bottom: 2px solid #E2E8F0; padding-bottom: 5px; margin-top: 20px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            th { background-color: #F7FAFC; padding: 8px; text-align: left; border-bottom: 2px solid #E2E8F0; color: #4A5568; }
+            td { padding: 8px; border-bottom: 1px solid #E2E8F0; }
+            .summary { margin: 20px 0; padding: 15px; background-color: #F7FAFC; border-radius: 5px; }
+            .summary-item { margin-bottom: 5px; font-size: 14px; }
         </style>
-        <h1>Uniform Management Report</h1>
         """
+        
+        html += f"<h1>Uniforms Report</h1>"
+        html += f"<p style='text-align: center; color: #718096;'>Period: {self.from_date.text()} to {self.to_date.text()}</p>"
+        
+        # Summary Section
+        html += "<div class='summary'>"
+        html += f"<div class='summary-item'><b>Current Stock Value:</b> {self.card_stock_value.value_label.text()}</div>"
+        html += f"<div class='summary-item'><b>Total Stock In:</b> {self.card_stock_in.value_label.text()}</div>"
+        html += f"<div class='summary-item'><b>Total Stock Out:</b> {self.card_stock_out.value_label.text()}</div>"
+        html += f"<div class='summary-item'><b>Total Expenses:</b> {self.card_expenses.value_label.text()}</div>"
+        html += "</div>"
 
-        # Add current stock
-        html += "<h2>Current Stock</h2>"
-        html += f"<p>{self.current_stock_label.text()}</p>"
-
-        # Add stock in
-        html += "<h2>Stock In</h2>"
-        html += f"<p>{self.stock_in_label.text()}</p>"
-
-        # Add stock out
-        html += "<h2>Stock Out</h2>"
-        html += f"<p>{self.stock_out_label.text()}</p>"
-
-        # Add procurement table
-        html += "<h2>Procurement List</h2><table><tr><th>Supplier</th><th>Item</th><th>Quantity</th><th>Unit Price</th><th>Total</th></tr>"
+        # Procurement Table
+        html += "<h2>Procurement List (Stock In)</h2>"
+        html += "<table><tr><th>Supplier</th><th>Item</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>"
         for row in range(self.procurement_table.rowCount()):
-            html += "<tr>" + "".join(f"<td>{self.procurement_table.item(row, col).text()}</td>" for col in range(5)) + "</tr>"
+            html += "<tr>"
+            for col in range(5):
+                item = self.procurement_table.item(row, col)
+                html += f"<td>{item.text() if item else ''}</td>"
+            html += "</tr>"
         html += "</table>"
 
-        # Add expense table
-        html += "<h2>Expense List</h2><table><tr><th>Category</th><th>Total Amount</th></tr>"
+        # Expense Table
+        html += "<h2>Expense List</h2>"
+        html += "<table><tr><th>Category</th><th>Total Amount</th></tr>"
         for row in range(self.expense_table.rowCount()):
-            html += "<tr>" + "".join(f"<td>{self.expense_table.item(row, col).text()}</td>" for col in range(2)) + "</tr>"
+            html += "<tr>"
+            for col in range(2):
+                item = self.expense_table.item(row, col)
+                html += f"<td>{item.text() if item else ''}</td>"
+            html += "</tr>"
         html += "</table>"
-
-        # Add footer
-        export_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        html += f'<div class="footer">Generated by Grok Report System on {export_date}</div>'
+        
+        html += f"<p style='margin-top: 30px; font-size: 10px; color: #A0AEC0; text-align: center;'>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
 
         doc.setHtml(html)
         doc.print_(printer)
@@ -5704,70 +6055,76 @@ class ReportGenerator(QWidget):
         if not file_path:
             return
 
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Report"
-        row = 1
-
-        # Title
-        ws.cell(row, 1, "Uniform Management Report").font = Font(size=16, bold=True)
-        ws.merge_cells('A1:E1')
-        ws['A1'].alignment = Alignment(horizontal='center')
-        row += 2
-
-        # Add current stock
-        ws.cell(row, 1, "Current Stock").font = Font(bold=True)
-        row += 1
-        ws.cell(row, 1, self.current_stock_label.text())
-        row += 2
-
-        # Add stock in
-        ws.cell(row, 1, "Stock In").font = Font(bold=True)
-        row += 1
-        ws.cell(row, 1, self.stock_in_label.text())
-        row += 2
-
-        # Add stock out
-        ws.cell(row, 1, "Stock Out").font = Font(bold=True)
-        row += 1
-        ws.cell(row, 1, self.stock_out_label.text())
-        row += 2
-
-        # Add procurement list
-        ws.cell(row, 1, "Procurement List").font = Font(bold=True)
-        row += 1
-        headers = ["Supplier", "Item", "Quantity", "Unit Price", "Total"]
-        for c, h in enumerate(headers, 1):
-            cell = ws.cell(row, c, h)
-            cell.font = Font(bold=True)
-            cell.border = Border(bottom=Side(style='thin'))
-        row += 1
-        for r in range(self.procurement_table.rowCount()):
-            for c in range(5):
-                val = self.procurement_table.item(r, c).text()
-                try:
-                    ws.cell(row, c+1, float(val) if c >= 3 else val)
-                except ValueError:
-                    ws.cell(row, c+1, val)
+        try:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Uniform Report"
+            
+            # Styles
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="1A365D", end_color="1A365D", fill_type="solid")
+            
+            row = 1
+            ws.cell(row, 1, "Uniforms Report").font = Font(size=16, bold=True, color="1A365D")
             row += 1
-        row += 1
-
-        # Add expense list
-        ws.cell(row, 1, "Expense List").font = Font(bold=True)
-        row += 1
-        exp_headers = ["Category", "Total Amount"]
-        for c, h in enumerate(exp_headers, 1):
-            cell = ws.cell(row, c, h)
-            cell.font = Font(bold=True)
-            cell.border = Border(bottom=Side(style='thin'))
-        row += 1
-        for r in range(self.expense_table.rowCount()):
-            for c in range(2):
-                val = self.expense_table.item(r, c).text()
-                try:
-                    ws.cell(row, c+1, float(val[1:]) if c == 1 else val)  # Remove  for amount
-                except ValueError:
+            ws.cell(row, 1, f"Period: {self.from_date.text()} to {self.to_date.text()}")
+            row += 2
+            
+            # Summary
+            ws.cell(row, 1, "Summary").font = Font(bold=True, size=12)
+            row += 1
+            ws.cell(row, 1, "Current Stock Value"); ws.cell(row, 2, self.card_stock_value.value_label.text())
+            row += 1
+            ws.cell(row, 1, "Total Stock In"); ws.cell(row, 2, self.card_stock_in.value_label.text())
+            row += 1
+            ws.cell(row, 1, "Total Stock Out"); ws.cell(row, 2, self.card_stock_out.value_label.text())
+            row += 1
+            ws.cell(row, 1, "Total Expenses"); ws.cell(row, 2, self.card_expenses.value_label.text())
+            row += 2
+            
+            # Procurement
+            ws.cell(row, 1, "Procurement List").font = Font(bold=True, size=12)
+            row += 1
+            headers = ["Supplier", "Item", "Qty", "Unit Price", "Total"]
+            for col, h in enumerate(headers, 1):
+                cell = ws.cell(row, col, h)
+                cell.font = header_font
+                cell.fill = header_fill
+            row += 1
+            
+            for r in range(self.procurement_table.rowCount()):
+                for c in range(5):
+                    val = self.procurement_table.item(r, c).text()
                     ws.cell(row, c+1, val)
+                row += 1
+            row += 2
+            
+            # Expenses
+            ws.cell(row, 1, "Expense List").font = Font(bold=True, size=12)
+            row += 1
+            headers = ["Category", "Total Amount"]
+            for col, h in enumerate(headers, 1):
+                cell = ws.cell(row, col, h)
+                cell.font = header_font
+                cell.fill = header_fill
+            row += 1
+            
+            for r in range(self.expense_table.rowCount()):
+                for c in range(2):
+                    val = self.expense_table.item(r, c).text()
+                    ws.cell(row, c+1, val)
+                row += 1
+                
+            wb.save(file_path)
+            QMessageBox.information(self, "Success", "Excel exported successfully")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to export Excel: {str(e)}")
+
+            val = self.expense_table.item(r, c).text()
+            try:
+                ws.cell(row, c+1, float(val[1:]) if c == 1 else val)  # Remove  for amount
+            except ValueError:
+                ws.cell(row, c+1, val)
             row += 1
 
         # Add footer
