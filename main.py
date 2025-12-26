@@ -46,6 +46,8 @@ def get_db_connection_simple():
     except sqlite3.Error as e:
         print(f"Database connection error: {e}")
         raise
+
+
 ### Student Management Initial Start ###
 class StudentManagement(QWidget):
     def __init__(self):
@@ -261,62 +263,18 @@ class StudentsTab(QWidget):
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                         self.table.setItem(row, col, item)
                     
-                    # Create action buttons widget
+                    # Create action ComboBox
                     student_id = row_data[0]
-                    
-                    actions_widget = QWidget()
-                    actions_layout = QHBoxLayout(actions_widget)
-                    actions_layout.setContentsMargins(2, 2, 2, 2)
-                    actions_layout.setSpacing(4)
-                    
-                    # Edit button with fixed size
-                    edit_btn = QPushButton("Edit")
-                    edit_btn.setFixedSize(60, 28)  # Larger size for better visibility
-                    edit_btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #48BB78;
-                            color: white;
-                            border: none;
-                            border-radius: 4px;
-                            font-size: 11px;
-                            font-weight: bold;
-                        }
-                        QPushButton:hover {
-                            background-color: #38A169;
-                        }
-                        QPushButton:pressed {
-                            background-color: #2F855A;
-                        }
-                    """)
-                    edit_btn.clicked.connect(lambda checked, sid=row_data[0]: self.edit_student(sid))
-                    
-                    # Delete button with fixed size
-                    delete_btn = QPushButton("Delete")
-                    delete_btn.setFixedSize(60, 28)  # Larger size for better visibility
-                    delete_btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #F56565;
-                            color: white;
-                            border: none;
-                            border-radius: 4px;
-                            font-size: 11px;
-                            font-weight: bold;
-                        }
-                        QPushButton:hover {
-                            background-color: #E53E3E;
-                        }
-                        QPushButton:pressed {
-                            background-color: #C53030;
-                        }
-                    """)
-                    delete_btn.clicked.connect(lambda checked, sid=row_data[0]: self.delete_student(sid))
-                    
-                    actions_layout.addWidget(edit_btn)
-                    actions_layout.addWidget(delete_btn)
-                    actions_layout.addStretch()
-                    
-                    # Set the widget
-                    self.table.setCellWidget(row, 7, actions_widget)
+
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Select Action", "Edit", "Delete"])
+
+                    # Connect directly with lambda
+                    action_combo.currentIndexChanged.connect(
+                        lambda index, sid=student_id, cb=action_combo: self.on_action_selected(index, sid, cb)
+                    )
+                    # Set the ComboBox in the cell
+                    self.table.setCellWidget(row, 7, action_combo)
                 
                 # Update results count
                 count = self.table.rowCount()
@@ -327,6 +285,19 @@ class StudentsTab(QWidget):
                 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
+
+    def on_action_selected(self, index, student_id, combo_box):
+        """Handle action selection directly"""
+        if index == 0:  # "Select Action"
+            return
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset to "Select Action"
+        
+        if action == "Edit":
+            self.edit_student(student_id)
+        elif action == "Delete":
+            self.delete_student(student_id)
 
     def edit_student(self, student_id):
         try:
@@ -581,91 +552,41 @@ class EnrollmentsTab(QWidget):
                     class_name = row_data[3]       # ClassName
                     term_name = row_data[4]        # TermName
                     
-                    # Create actions widget with proper sizing (now includes Pay Fee button)
-                    actions_widget = QWidget()
-                    actions_widget.setFixedWidth(210)  # Increased width for 3 buttons
-                    actions_layout = QHBoxLayout(actions_widget)
-                    actions_layout.setContentsMargins(0, 0, 0, 0)
-                    actions_layout.setSpacing(5)
+                    # Create action ComboBox with 3 actions
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Select Action","Pay Fee", "Edit", "Delete"])
+                    # Connect directly with lambda
+                    action_combo.currentIndexChanged.connect(
+                        lambda index, stid=student_term_id, sid=student_id, cname=class_name, tname=term_name, cb=action_combo: self.on_enrollment_action_selected(index, stid, sid, cname, tname, cb)
+                    )
+
+                    # Set the ComboBox in the cell
+                    self.table.setCellWidget(row, 6, action_combo)
                     
-                    # Pay Fee button
-                    pay_btn = QPushButton("Pay Fee")
-                    pay_btn.setFixedSize(60, 28)
-                    pay_btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #4299E1;
-                            color: white;
-                            border: none;
-                            border-radius: 4px;
-                            font-size: 11px;
-                            font-weight: bold;
-                        }
-                        QPushButton:hover {
-                            background-color: #3182CE;
-                        }
-                        QPushButton:pressed {
-                            background-color: #2B6CB0;
-                        }
-                    """)
-                    pay_btn.clicked.connect(lambda checked, stid=student_term_id: self.pay_fee(stid))
-                    
-                    # Edit button
-                    edit_btn = QPushButton("Edit")
-                    edit_btn.setFixedSize(60, 28)
-                    edit_btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #48BB78;
-                            color: white;
-                            border: none;
-                            border-radius: 4px;
-                            font-size: 11px;
-                            font-weight: bold;
-                        }
-                        QPushButton:hover {
-                            background-color: #38A169;
-                        }
-                        QPushButton:pressed {
-                            background-color: #2F855A;
-                        }
-                    """)
-                    edit_btn.clicked.connect(lambda checked, tid=student_term_id: self.edit_enrollment(tid))
-                    
-                    # Delete button
-                    delete_btn = QPushButton("Delete")
-                    delete_btn.setFixedSize(60, 28)
-                    delete_btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #F56565;
-                            color: white;
-                            border: none;
-                            border-radius: 4px;
-                            font-size: 11px;
-                            font-weight: bold;
-                        }
-                        QPushButton:hover {
-                            background-color: #E53E3E;
-                        }
-                        QPushButton:pressed {
-                            background-color: #C53030;
-                        }
-                    """)
-                    delete_btn.clicked.connect(lambda checked, tid=student_term_id: self.delete_enrollment(tid))
-                    
-                    actions_layout.addWidget(pay_btn)
-                    actions_layout.addWidget(edit_btn)
-                    actions_layout.addWidget(delete_btn)
-                    
-                    self.table.setCellWidget(row, 6, actions_widget)
-                    
-                    # Set row height to accommodate buttons
-                    self.table.setRowHeight(row, 40)
+                    # Set proper row height
+                    self.table.setRowHeight(row, 36)
                 
                 count = self.table.rowCount()
                 self.results_label.setText(f"{count} results")
                 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")    
-    
+
+    def  on_enrollment_action_selected(self, index, student_term_id, student_id, class_name, term_name, combo_box):
+        """Handle enrollment action selection directly"""
+        if index == 0:  # "Select Action"
+            return
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset to "Select Action"
+        
+        if action == "Pay Fee":
+            self.pay_fee(student_term_id)
+        elif action == "Edit":
+            self.edit_enrollment(student_term_id)
+        elif action == "Delete":
+            self.delete_enrollment(student_term_id) 
+
     def edit_enrollment(self, student_term_id):
         try:
             with get_db_connection() as (conn, c):
@@ -765,77 +686,6 @@ class EnrollmentsTab(QWidget):
             for t in terms:
                 term_combo.addItem(t[1], t[0])
     
-    def add_action_buttons(self, row, student_term_id, student_id, class_name, term_name):
-        """Add action buttons including Pay Fee button"""
-        actions_widget = QWidget()
-        actions_widget.setFixedWidth(220)  # Increased width for additional button
-        actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(5, 2, 5, 2)
-        actions_layout.setSpacing(5)
-        
-        # Pay Fee button
-        pay_btn = QPushButton("Pay Fee")
-        pay_btn.setFixedSize(60, 28)
-        pay_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QPushButton:pressed {
-                background-color: #2B6CB0;
-            }
-        """)
-        pay_btn.clicked.connect(lambda checked, stid=student_term_id: self.pay_fee(stid))
-        
-        # Edit button
-        edit_btn = QPushButton("Edit")
-        edit_btn.setFixedSize(60, 28)
-        edit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #48BB78;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #38A169;
-            }
-        """)
-        edit_btn.clicked.connect(lambda checked, stid=student_term_id: self.edit_enrollment(stid))
-        
-        # Delete button
-        delete_btn = QPushButton("Delete")
-        delete_btn.setFixedSize(60, 28)
-        delete_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F56565;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #E53E3E;
-            }
-        """)
-        delete_btn.clicked.connect(lambda checked, stid=student_term_id: self.delete_enrollment(stid))
-        
-        actions_layout.addWidget(pay_btn)
-        actions_layout.addWidget(edit_btn)
-        actions_layout.addWidget(delete_btn)
-        actions_layout.addStretch()
-        
-        self.table.setCellWidget(row, 5, actions_widget)  # Adjust column index as needed
 
     def pay_fee(self, student_term_id):
         """Open fee payment dialog for a specific student term enrollment"""
@@ -1563,11 +1413,17 @@ class Window(QMainWindow):
     def apply_styles(self):
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #F5F7FA;
+                background-color: #F7FAFC;
             }
             QWidget#sidebar {
                 background-color: #FFFFFF;
                 border-right: 1px solid #E0E3E7;
+            }
+            QWidget#centralWidget {
+                background-color: #F7FAFC;
+            }
+            QWidget#contentWidget {
+                background-color: #F7FAFC;
             }
             QPushButton {
                 background-color: transparent;
@@ -1593,29 +1449,37 @@ class Window(QMainWindow):
                 font-size: 24px;
                 font-weight: bold;
                 color: #2D3748;
+                background: transparent;
+                border: none;
             }
             QLabel#school_name {
                 font-size: 18px;
                 color: #4A5568;
+                background: transparent;
+                border: none;
             }
             QWidget#separator {
                 background-color: #E0E3E7;
             }
             QScrollArea {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E3E7;
+                background-color: #F7FAFC;
+                border: none;
                 border-radius: 5px;
             }
-            QScrollArea QWidget {
-                background-color: transparent;
+            QScrollArea > QWidget {
+                background-color: #F7FAFC;
             }
         """)
         # Set object names for specific styling
+        self.central_widget.setObjectName("centralWidget")
+        self.content.setObjectName("contentWidget")
         self.sidebar.setObjectName("sidebar")
         self.toggle_btn.setObjectName("toggle_btn")
         self.page_title.setObjectName("page_title")
         self.school_name.setObjectName("school_name")
         self.separator.setObjectName("separator")
+        # Ensure body widget has proper background
+        self.body.setStyleSheet("QStackedWidget { background-color: #F7FAFC; }")
     
 class AcademicYearTerm(QWidget):
     def __init__(self):
@@ -1748,21 +1612,22 @@ class AcademicYearTerm(QWidget):
                     for col, data in enumerate(row_data):
                         self.table.setItem(row, col, QTableWidgetItem(str(data)))
                     
-                    action_widget = QWidget()
-                    action_layout = QHBoxLayout(action_widget)
-                    action_layout.setContentsMargins(5, 0, 5, 0)
-                    action_layout.setSpacing(5)
+                    # Actions - ComboBox
+                    row_number = row
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Select Action", "Edit", "Delete"])
                     
-                    edit_btn = QPushButton("Edit")
-                    edit_btn.clicked.connect(lambda _, r=row: self.editTerm(r))
-                    delete_btn = QPushButton("Delete")
-                    delete_btn.clicked.connect(lambda _, r=row: self.deleteTerm(r))
-                    delete_btn.setObjectName("delete")
+                    # Store term identification data (Year and TermName) for the callback
+                    year = row_data[0]
+                    term_name = row_data[1]
                     
-                    action_layout.addWidget(edit_btn)
-                    action_layout.addWidget(delete_btn)
-                    action_layout.addStretch()
-                    self.table.setCellWidget(row, 4, action_widget)
+                    # Connect with lambda that captures the term data
+                    action_combo.currentIndexChanged.connect(
+                        lambda index, y=year, tn=term_name, cb=action_combo: 
+                        self.on_term_action_selected(index, y, tn, cb)
+                    )
+                    
+                    self.table.setCellWidget(row, 4, action_combo)
 
                 # Ensure header stretches after data reload
                 self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -1770,6 +1635,19 @@ class AcademicYearTerm(QWidget):
                 
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Database Error", f"Failed to load data: {str(e)}")
+    
+    def on_term_action_selected(self, index, year, term_name, combo_box):
+        """Handle term action selection"""
+        if index == 0:  # "Select Action"
+            return
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset to "Select Action"
+        
+        if action == "Edit":
+            self.edit_term(year, term_name)
+        elif action == "Delete":
+            self.delete_term(year, term_name)
 
     def update_results_count(self):
         count = self.table.rowCount()
@@ -2592,22 +2470,30 @@ class Class(QWidget):
             # ClassName, Year
             self.table.setItem(row, 0, QTableWidgetItem(str(row_data[1])))
             self.table.setItem(row, 1, QTableWidgetItem(str(row_data[2])))
-            action_widget = QWidget()
-            action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(5, 0, 5, 0)
-            action_layout.setSpacing(5)
-            edit_btn = QPushButton("Edit")
-            edit_btn.clicked.connect(lambda _, cid=row_data[0]: self.editClass(cid))
-            delete_btn = QPushButton("Delete")
-            delete_btn.clicked.connect(lambda _, cid=row_data[0]: self.deleteClass(cid))
-            delete_btn.setObjectName("delete")
-            action_layout.addWidget(edit_btn)
-            action_layout.addWidget(delete_btn)
-            action_layout.addStretch()
-            self.table.setCellWidget(row, 2, action_widget)
+            
+            # Create action ComboBox
+            class_id = row_data[0]
+            action_combo = QComboBox()
+            action_combo.addItems(["Select Action","Edit","Delete"])
+            action_combo.currentIndexChanged.connect(lambda index, r=row, cid=class_id: self.handle_class_action(index, r, cid))
+            
+            self.table.setCellWidget(row, 2, action_combo)
         # self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.update_results_count()
+    
+    def handle_class_action(self, index, row, class_id):
+        action = self.table.cellWidget(row, 2).itemData(index)
+        if index == 0:  # "Select Action"
+            return
+
+        action = self.table.cellWidget(row, 2).itemText(index)
+        self.table.cellWidget(row, 2).setCurrentIndex(0)  # Reset to "Select Action"
+
+        if action == "Edit":
+            self.editClass(class_id)
+        elif action == "Delete":
+            self.deleteClass(class_id)    
 
     def update_results_count(self):
         count = self.table.rowCount()
@@ -2996,58 +2882,25 @@ class FeesManagementPage(QWidget):
             QMessageBox.critical(self, "Database Error", f"Error loading fees data: {str(e)}")
 
     def add_action_buttons(self, row, fees_id):
-        """Add edit and delete buttons to table row for fees"""
-        actions_widget = QWidget()
-        actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(5)
-        
-        # Edit button
-        edit_btn = QPushButton("Edit")
-        edit_btn.setFixedSize(50, 25)
-        edit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #48BB78;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #38A169;
-            }
-            QPushButton:pressed {
-                background-color: #2F855A;
-            }
-        """)
-        edit_btn.clicked.connect(lambda: self.edit_fee(fees_id))
-        
-        # Delete button
-        delete_btn = QPushButton("Delete")
-        delete_btn.setFixedSize(50, 25)
-        delete_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F56565;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #E53E3E;
-            }
-            QPushButton:pressed {
-                background-color: #C53030;
-            }
-        """)
-        delete_btn.clicked.connect(lambda: self.delete_fee(fees_id))
-        
-        actions_layout.addWidget(edit_btn)
-        actions_layout.addWidget(delete_btn)
-        actions_layout.addStretch()
+        """Add action ComboBox to table row for fees"""
+        action_combo = QComboBox()
+        action_combo.addItems(["Select Action","Edit","Delete"])
+        action_combo.currentIndexChanged.connect(lambda index, fid=fees_id: self.handle_fee_action(index, fid, row))
         
         # Set the widget in the Actions column (column 4)
-        self.table.setCellWidget(row, 4, actions_widget)
+        self.table.setCellWidget(row, 4, action_combo)
+
+    def handle_fee_action(self, index, fees_id, row):
+        if index == 0:  # "Select Action"
+            return
+
+        action = self.table.cellWidget(row, 4).itemText(index)
+        self.table.cellWidget(row, 4).setCurrentIndex(0)  # Reset to "Select Action"
+
+        if action == "Edit":
+            self.edit_fee(fees_id)
+        elif action == "Delete":
+            self.delete_fee(fees_id)    
 
     def edit_fee(self, fees_id):
         """Edit fee record"""
@@ -5018,27 +4871,31 @@ class UniformDashBoard(QWidget):
         return plt.cm.Set3(range(n))
 
     def add_uniform_action_buttons(self, row, uniform_id):
-        actions_widget = QWidget()
-        actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(5, 2, 5, 2)
-        actions_layout.setSpacing(3)
-
-        edit_btn = QPushButton("Edit")
-        edit_btn.setFixedWidth(50)
-        edit_btn.setStyleSheet("font-size: 11px; padding: 3px;")
-        edit_btn.clicked.connect(lambda: self.edit_uniform(uniform_id))
+        # Create action ComboBox
+        action_combo = QComboBox()
+        action_combo.addItems(["Select Action", "Edit", "Delete"])
         
-        delete_btn = QPushButton("Delete")
-        delete_btn.setFixedWidth(50)
-        delete_btn.setStyleSheet("font-size: 11px; padding: 3px;")
-        delete_btn.clicked.connect(lambda: self.delete_uniform(uniform_id))
+        # Direct lambda approach
+        action_combo.currentIndexChanged.connect(
+            lambda index, uid=uniform_id, cb=action_combo: 
+            self.on_uniform_action_selected(index, uid, cb)
+        )
+        
+        self.uniform_table.setCellWidget(row, 4, action_combo)
 
-        actions_layout.addWidget(edit_btn)
-        actions_layout.addWidget(delete_btn)
-        actions_layout.addStretch()
-
-        self.uniform_table.setCellWidget(row, 4, actions_widget)
-
+    def on_uniform_action_selected(self, index, uniform_id, combo_box):
+        """Handle uniform action selection"""
+        if index == 0:  # "Select Action"
+            return
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset to "Select Action"
+        
+        if action == "Edit":
+            self.edit_uniform(uniform_id)
+        elif action == "Delete":
+            self.delete_uniform(uniform_id)
+   
     def show_add_uniform_dialog(self):
         """Show dialog to add new uniform"""
         dialog = UniformDialog(self)
@@ -6697,36 +6554,6 @@ class Supplies(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
         
-        # Stylesheet
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #E2E8F0;
-                border-radius: 5px;
-            }
-            QTableWidget {
-                border: 1px solid #E2E8F0;
-                gridline-color: #E2E8F0;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 8px;
-                border: none;
-                font-weight: bold;
-            }
-        """)
-
         self.header = QHBoxLayout()
         self.Heading = QLabel("Supplies")
         self.Heading.setStyleSheet("font-size: 18px; font-weight: bold; color: #2D3748;")
@@ -6779,30 +6606,28 @@ class Supplies(QWidget):
                     for col_idx, data in enumerate(row_data):
                         self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(data) if data is not None else ""))
                     
-                    # Actions
-                    action_widget = QWidget()
-                    action_layout = QHBoxLayout(action_widget)
-                    action_layout.setContentsMargins(5, 2, 5, 2)
-                    
-                    inv_btn = QPushButton("Inventory")
-                    inv_btn.setStyleSheet("background-color: #805AD5;")
-                    inv_btn.clicked.connect(lambda _, rid=row_data[0], rname=row_data[1]: self.manage_inventory(rid, rname))
-                    
-                    edit_btn = QPushButton("Edit")
-                    edit_btn.setStyleSheet("background-color: #38A169;")
-                    edit_btn.clicked.connect(lambda _, rid=row_data[0]: self.edit_supply(rid))
-                    
-                    del_btn = QPushButton("Delete")
-                    del_btn.setStyleSheet("background-color: #E53E3E;")
-                    del_btn.clicked.connect(lambda _, rid=row_data[0]: self.delete_supply(rid))
-                    
-                    action_layout.addWidget(inv_btn)
-                    action_layout.addWidget(edit_btn)
-                    action_layout.addWidget(del_btn)
-                    self.table.setCellWidget(row_idx, 5, action_widget)
+                    # Actions - ComboBox with 3 actions
+                    row_id = row_data[0]
+                    supply_name = row_data[1]
+                    action_combo =QComboBox()
+                    action_combo.addItems("Select Action","Manage","Edit","Delete")
+                    action_combo.currentIndexChanged.connect(lambda idx, rid=row_id, sname=supply_name: self.handle_action_change(idx, rid, sname, action_combo))
+                    self.table.setCellWidget(row_idx, 5, action_combo)
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
+    
+    def handle_action_change(self, index, supply_id, supply_name, combo):
+        action = combo.currentIndex()
+        if action == 0:
+            combo.setCurrentIndex(0)
+            return
+        elif action == 1:
+            self.manage_supply_inventory(supply_id, supply_name)
+        elif action == 2:
+            self.edit_supply(supply_id)
+        elif action == 3:
+            self.delete_supply(supply_id)    
 
     def show_add_supply_dialog(self):
         dialog = QDialog(self)
@@ -6947,6 +6772,7 @@ class Supplies(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Delete failed: {e}")
 
+
     def manage_inventory(self, supply_id, supply_name):
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Inventory: {supply_name}")
@@ -7024,37 +6850,7 @@ class SuppliesInventory(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout()
-        self.setLayout(layout)
-        
-        # Stylesheet
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #E2E8F0;
-                border-radius: 5px;
-            }
-            QTableWidget {
-                border: 1px solid #E2E8F0;
-                gridline-color: #E2E8F0;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 8px;
-                border: none;
-                font-weight: bold;
-            }
-        """)
+        self.setLayout(layout)       
 
         self.header = QHBoxLayout()
         self.Heading = QLabel("Supplies Inventory")
@@ -7232,36 +7028,6 @@ class Expense(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
-        # Stylesheet for consistency with Supplies/Supplies Inventory
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #E2E8F0;
-                border-radius: 5px;
-            }
-            QTableWidget {
-                border: 1px solid #E2E8F0;
-                gridline-color: #E2E8F0;
-            }
-            QHeaderView::section {
-                background-color: #F7FAFC;
-                padding: 8px;
-                border: none;
-                font-weight: bold;
-            }
-        """)
-
         self.header = QHBoxLayout()
         self.Heading = QLabel("Expenses")
         self.Heading.setStyleSheet("font-size: 18px; font-weight: bold; color: #2D3748;")
@@ -7351,25 +7117,23 @@ class Expense(QWidget):
                     self.table.setItem(idx, 4, QTableWidgetItem(str(row[4] if row[4] else "")))
                     self.table.setItem(idx, 5, QTableWidgetItem(str(row[5] if row[5] else "")))
 
-                    # Actions
-                    action_widget = QWidget()
-                    action_layout = QHBoxLayout(action_widget)
-                    action_layout.setContentsMargins(5, 2, 5, 2)
-
-                    edit_btn = QPushButton("Edit")
-                    edit_btn.setStyleSheet("background-color: #38A169; color: white;")
-                    edit_btn.clicked.connect(lambda _, rid=row[0]: self.edit_expense(rid))
-
-                    del_btn = QPushButton("Delete")
-                    del_btn.setStyleSheet("background-color: #E53E3E; color: white;")
-                    del_btn.clicked.connect(lambda _, rid=row[0]: self.delete_expense(rid))
-
-                    action_layout.addWidget(edit_btn)
-                    action_layout.addWidget(del_btn)
-                    self.table.setCellWidget(idx, 6, action_widget)
+                    # Actions - ComboBox
+                    row_id = row[0]
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Select Action","Edit","Delete"])
+                    action_combo.currentIndexChanged.connect(lambda i, rid=row_id: self.handle_action_change(i, rid, action_combo))
+                    self.table.setCellWidget(idx, 6, action_combo)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load expenses: {e}")
+    def handle_action_change(self, index, exp_id, combo):
+        action = combo.currentIndex()
+        if action == 0:
+            return
+        if action == 1:
+            self.edit_expense(exp_id)
+        elif action == 2:
+            self.delete_expense(exp_id)
 
     def add_expense(self):
         dialog = QDialog(self)
