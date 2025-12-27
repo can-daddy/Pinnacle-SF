@@ -210,7 +210,7 @@ class Dashboard(QWidget):
         try:
             terms = self.finance_service.get_all_terms()
             for term in terms:
-                self.term_selector.addItem(term['TermName'], term['TermID'])
+                self.term_selector.addItem(f"{term['TermName']} ({term['Year']})", term['TermID'])
         except Exception as e:
             print(f"Error loading terms: {e}")
 

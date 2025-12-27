@@ -18,7 +18,6 @@ from dashboard import Dashboard
 from reports_page import Reports
 
 
-
 # Enhanced connection function with context manager
 @contextmanager
 def get_db_connection():
@@ -168,7 +167,10 @@ class StudentsTab(QWidget):
         parent_name = parent_name_edit.text().strip()
         contact = contact_edit.text().strip()
         contact2 = contact2_edit.text().strip()
-        if not all([student_id, name, feepayer, status, parent_name, contact]):
+        if status_combo.currentIndex() == 0:
+            QMessageBox.warning(dialog, "Error", "Please select a valid PayRate")
+            return
+        if not all([student_id, name, feepayer, parent_name, contact]):
             QMessageBox.warning(dialog, "Error", "Required fields are missing")
             return
         try:
@@ -259,7 +261,7 @@ class StudentsTab(QWidget):
                     
                     # Add data columns
                     for col, data in enumerate(row_data):
-                        item = QTableWidgetItem(str(data) if data else "")
+                        item = QTableWidgetItem(str(data) if data else "0")
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                         self.table.setItem(row, col, item)
                     
@@ -392,6 +394,17 @@ class EnrollmentsTab(QWidget):
         self.search_input.setMaximumWidth(200)
         self.search_input.textChanged.connect(self.load_data)
 
+        self.AcademicYear_filter = QComboBox()
+        with get_db_connection() as (conn,c):
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY YEAR DESC")
+            for years in c.fetchall():
+                self.AcademicYear_filter.addItem(years[1],years[0])
+            if c.fetchall() is None:
+                self.AcademicYear_filter.addItem("No years",None)
+        self.AcademicYear_filter.currentIndexChanged.connect(self.load_data)
+
+
+
         self.class_filter = QComboBox()
         self.class_filter.addItem("All Classes", None)
         with get_db_connection() as (conn, c):
@@ -407,8 +420,10 @@ class EnrollmentsTab(QWidget):
             for t in c.fetchall():
                 self.term_filter.addItem(t[1], t[0])
         self.term_filter.currentIndexChanged.connect(self.load_data)
+        self.AcademicYear_filter.currentIndexChanged.connect(self.update_filters)
 
         filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(self.AcademicYear_filter)
         filter_layout.addWidget(self.class_filter)
         filter_layout.addWidget(self.term_filter)
         filter_layout.addStretch()
@@ -440,6 +455,42 @@ class EnrollmentsTab(QWidget):
         filter_layout.addWidget(self.results_label)
 
         self.load_data()
+    
+    def update_filters(self):
+        """Update class and term filters when academic year changes"""
+        year_id = self.AcademicYear_filter.currentData()
+        
+        # Update TERM dropdown (your exact requirement)
+        self.term_filter.clear()
+        self.term_filter.addItem("All Terms", None)
+        
+        if year_id:
+            with get_db_connection() as (conn, c):
+                # Simple query: get terms for selected academic year
+                c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ?", (year_id,))
+                for term_id, term_name in c.fetchall():
+                    self.term_filter.addItem(term_name, term_id)
+        
+        # Update CLASS dropdown (optional - if you want it too)
+        self.class_filter.clear()
+        self.class_filter.addItem("All Classes", None)
+        
+        if year_id:
+            with get_db_connection() as (conn, c):
+                # Get classes that have students in this academic year
+                c.execute("""
+                    SELECT DISTINCT c.ClassID, c.ClassName 
+                    FROM Class c
+                    WHERE EXISTS (
+                        SELECT 1 FROM StudentTerm s
+                        JOIN Term t ON s.TermID = t.TermID
+                        WHERE s.ClassID = c.ClassID AND t.AcademicYear = ?
+                    )
+                    ORDER BY c.ClassName
+                """, (year_id,))
+                
+                for class_id, class_name in c.fetchall():
+                    self.class_filter.addItem(class_name, class_id)
 
     def show_add_enrollment_dialog(self):
         dialog = QDialog(self)
@@ -504,10 +555,14 @@ class EnrollmentsTab(QWidget):
                         FROM StudentTerm st
                         LEFT JOIN Students s ON st.StudentID = s.StudentID
                         LEFT JOIN Class cl ON st.ClassID = cl.ClassID
-                        LEFT JOIN Term t ON st.TermID = t.TermID"""
+                        LEFT JOIN Term t ON st.TermID = t.TermID """
                 filters = []
                 params = ()
                 search_text = self.search_input.text().strip()
+                academic_Year = self.AcademicYear_filter.currentData()
+                if academic_Year:
+                    filters.append("t.AcademicYear = ?")
+                    params +=(academic_Year,)
                 if search_text:
                     filters.append("(s.StudentID LIKE ? OR s.Student_Name LIKE ?)")
                     params += (f"%{search_text}%", f"%{search_text}%")
@@ -543,7 +598,7 @@ class EnrollmentsTab(QWidget):
                     
                     # Add data columns (skip StudentTermID at index 0)
                     for col, data in enumerate(row_data[1:7]):  # Columns 1-5: StudentID, Name, Class, Term, FeePayer
-                        item = QTableWidgetItem(str(data) if data else "")
+                        item = QTableWidgetItem(str(data) if data else "0")
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make non-editable
                         self.table.setItem(row, col, item)
                     
@@ -1566,7 +1621,7 @@ class AcademicYearTerm(QWidget):
                 selected_year_id = self.year_filter.currentData()
                 
                 query = """
-                    SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate
+                    SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate, Term.TermID
                     FROM Term
                     JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
                 """
@@ -1609,26 +1664,25 @@ class AcademicYearTerm(QWidget):
                     row = self.table.rowCount()
                     self.table.insertRow(row)
                     self.table.setRowHeight(row, 50)
-                    for col, data in enumerate(row_data):
+                    
+                    # Display only first 4 columns (hide TermID)
+                    for col, data in enumerate(row_data[:4]):
                         self.table.setItem(row, col, QTableWidgetItem(str(data)))
                     
                     # Actions - ComboBox
-                    row_number = row
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action", "Edit", "Delete"])
                     
-                    # Store term identification data (Year and TermName) for the callback
-                    year = row_data[0]
-                    term_name = row_data[1]
+                    # Store term_id (5th column)
+                    term_id = row_data[4]
                     
-                    # Connect with lambda that captures the term data
+                    # Connect with lambda using term_id
                     action_combo.currentIndexChanged.connect(
-                        lambda index, y=year, tn=term_name, cb=action_combo: 
-                        self.on_term_action_selected(index, y, tn, cb)
+                        lambda index, tid=term_id, cb=action_combo: 
+                        self.on_term_action_selected_by_id(index, tid, cb)
                     )
                     
                     self.table.setCellWidget(row, 4, action_combo)
-
                 # Ensure header stretches after data reload
                 self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
                 self.update_results_count()
@@ -1636,18 +1690,19 @@ class AcademicYearTerm(QWidget):
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Database Error", f"Failed to load data: {str(e)}")
     
-    def on_term_action_selected(self, index, year, term_name, combo_box):
-        """Handle term action selection"""
-        if index == 0:  # "Select Action"
+    def on_term_action_selected_by_id(self, index, term_id, combo_box):
+        """Handle term action selection using term_id"""
+        if index == 0:
             return
         
         action = combo_box.itemText(index)
-        combo_box.setCurrentIndex(0)  # Reset to "Select Action"
+        combo_box.setCurrentIndex(0)
+        
         
         if action == "Edit":
-            self.edit_term(year, term_name)
+            self.editTerm_by_id(term_id)
         elif action == "Delete":
-            self.delete_term(year, term_name)
+            self.deleteTerm_by_id(term_id)
 
     def update_results_count(self):
         count = self.table.rowCount()
@@ -1891,29 +1946,25 @@ class AcademicYearTerm(QWidget):
         cancel_btn.clicked.connect(dialog.reject)
         dialog.exec_()
     
-    def editTerm(self, row):
-        # Get current term data from the table
-        year = self.table.item(row, 0).text()
-        term = self.table.item(row, 1).text()
-        start = self.table.item(row, 2).text()
-        end = self.table.item(row, 3).text()
-        
+    def editTerm_by_id(self, term_id):
+        """Edit term using term_id directly"""
         try:
             with get_db_connection() as (conn, c):
-                # Get the term's database ID
+                # Get term data using term_id
                 c.execute("""
-                    SELECT Term.TermID, AcademicYear.AcademicYearID
+                    SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate, 
+                        Term.TermID, AcademicYear.AcademicYearID
                     FROM Term
                     JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
-                    WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
-                """, (year, term, start, end))
+                    WHERE Term.TermID=?
+                """, (term_id,))
                 result = c.fetchone()
                 
             if not result:
                 QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
                 return
                 
-            term_id, year_id = result
+            year, term, start, end, term_id, year_id = result
 
             dialog = QDialog(self)
             dialog.setWindowTitle("Edit Term")
@@ -2067,31 +2118,26 @@ class AcademicYearTerm(QWidget):
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Database Error", f"Failed to load term data: {str(e)}")
     
-    def deleteTerm(self, row):
-        # Get current term data from the table
-        year = self.table.item(row, 0).text()
-        term = self.table.item(row, 1).text()
-        start = self.table.item(row, 2).text()
-        end = self.table.item(row, 3).text()
-        
+    def deleteTerm_by_id(self, term_id):
+        """Delete term using term_id directly"""
         try:
             with get_db_connection() as (conn, c):
-                # Get the term's database ID
+                # Get term details for display in confirmation message
                 c.execute("""
-                    SELECT Term.TermID
+                    SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate
                     FROM Term
                     JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
-                    WHERE AcademicYear.Year=? AND Term.TermName=? AND Term.StartDate=? AND Term.EndDate=?
-                """, (year, term, start, end))
+                    WHERE Term.TermID=?
+                """, (term_id,))
                 result = c.fetchone()
                 
             if not result:
                 QMessageBox.warning(self, "Error", "Could not find the selected term in the database.")
                 return
                 
-            term_id = result[0]
+            year, term, start, end = result
 
-            # Precaution message
+            # Confirmation message
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Warning)
             msg.setWindowTitle("Delete Term")
@@ -2104,6 +2150,7 @@ class AcademicYearTerm(QWidget):
             )
             msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             ret = msg.exec_()
+            
             if ret != QMessageBox.Yes:
                 return
 
@@ -2112,24 +2159,29 @@ class AcademicYearTerm(QWidget):
                     # Check for Fees relation
                     c.execute("SELECT 1 FROM Fees WHERE TermID = ?", (term_id,))
                     if c.fetchone():
-                        QMessageBox.critical(self, "Restricted", "This term cannot be deleted because it is linked to one or more fees records.")
+                        QMessageBox.critical(self, "Restricted", 
+                            "This term cannot be deleted because it is linked to one or more fees records.")
                         return
 
                     # Set Student.TermID to NULL for students assigned to this term
                     c.execute("UPDATE Student SET TermID = NULL WHERE TermID = ?", (term_id,))
-                    # Now delete the term
+                    
+                    # Delete the term
                     c.execute("DELETE FROM Term WHERE TermID = ?", (term_id,))
                     conn.commit()
-                    QMessageBox.information(self, "Deleted", f"Term '{term}' for academic year '{year}' has been deleted.\n\n"
-                                                             "Any students previously assigned to this term now have no term assigned.")
+                    
+                    QMessageBox.information(self, "Deleted", 
+                        f"Term '{term}' for academic year '{year}' has been deleted.\n\n"
+                        "Any students previously assigned to this term now have no term assigned.")
+                    
+                    # Refresh the table
                     self.Load_Data()
                     
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Error", f"An error occurred while deleting the term: {str(e)}")
                 
         except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to load term data: {str(e)}")
-    
+            QMessageBox.critical(self, "Database Error", f"Failed to load term data: {str(e)}")    
     def editYear(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit Academic Year")
@@ -2781,11 +2833,30 @@ class FeesManagementPage(QWidget):
         layout.setSpacing(15)
         # Filters and add buttons
         filter_layout = QHBoxLayout()
-        search_input = QLineEdit()
-        search_input.setPlaceholderText("Search...")
-        search_input.setMaximumWidth(200)
-        # Add more filters as needed, e.g., class_filter, term_filter
-        filter_layout.addWidget(search_input)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search...")
+        self.search_input.setMaximumWidth(200)
+        self.search_input.textChanged.connect(self.load_data)
+        self.AcademicYear_filter = QComboBox()
+        with get_db_connection() as (conn,c):
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY YEAR DESC")
+            for years in c.fetchall():
+                self.AcademicYear_filter.addItem(years[1],years[0])
+            if c.fetchall() is None:
+                self.AcademicYear_filter.addItem("No years",None)
+        self.AcademicYear_filter.currentIndexChanged.connect(self.load_data)
+        self.term_filter = QComboBox()
+        self.term_filter.addItem("All Terms", None)
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT TermID, TermName FROM Term")
+            for t in c.fetchall():
+                self.term_filter.addItem(t[1], t[0])
+        self.term_filter.currentIndexChanged.connect(self.load_data)
+        self.AcademicYear_filter.currentIndexChanged.connect(lambda: self.update_term_combo())
+
+        filter_layout.addWidget(self.search_input)
+        filter_layout.addWidget(self.AcademicYear_filter)
+        filter_layout.addWidget(self.term_filter)
         filter_layout.addStretch()
         add_btn = QPushButton("Add Fee Structure")
         add_btn.clicked.connect(self.show_add_fee_dialog)
@@ -2808,6 +2879,18 @@ class FeesManagementPage(QWidget):
 
         # Load data (placeholder)
         self.load_data()
+ 
+
+    def update_term_combo(self):
+        year_id = self.AcademicYear_filter.currentData()
+        self.term_filter.clear()
+        self.term_filter.addItem("All Terms", None)
+        
+        if year_id:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ?", (year_id,))
+                for tid, tname in c.fetchall():
+                    self.term_filter.addItem(tname, tid)
 
     def load_data(self):
         try:
@@ -2833,17 +2916,23 @@ class FeesManagementPage(QWidget):
                 params = []
                 
                 # Example: Add search filter if needed
-                search_text = self.Search_Input.text().strip() if hasattr(self, 'Search_Input') else ""
+                search_text = self.search_input.text().strip() if hasattr(self, 'search_input') else ""
                 if search_text:
                     filters.append("(ay.Year LIKE ? OR t.TermName LIKE ? OR c.ClassName LIKE ? OR f.Amount LIKE ?)")
                     params.extend([f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%"])
-                
-                # Apply filters if any
+                # academic year filter
+                selected_year_id = self.AcademicYear_filter.currentData()
+                if selected_year_id:
+                    filters.append("ay.AcademicYearID = ?")
+                    params.append(selected_year_id)
+                # term filter
+                selected_term_id = self.term_filter.currentData()
+                if selected_term_id:
+                    filters.append("t.TermID = ?")
+                    params.append(selected_term_id)
                 if filters:
                     query += " WHERE " + " AND ".join(filters)
-                
-                # Add ordering
-                query += " ORDER BY ay.Year, t.TermName, c.ClassName"
+                    query += " ORDER BY ay.Year DESC, t.TermName, c.ClassName"
                 
                 # Execute query
                 c.execute(query, params)
@@ -3844,7 +3933,11 @@ class PaymentHistoryPage(QWidget):
             }
         """)
         header_layout.addWidget(delete_selected_btn)
-        
+        self.table = QTableWidget()
+        # Summary label
+        self.summary_label = QLabel()
+        self.summary_label.setStyleSheet("font-weight: bold; color: #2D3748;")
+
         layout.addLayout(header_layout)
 
         # Filters
@@ -3869,6 +3962,11 @@ class PaymentHistoryPage(QWidget):
         self.date_to.setDisplayFormat("yyyy-MM-dd")
         self.date_to.dateChanged.connect(self.load_data)
         
+        # Academic Year filter
+        self.year_combo = QComboBox()
+        self.year_combo.currentIndexChanged.connect(self.update_class_term_filters)
+        self.year_combo.currentIndexChanged.connect(self.load_data)
+        
         # Class filter
         self.class_combo = QComboBox()
         self.class_combo.addItem("All Classes", None)
@@ -3888,6 +3986,8 @@ class PaymentHistoryPage(QWidget):
         filter_layout.addWidget(self.date_from)
         filter_layout.addWidget(QLabel("To:"))
         filter_layout.addWidget(self.date_to)
+        filter_layout.addWidget(QLabel("Year:"))
+        filter_layout.addWidget(self.year_combo)
         filter_layout.addWidget(QLabel("Class:"))
         filter_layout.addWidget(self.class_combo)
         filter_layout.addWidget(QLabel("Term:"))
@@ -3896,7 +3996,6 @@ class PaymentHistoryPage(QWidget):
         layout.addLayout(filter_layout)
 
         # Table for raw payment data with Actions column
-        self.table = QTableWidget()
         self.table.setColumnCount(11)  # Added Actions column
         self.table.setHorizontalHeaderLabels([
             "Payment ID", "Student", "Student ID", "Class", "Term", 
@@ -3924,29 +4023,67 @@ class PaymentHistoryPage(QWidget):
         
         layout.addWidget(self.table)
         
-        # Summary label
-        self.summary_label = QLabel()
-        self.summary_label.setStyleSheet("font-weight: bold; color: #2D3748;")
+        
         layout.addWidget(self.summary_label)
 
     def load_filter_options(self):
-        """Load filter options from database"""
+        """Load initial filter options"""
         try:
             with get_db_connection() as (conn, c):
-                # Load classes
-                c.execute("SELECT DISTINCT ClassName FROM Class ORDER BY ClassName")
-                classes = c.fetchall()
-                for class_name in classes:
-                    self.class_combo.addItem(class_name, class_name)
+                # Load academic years
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
+                for year_id, year_name in c.fetchall():
+                    self.year_combo.addItem(year_name, year_id)
                 
-                # Load terms
-                c.execute("SELECT DISTINCT TermName FROM Term ORDER BY TermName")
-                terms = c.fetchall()
-                for term_name in terms:
-                    self.term_combo.addItem(term_name, term_name)
-                    
+                # Initially load all classes and terms (when "All Years" is selected)
+                self.update_class_term_filters()
+                
         except Exception as e:
             print(f"Error loading filter options: {e}")
+
+    def update_class_term_filters(self):
+        """Update class and term dropdowns based on selected academic year"""
+        selected_year = self.year_combo.currentData()
+        
+        # Update CLASS dropdown
+        self.class_combo.clear()
+        self.class_combo.addItem("All Classes", None)
+        
+        if selected_year:  # Only populate if a specific year is selected
+            try:
+                with get_db_connection() as (conn, c):
+                    # Get classes for this academic year
+                    c.execute("""
+                        SELECT DISTINCT ClassID, ClassName 
+                        FROM Class
+                        WHERE AcademicYear = ?
+                        ORDER BY ClassName
+                    """, (selected_year,))
+                    
+                    for class_id, class_name in c.fetchall():
+                        self.class_combo.addItem(class_name, class_id)
+            except Exception as e:
+                print(f"Error loading classes: {e}")
+        
+        # Update TERM dropdown  
+        self.term_combo.clear()
+        self.term_combo.addItem("All Terms", None)
+        
+        if selected_year:  # Only populate if a specific year is selected
+            try:
+                with get_db_connection() as (conn, c):
+                    # Get terms for this academic year
+                    c.execute("""
+                        SELECT TermID, TermName 
+                        FROM Term 
+                        WHERE AcademicYear = ?
+                        ORDER BY TermName
+                    """, (selected_year,))
+                    
+                    for term_id, term_name in c.fetchall():
+                        self.term_combo.addItem(term_name, term_id)
+            except Exception as e:
+                print(f"Error loading terms: {e}")
 
     def load_data(self):
         """Load raw payment history data with filters"""
@@ -3984,7 +4121,7 @@ class PaymentHistoryPage(QWidget):
                 if search_text:
                     filters.append("""
                         (s.Student_Name LIKE ? OR s.StudentID LIKE ? 
-                         OR fp.ReferenceNumber LIKE ? OR fp.FeesPaymentID LIKE ?)
+                        OR fp.ReferenceNumber LIKE ? OR fp.FeesPaymentID LIKE ?)
                     """)
                     params.extend([f"%{search_text}%", f"%{search_text}%", f"%{search_text}%", f"%{search_text}%"])
                 
@@ -3994,6 +4131,11 @@ class PaymentHistoryPage(QWidget):
                 filters.append("fp.TransactionDate BETWEEN ? AND ?")
                 params.extend([date_from, date_to])
                 
+                # Apply academic year filter
+                selected_year = self.year_combo.currentData()
+                if selected_year:
+                    filters.append("ay.AcademicYearID = ?")
+                    params.append(selected_year)
                 
                 # Apply class filter
                 selected_class = self.class_combo.currentData()
@@ -4035,8 +4177,8 @@ class PaymentHistoryPage(QWidget):
                         
                         self.table.setItem(row_idx, col_idx, item)
                     
-                    # Add Action buttons
-                    self.add_action_buttons(row_idx, row_data[0], row_data[10], row_data[11])
+                    # Add Action ComboBox instead of buttons
+                    self.add_action_combo(row_idx, row_data[0], row_data[10], row_data[11])
                     self.table.setRowHeight(row_idx, 40)    
                 
                 # Update summary
@@ -4050,61 +4192,32 @@ class PaymentHistoryPage(QWidget):
             print(f"Error loading payment history: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load payment history: {str(e)}")
 
-    def add_action_buttons(self, row, payment_id, student_term_id, fees_id):
-        """Add edit and delete action buttons to the Actions column"""
-        actions_widget = QWidget()
-        actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(5, 2, 5, 2)
-        actions_layout.setSpacing(5)
+    def add_action_combo(self, row, payment_id, student_term_id, fees_id):
+        """Add comboBox for actions instead of buttons"""
+        action_combo = QComboBox()
+        action_combo.addItems(["Select Action", "Edit", "Delete"])
         
-        # Edit button
-        edit_btn = QPushButton("Edit")
-        edit_btn.setFixedSize(60, 28)
-        edit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #48BB78;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #38A169;
-            }
-            QPushButton:pressed {
-                background-color: #2F855A;
-            }
-        """)
-        edit_btn.clicked.connect(lambda: self.edit_payment(payment_id, student_term_id, fees_id))
+        # Connect the comboBox using lambda to capture current values
+        action_combo.currentIndexChanged.connect(
+            lambda index, pid=payment_id, stid=student_term_id, fid=fees_id, cb=action_combo: 
+            self.handle_payment_action(index, pid, stid, fid, cb)
+        )
         
-        # Delete button
-        delete_btn = QPushButton("Delete")
-        delete_btn.setFixedSize(60, 28)
-        delete_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F56565;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #E53E3E;
-            }
-            QPushButton:pressed {
-                background-color: #C53030;
-            }
-        """)
-        delete_btn.clicked.connect(lambda: self.delete_payment(payment_id))
-        
-        actions_layout.addWidget(edit_btn)
-        actions_layout.addWidget(delete_btn)
-        actions_layout.addStretch()
-        
-        self.table.setCellWidget(row, 10, actions_widget)  # Actions column is column 10
+        self.table.setCellWidget(row, 10, action_combo)  # Actions column is column 10
 
+    def handle_payment_action(self, index, payment_id, student_term_id, fees_id, combo_box):
+        """Handle payment action selection from comboBox"""
+        if index == 0:  # "Select Action"
+            return
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset to "Select Action"
+        
+        if action == "Edit":
+            self.edit_payment(payment_id, student_term_id, fees_id)
+        elif action == "Delete":
+            self.delete_payment(payment_id)
+    
     def edit_payment(self, payment_id, student_term_id, fees_id):
         """Open edit dialog for payment record"""
         try:
@@ -4603,28 +4716,86 @@ class UniformDashBoard(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
 
-        # Header
+        # Scroll Area for better responsiveness
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setSpacing(20)
+        scroll.setWidget(content_widget)
+
+        # --- Header Section ---
         header_layout = QHBoxLayout()
         title_label = QLabel("Uniform Dashboard & Insights")
-        title_label.setObjectName("pageTitle") # Use global style
+        title_label.setObjectName("pageTitle")
         header_layout.addWidget(title_label)
         header_layout.addStretch()
         
-        # Add Refresh Button
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setObjectName("infoButton")
         refresh_btn.clicked.connect(self.load_data)
         header_layout.addWidget(refresh_btn)
         
-        main_layout.addLayout(header_layout)
+        content_layout.addLayout(header_layout)
 
-        # Content Layout (Grid for better space utilization)
-        content_layout = QGridLayout()
-        content_layout.setSpacing(20)
+        # --- Summary Cards Section ---
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(15)
+        
+        self.card_total_uniforms = self.create_summary_card("Total Uniforms", "0", "#3182CE")
+        self.card_total_quantity = self.create_summary_card("Total Quantity", "0", "#38A169")
+        self.card_low_stock = self.create_summary_card("Low Stock Items", "0", "#DD6B20")
+        self.card_recent_entries = self.create_summary_card("Recent Entries", "0", "#805AD5")
+        
+        cards_layout.addWidget(self.card_total_uniforms)
+        cards_layout.addWidget(self.card_total_quantity)
+        cards_layout.addWidget(self.card_low_stock)
+        cards_layout.addWidget(self.card_recent_entries)
+        
+        content_layout.addLayout(cards_layout)
+        
+         # --- Uniform List Section (Full Width CRUD) ---
+        uniform_frame = QFrame()
+        uniform_frame.setObjectName("summaryCard")
+        uniform_layout = QVBoxLayout(uniform_frame)
+        
+        uni_header = QHBoxLayout()
+        uni_title = QLabel("Uniform Catalog (CRUD)")
+        uni_title.setObjectName("sectionTitle")
+        uni_header.addWidget(uni_title)
+        uni_header.addStretch()
+        
+        # Search
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search uniforms...")
+        self.search_input.setFixedWidth(250)
+        self.search_input.textChanged.connect(self.load_uniform_list)
+        uni_header.addWidget(self.search_input)
+        
+        # Add button in header
+        add_uniform_btn = QPushButton("+ Add New Uniform")
+        add_uniform_btn.setObjectName("successButton")
+        add_uniform_btn.clicked.connect(self.show_add_uniform_dialog)
+        uni_header.addWidget(add_uniform_btn)
+        
+        uniform_layout.addLayout(uni_header)
+        
+        self.uniform_table = QTableWidget()
+        self.uniform_table.setColumnCount(5)
+        self.uniform_table.setHorizontalHeaderLabels(["ID", "Name", "Price", "Quantity", "Actions"])
+        self.uniform_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.uniform_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.uniform_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.uniform_table.setShowGrid(True)
+        self.uniform_table.verticalHeader().setVisible(False)
+        uniform_layout.addWidget(self.uniform_table)
 
-        # --- Section 1: Charts (Top) ---
+        content_layout.addWidget(uniform_frame)
+
+        # --- Charts Section (Insights) ---
         charts_frame = QFrame()
-        charts_frame.setObjectName("summaryCard") # Use global style
+        charts_frame.setObjectName("summaryCard")
         charts_layout = QHBoxLayout(charts_frame)
         
         self.in_canvas = self.create_pie_canvas("Stock In")
@@ -4633,10 +4804,9 @@ class UniformDashBoard(QWidget):
         charts_layout.addWidget(self.in_canvas)
         charts_layout.addWidget(self.out_canvas)
         
-        # Add to grid (Row 0, Col 0, RowSpan 1, ColSpan 2)
-        content_layout.addWidget(charts_frame, 0, 0, 1, 2)
+        content_layout.addWidget(charts_frame)
 
-        # --- Section 2: Recent Inventory (Bottom Left) ---
+        # --- Recent Inventory Section ---
         inventory_frame = QFrame()
         inventory_frame.setObjectName("summaryCard")
         inventory_layout = QVBoxLayout(inventory_frame)
@@ -4656,59 +4826,51 @@ class UniformDashBoard(QWidget):
         self.inventory_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.inventory_table.setShowGrid(True)
         self.inventory_table.verticalHeader().setVisible(False)
+        self.inventory_table.setMaximumHeight(250)
         inventory_layout.addWidget(self.inventory_table)
         
-        # Add to grid (Row 1, Col 0)
-        content_layout.addWidget(inventory_frame, 1, 0)
+        content_layout.addWidget(inventory_frame)
 
-        # --- Section 3: Uniform List (Bottom Right) ---
-        uniform_frame = QFrame()
-        uniform_frame.setObjectName("summaryCard")
-        uniform_layout = QVBoxLayout(uniform_frame)
+       
         
-        uni_header = QHBoxLayout()
-        uni_title = QLabel("Uniform List")
-        uni_title.setObjectName("sectionTitle")
-        uni_header.addWidget(uni_title)
-        
-        # Search
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search uniforms...")
-        self.search_input.setFixedWidth(200)
-        self.search_input.textChanged.connect(self.load_uniform_list) # Separate loader for list
-        uni_header.addWidget(self.search_input)
-        
-        uniform_layout.addLayout(uni_header)
-        
-        self.uniform_table = QTableWidget()
-        self.uniform_table.setColumnCount(5)
-        self.uniform_table.setHorizontalHeaderLabels(["ID", "Name", "Price", "Quantity", "Actions"])
-        self.uniform_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.uniform_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.uniform_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.uniform_table.setShowGrid(True)
-        self.uniform_table.verticalHeader().setVisible(False)
-        uniform_layout.addWidget(self.uniform_table)
-
-        add_uniform_btn = QPushButton("Add New Uniform")
-        add_uniform_btn.setObjectName("successButton")
-        add_uniform_btn.clicked.connect(self.show_add_uniform_dialog)
-        uniform_layout.addWidget(add_uniform_btn, alignment=Qt.AlignRight)
-
-        # Add to grid (Row 1, Col 1)
-        content_layout.addWidget(uniform_frame, 1, 1)
-
-        # Set stretch factors
-        content_layout.setColumnStretch(0, 3) # Inventory table wider
-        content_layout.setColumnStretch(1, 2) # Uniform list narrower
-        
-        main_layout.addLayout(content_layout)
+        main_layout.addWidget(scroll)
 
     def create_pie_canvas(self, title):
         fig = Figure(figsize=(5, 4), dpi=100)
         canvas = FigureCanvas(fig)
         canvas.setMinimumHeight(250)
         return canvas
+
+    def create_summary_card(self, title, value, color):
+        """Create a summary card similar to Dashboard pattern"""
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: white;
+                border-radius: 8px;
+                border-left: 5px solid {color};
+                border-top: 1px solid #E2E8F0;
+                border-right: 1px solid #E2E8F0;
+                border-bottom: 1px solid #E2E8F0;
+            }}
+        """)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(15, 15, 15, 15)
+        
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("color: #718096; font-size: 14px; border: none;")
+        
+        value_lbl = QLabel(value)
+        value_lbl.setStyleSheet("color: #2D3748; font-size: 28px; font-weight: bold; border: none;")
+        
+        layout.addWidget(title_lbl)
+        layout.addWidget(value_lbl)
+        layout.addStretch()
+        
+        # Store reference to update later
+        card.value_label = value_lbl
+        
+        return card
 
     def update_pie_chart(self, canvas, title, data, color):
         fig = canvas.figure
@@ -4834,6 +4996,30 @@ class UniformDashBoard(QWidget):
                 for i, row in enumerate(inventory_rows):
                     for j in range(len(row)):
                         self.inventory_table.setItem(i, j, QTableWidgetItem(str(row[j])))
+                
+                # --- Update Summary Cards ---
+                # Total Uniforms
+                c.execute("SELECT COUNT(*) FROM Uniform")
+                total_uniforms = c.fetchone()[0]
+                self.card_total_uniforms.value_label.setText(str(total_uniforms))
+                
+                # Total Quantity
+                c.execute("SELECT SUM(Quantity) FROM Uniform")
+                total_qty = c.fetchone()[0] or 0
+                self.card_total_quantity.value_label.setText(str(total_qty))
+                
+                # Low Stock Items (quantity <= 10)
+                c.execute("SELECT COUNT(*) FROM Uniform WHERE Quantity <= 10")
+                low_stock = c.fetchone()[0]
+                self.card_low_stock.value_label.setText(str(low_stock))
+                
+                # Recent Entries (entries from last 30 days)
+                c.execute("""
+                    SELECT COUNT(*) FROM UniformInventory 
+                    WHERE Date >= datetime('now', '-30 days')
+                """)
+                recent_entries = c.fetchone()[0]
+                self.card_recent_entries.value_label.setText(str(recent_entries))
                     
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load dashboard data: {str(e)}")
@@ -6606,28 +6792,36 @@ class Supplies(QWidget):
                     for col_idx, data in enumerate(row_data):
                         self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(data) if data is not None else ""))
                     
-                    # Actions - ComboBox with 3 actions
-                    row_id = row_data[0]
+                    # Actions - ComboBox
+                    supply_id = row_data[0]
                     supply_name = row_data[1]
-                    action_combo =QComboBox()
-                    action_combo.addItems("Select Action","Manage","Edit","Delete")
-                    action_combo.currentIndexChanged.connect(lambda idx, rid=row_id, sname=supply_name: self.handle_action_change(idx, rid, sname, action_combo))
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Select Action", "Manage", "Edit", "Delete"])
+                    
+                    # Direct lambda with handler
+                    action_combo.currentIndexChanged.connect(
+                        lambda idx, sid=supply_id, sname=supply_name, cb=action_combo: 
+                        self.on_supply_action_selected(idx, sid, sname, cb)
+                    )
                     self.table.setCellWidget(row_idx, 5, action_combo)
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
-    
-    def handle_action_change(self, index, supply_id, supply_name, combo):
-        action = combo.currentIndex()
-        if action == 0:
-            combo.setCurrentIndex(0)
+
+    def on_supply_action_selected(self, index, supply_id, supply_name, combo_box):
+        """Handle supply action selection"""
+        if index == 0:
             return
-        elif action == 1:
-            self.manage_supply_inventory(supply_id, supply_name)
-        elif action == 2:
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset
+        
+        if action == "Manage":
+            self.manage_inventory(supply_id, supply_name)
+        elif action == "Edit":
             self.edit_supply(supply_id)
-        elif action == 3:
-            self.delete_supply(supply_id)    
+        elif action == "Delete":
+            self.delete_supply(supply_id)
 
     def show_add_supply_dialog(self):
         dialog = QDialog(self)
@@ -7121,18 +7315,18 @@ class Expense(QWidget):
                     row_id = row[0]
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action","Edit","Delete"])
-                    action_combo.currentIndexChanged.connect(lambda i, rid=row_id: self.handle_action_change(i, rid, action_combo))
+                    action_combo.currentIndexChanged.connect(lambda index, rid=row_id: self.handle_action_change(index, rid, action_combo))
                     self.table.setCellWidget(idx, 6, action_combo)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load expenses: {e}")
+   
     def handle_action_change(self, index, exp_id, combo):
-        action = combo.currentIndex()
-        if action == 0:
+        if index == 0:
             return
-        if action == 1:
+        if index == 1:
             self.edit_expense(exp_id)
-        elif action == 2:
+        elif index == 2:
             self.delete_expense(exp_id)
 
     def add_expense(self):

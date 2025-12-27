@@ -251,5 +251,7 @@ class FinanceService:
     def get_all_terms(self):
         """Returns list of all terms ordered by ID desc."""
         with get_db_connection() as (conn, c):
-            c.execute("SELECT TermID, TermName FROM Term ORDER BY TermID DESC")
+            c.execute("""SELECT TermID, TermName,Year FROM Term JOIN
+                        AcademicYear WHERE 
+                        Term.AcademicYear= AcademicYear.AcademicYearID ORDER BY TermID DESC """)
             return c.fetchall()
