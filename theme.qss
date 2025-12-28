@@ -779,3 +779,13 @@ QStatusBar::item {
     border: none;
     background-color: transparent;
 }
+QLabel[role="title"] {
+    font-size: 22px;
+    font-weight: 600;
+}
+
+QLabel[role="section"] {
+    font-size: 15px;
+    font-weight: 600;
+    margin-top: 12px;
+}

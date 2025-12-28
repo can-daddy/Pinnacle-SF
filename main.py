@@ -270,6 +270,8 @@ class StudentsTab(QWidget):
 
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action", "Edit", "Delete"])
+                    action_combo.setProperty("role", "actions")
+
 
                     # Connect directly with lambda
                     action_combo.currentIndexChanged.connect(
@@ -1305,7 +1307,7 @@ class ImportWizard(QWizard):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("School Finance MIS")
+        self.setWindowTitle("Pinnacle-SF")
         self.setGeometry(100, 100, 1200, 800)
         
         # Main widget and layout
@@ -1338,33 +1340,40 @@ class Window(QMainWindow):
             ("Expenditure", "Icons/expenses-icon.png"),
             ("Classes", "Icons/classes-icon.png"),
             ("Academic Calendar", "Icons/Calendar.png"),
-            ("Reports", "Icons/report-icon.png")
+            ("Reports", "Icons/report-icon.png"),
+            ("Categorization","Icons/category_64px.png")
         ]
         
         self.menu_buttons = []
         for name, icon_path in self.menu_items:
             btn = QPushButton(QIcon(icon_path), name)
             btn.setFixedHeight(40)
-            btn.setIconSize(QSize(24, 24))  # Enlarge the icon
-            btn.original_text = name  # Store the original text
-            btn.icon_path = icon_path  # Store the icon path for later use
+            btn.setIconSize(QSize(24, 24))
+            btn.original_text = name
+            btn.icon_path = icon_path
+            btn.setCheckable(True)  # Make button checkable for active state
+            btn.setAutoExclusive(True)  # Only one button can be checked at a time
             self.menu_buttons.append(btn)
             self.sidebar_layout.addWidget(btn)
+        
         self.sidebar_layout.addStretch()
+        
         # Combine both menu lists for easier management
-        all_menu_items =[
+        all_menu_items = [
             ("Account", "Icons/account-icon.png"),
             ("About", "Icons/about-icon.png")
         ]
-        for name2,icon_path2 in all_menu_items:
+        
+        for name2, icon_path2 in all_menu_items:
             buttons = QPushButton(QIcon(icon_path2), name2)
             buttons.setFixedHeight(40)
             buttons.setIconSize(QSize(24, 24))
-            buttons.original_text = name2  # Store the original text
+            buttons.original_text = name2
             buttons.icon_path = icon_path2
+            buttons.setCheckable(True)
+            buttons.setAutoExclusive(True)
             self.menu_buttons.append(buttons)
             self.sidebar_layout.addWidget(buttons)
-
 
         # Main content
         self.content = QWidget()
@@ -1391,10 +1400,16 @@ class Window(QMainWindow):
         self.separator.setFixedHeight(2)
         self.content_layout.addWidget(self.separator)
         
-        # Scroll area for body
-        self.MainBodyHolder = QScrollArea()
-        self.MainBodyHolder.setWidgetResizable(True)
+        # Create a container widget for the stacked widget
+        self.body_container = QWidget()
+        self.body_layout = QVBoxLayout(self.body_container)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(0)
+        
+        # Stacked widget for pages
         self.body = QStackedWidget()
+        
+        # Initialize pages
         self.AcademicYearTermPage = AcademicYearTerm()
         self.DashboardPage = Dashboard()
         self.StudentPage = StudentManagement()
@@ -1403,8 +1418,11 @@ class Window(QMainWindow):
         self.UniformsPage = Uniforms()
         self.ExpensesPage = Expenditure()
         self.ReportsPage = Reports()
+        self.CategoryPage = CategoryManagement()
         self.AboutPage = About()
         self.AccountPage = Account()
+        
+        # Add pages to stacked widget
         self.body.addWidget(self.DashboardPage)
         self.body.addWidget(self.StudentPage)
         self.body.addWidget(self.FeesPage)
@@ -1413,13 +1431,19 @@ class Window(QMainWindow):
         self.body.addWidget(self.ClassPage)
         self.body.addWidget(self.AcademicYearTermPage)
         self.body.addWidget(self.ReportsPage)
+        self.body.addWidget(self.CategoryPage)
         self.body.addWidget(self.AboutPage)
         self.body.addWidget(self.AccountPage)
-        self.body_layout = QVBoxLayout(self.body)
-        self.body_layout.addStretch()
-        self.MainBodyHolder.setWidget(self.body)
+        
+        # Add stacked widget to container layout
+        self.body_layout.addWidget(self.body)
+        
+        # Scroll area for body
+        self.MainBodyHolder = QScrollArea()
+        self.MainBodyHolder.setWidgetResizable(True)
+        self.MainBodyHolder.setWidget(self.body_container)
         self.content_layout.addWidget(self.MainBodyHolder)
-    
+        
         # Add sidebar and content to main layout
         self.main_layout.addWidget(self.sidebar)
         self.main_layout.addWidget(self.content)
@@ -1427,287 +1451,720 @@ class Window(QMainWindow):
         # Sidebar state
         self.sidebar_expanded = True
         self.apply_styles()
-            # Connect sidebar buttons to stacked pages
+        
+        # Connect sidebar buttons to stacked pages
         page_map = {
-            "Dashboard": self.DashboardPage,
-            "Students": self.StudentPage,
-            "Fees": self.FeesPage,
-            "Uniforms": self.UniformsPage,
-            "Expenditure": self.ExpensesPage,
-            "Classes": self.ClassPage,
-            "Academic Calendar": self.AcademicYearTermPage,
-            "Reports": self.ReportsPage,
-            "About": self.AboutPage,
-            "Account": self.AccountPage
+            "Dashboard": (self.DashboardPage, 0),
+            "Students": (self.StudentPage, 1),
+            "Fees": (self.FeesPage, 2),
+            "Uniforms": (self.UniformsPage, 3),
+            "Expenditure": (self.ExpensesPage, 4),
+            "Classes": (self.ClassPage, 5),
+            "Academic Calendar": (self.AcademicYearTermPage, 6),
+            "Reports": (self.ReportsPage, 7),
+            "Categorization": (self.CategoryPage, 8),
+            "About": (self.AboutPage, 9),
+            "Account": (self.AccountPage, 10)
         }
+        
+        # Set Dashboard as active initially
+        self.set_active_button("Dashboard")
 
-        def make_nav_handler(page_widget, page_name):
+        def make_nav_handler(page_widget, page_name, button):
             def handler():
                 self.body.setCurrentWidget(page_widget)
                 self.page_title.setText(page_name)
+                # Set the clicked button as active
+                self.set_active_button(page_name)
             return handler
 
         for btn in self.menu_buttons:
-            page_widget = page_map.get(btn.original_text)
-            if page_widget:
-                btn.clicked.connect(make_nav_handler(page_widget, btn.original_text))
+            page_data = page_map.get(btn.original_text)
+            if page_data:
+                page_widget, _ = page_data
+                btn.clicked.connect(make_nav_handler(page_widget, btn.original_text, btn))
 
-    def toggle_sidebar(self):
-        self.sidebar_expanded = not self.sidebar_expanded
-        new_width = 60 if not self.sidebar_expanded else 250
-        self.sidebar.setFixedWidth(new_width)
-
+    def set_active_button(self, button_name):
+        """Set the active sidebar button and style it"""
         for btn in self.menu_buttons:
-            if self.sidebar_expanded:
-                btn.setText(btn.original_text)  # Restore original text
+            if btn.original_text == button_name:
+                btn.setChecked(True)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #0A7B83;
+                        color: white;
+                        border: none;
+                        text-align: left;
+                        padding-left: 15px;
+                        border-radius: 6px;
+                        font-weight: 500;
+                    }
+                    QPushButton:hover {
+                        background-color: #086972;
+                    }
+                    QPushButton:checked {
+                        background-color: #0A7B83;
+                        color: white;
+                        font-weight: 600;
+                    }
+                """)
             else:
-                btn.setText("")  # Hide text
-            btn.setIcon(QIcon(btn.icon_path))  # Always use the stored icon path
-            btn.setIconSize(QSize(24, 24))  # Ensure icon stays enlarged
+                btn.setChecked(False)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: transparent;
+                        color: #343A40;
+                        border: none;
+                        text-align: left;
+                        padding-left: 15px;
+                        border-radius: 6px;
+                        font-weight: 400;
+                    }
+                    QPushButton:hover {
+                        background-color: #E9ECEF;
+                        color: #1A365D;
+                    }
+                    QPushButton:checked {
+                        background-color: #0A7B83;
+                        color: white;
+                    }
+                """)
 
     def apply_styles(self):
+        """Apply styling to the main window"""
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #F7FAFC;
+                background-color: #F8F9FA;
             }
+            
             QWidget#sidebar {
-                background-color: #FFFFFF;
-                border-right: 1px solid #E0E3E7;
+                background-color: white;
+                border-right: 1px solid #E9ECEF;
             }
-            QWidget#centralWidget {
-                background-color: #F7FAFC;
-            }
-            QWidget#contentWidget {
-                background-color: #F7FAFC;
-            }
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                text-align: left;
-                padding: 10px;
-                font-size: 16px;
-                color: #2D3748;
-            }
-            QPushButton:hover {
-                background-color: #EDF2F7;
-                border-radius: 5px;
-            }
+            
             QPushButton#toggle_btn {
-                background-color: transparent;
-                border-radius: 20px;
+                background-color: #1A365D;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: 500;
+                margin-bottom: 10px;
             }
+            
             QPushButton#toggle_btn:hover {
-                background-color: #EDF2F7;
-                border-radius: 5px;
+                background-color: #2C5282;
             }
+            
             QLabel#page_title {
-                font-size: 24px;
-                font-weight: bold;
-                color: #2D3748;
-                background: transparent;
-                border: none;
+                font-size: 22px;
+                font-weight: 600;
+                color: #1A365D;
             }
+            
             QLabel#school_name {
-                font-size: 18px;
-                color: #4A5568;
-                background: transparent;
-                border: none;
+                font-size: 14px;
+                color: #6C757D;
+                font-weight: 500;
             }
+            
             QWidget#separator {
-                background-color: #E0E3E7;
+                background-color: #E9ECEF;
             }
+            
             QScrollArea {
-                background-color: #F7FAFC;
                 border: none;
-                border-radius: 5px;
+                background-color: transparent;
             }
-            QScrollArea > QWidget {
-                background-color: #F7FAFC;
+            
+            QScrollArea > QWidget > QWidget {
+                background-color: transparent;
+            }
+            
+            QScrollBar:vertical {
+                background-color: #F8F9FA;
+                width: 12px;
+                border-radius: 6px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background-color: #CED4DA;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background-color: #ADB5BD;
             }
         """)
-        # Set object names for specific styling
-        self.central_widget.setObjectName("centralWidget")
-        self.content.setObjectName("contentWidget")
+        
+        # Set object names for styling
         self.sidebar.setObjectName("sidebar")
         self.toggle_btn.setObjectName("toggle_btn")
         self.page_title.setObjectName("page_title")
         self.school_name.setObjectName("school_name")
         self.separator.setObjectName("separator")
-        # Ensure body widget has proper background
-        self.body.setStyleSheet("QStackedWidget { background-color: #F7FAFC; }")
-    
+
+    def toggle_sidebar(self):
+        """Toggle sidebar visibility"""
+        if self.sidebar_expanded:
+            self.sidebar.setFixedWidth(60)
+            # Hide text, show only icons
+            for btn in self.menu_buttons:
+                btn.setText("")
+                btn.setIconSize(QSize(20, 20))
+            self.toggle_btn.setText("")
+            self.sidebar_expanded = False
+        else:
+            self.sidebar.setFixedWidth(250)
+            # Show text with icons
+            for btn in self.menu_buttons:
+                btn.setText(btn.original_text)
+                btn.setIconSize(QSize(24, 24))
+            self.toggle_btn.setText("Menu")
+            self.sidebar_expanded = True
+        
 class AcademicYearTerm(QWidget):
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(15)
+        self.current_year_id = None
+        self.init_ui()
+        self.load_academic_years()
+        
+    def init_ui(self):
+        # Main Layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
 
-        # Header row
+        # Header
         header_layout = QHBoxLayout()
-        title = QLabel("Academic Year/Term")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        title = QLabel("Academic Calendar")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #2C3E50;")
         header_layout.addWidget(title)
         header_layout.addStretch()
-        # Action ComboBox for Academic Year
-        self.year_action_combo = QComboBox()
         
-        self.year_action_combo.addItem("Year", None)
-        self.year_action_combo.addItem("Add Year", "add")
-        self.year_action_combo.addItem("Edit Year", "edit")
-        self.year_action_combo.addItem("Delete Year", "delete")
-        self.year_action_combo.activated.connect(self.handle_year_action)
+        
+        
+        main_layout.addLayout(header_layout)
 
+        # Split View Container
+        split_container = QFrame()
+        split_container.setObjectName("splitContainer")
+        split_layout = QHBoxLayout(split_container)
+        split_layout.setSpacing(20)
+        split_layout.setContentsMargins(0, 0, 0, 0)
+
+        # ========== LEFT PANEL: Academic Years (40%) ==========
+        years_panel = QFrame()
+        years_panel.setObjectName("yearsPanel")
+        years_panel.setMinimumWidth(300)
+        years_layout = QVBoxLayout(years_panel)
+        years_layout.setContentsMargins(0, 0, 0, 0)
+        years_layout.setSpacing(10)
+
+        # Years Header
+        years_header = QHBoxLayout()
+        years_title = QLabel("Academic Years")
+        years_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #2C3E50; margin-bottom: 5px;")
+        years_header.addWidget(years_title)
+        years_header.addStretch()
+        
+        # Years Search
+        self.years_search = QLineEdit()
+        self.years_search.setPlaceholderText(" Search years...")
+        self.years_search.setFixedWidth(180)
+        self.years_search.textChanged.connect(self.load_academic_years)
+        years_header.addWidget(self.years_search)
+        years_layout.addLayout(years_header)
+
+        # Add Year Button
+        add_year_btn = QPushButton("Add Year")
+        add_year_btn.setObjectName("successButton")
+        add_year_btn.clicked.connect(self.addYear)
+        years_header.addWidget(add_year_btn)
+
+        # Years List Widget
+        self.years_list = QListWidget()
+        self.years_list.setObjectName("yearsList")
+        self.years_list.setSelectionMode(QListWidget.SingleSelection)
+        self.years_list.setStyleSheet("""
+            QListWidget {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 12px 15px;
+                border-bottom: 1px solid #f0f0f0;
+                border-radius: 4px;
+                margin: 2px 0;
+            }
+            QListWidget::item:selected {
+                background-color: #3498db;
+                color: white;
+                border: 1px solid #2980b9;
+            }
+            QListWidget::item:hover {
+                background-color: #f8f9fa;
+            }
+        """)
+        self.years_list.itemClicked.connect(self.on_year_selected)
+        years_layout.addWidget(self.years_list)
+
+        # Years Actions
+        years_actions = QHBoxLayout()
+        years_actions.setSpacing(10)
+        
+        edit_year_btn = QPushButton("Edit")
+        edit_year_btn.setObjectName("infoButton")
+        edit_year_btn.clicked.connect(self.edit_selected_year)
+        edit_year_btn.setFixedHeight(32)
+        years_actions.addWidget(edit_year_btn)
+        
+        delete_year_btn = QPushButton("Delete")
+        delete_year_btn.setObjectName("dangerButton")
+        delete_year_btn.clicked.connect(self.delete_selected_year)
+        delete_year_btn.setFixedHeight(32)
+        years_actions.addWidget(delete_year_btn)
+        
+        years_actions.addStretch()
+        years_layout.addLayout(years_actions)
+
+        split_layout.addWidget(years_panel, 4)  # 40% width
+
+        # ========== RIGHT PANEL: Terms (60%) ==========
+        terms_panel = QFrame()
+        terms_panel.setObjectName("termsPanel")
+        terms_layout = QVBoxLayout(terms_panel)
+        terms_layout.setContentsMargins(0, 0, 0, 0)
+        terms_layout.setSpacing(10)
+
+        # Terms Header
+        terms_header = QHBoxLayout()
+        self.terms_title = QLabel("Terms")
+        self.terms_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #2C3E50; margin-bottom: 5px;")
+        terms_header.addWidget(self.terms_title)
+        terms_header.addStretch()
+        
+        # Add Term Button
         add_term_btn = QPushButton("Add Term")
+        add_term_btn.setObjectName("successButton")
         add_term_btn.clicked.connect(self.addTerm)
-        header_layout.addWidget(self.year_action_combo)
-        header_layout.addWidget(add_term_btn)
-        layout.addLayout(header_layout)
+        add_term_btn.setFixedHeight(32)
+        terms_header.addWidget(add_term_btn)
+        terms_layout.addLayout(terms_header)
 
-        # Filter row
-        filter_layout = QHBoxLayout()
-        self.Search_Input = QLineEdit()
-        self.Search_Input.setPlaceholderText("Search...")
-        self.Search_Input.setClearButtonEnabled(True)
-        self.Search_Input.setMaximumWidth(200)
+        # Terms Table
+        self.terms_table = QTableWidget()
+        self.terms_table.setColumnCount(5)
+        self.terms_table.setHorizontalHeaderLabels(["Term", "Start Date", "End Date", "Duration", "Actions"])
+        self.terms_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.terms_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.terms_table.setColumnWidth(3, 100)  # Duration column
+        self.terms_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Actions column
+        self.terms_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.terms_table.setAlternatingRowColors(True)
+        self.terms_table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                gridline-color: #f0f0f0;
+            }
+            QTableWidget::item {
+                padding: 10px 5px;
+                border-bottom: 1px solid #f0f0f0;
+            }
+            QTableWidget::item:selected {
+                background-color: #e3f2fd;
+            }
+        """)
+        self.terms_table.verticalHeader().setVisible(False)
+        terms_layout.addWidget(self.terms_table)
+
+        # Terms Statistics
+        stats_frame = QFrame()
+        stats_frame.setMaximumHeight(60)
+        stats_layout = QHBoxLayout(stats_frame)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+        stats_layout.setSpacing(20)
         
-        self.year_filter = QComboBox()
-        self.year_filter.addItem("All Years")
+        self.total_terms_label = QLabel("Total Terms: 0")
+        self.total_terms_label.setStyleSheet("font-size: 13px; color: #7f8c8d; padding: 8px;")
+        stats_layout.addWidget(self.total_terms_label)
+        
+        self.current_term_label = QLabel("Current Term: None")
+        self.current_term_label.setStyleSheet("font-size: 13px; color: #7f8c8d; padding: 8px;")
+        stats_layout.addWidget(self.current_term_label)
+        
+        stats_layout.addStretch()
+        terms_layout.addWidget(stats_frame)
+
+        split_layout.addWidget(terms_panel, 6)  # 60% width
+
+        main_layout.addWidget(split_container)
+
+        # Calendar Summary
+        summary_frame = QFrame()
+        summary_frame.setObjectName("summaryFrame")
+        summary_frame.setMaximumHeight(80)
+        summary_layout = QHBoxLayout(summary_frame)
+        summary_layout.setContentsMargins(15, 10, 15, 10)
+        
+        # Today's date
+        today = QDate.currentDate().toString("dddd, MMMM d, yyyy")
+        date_label = QLabel(f"Today: {today}")
+        date_label.setStyleSheet("font-size: 13px; color: #2C3E50;")
+        summary_layout.addWidget(date_label)
+        
+        summary_layout.addStretch()
+        
+        # Active year info
+        self.active_year_label = QLabel("Active Year: None")
+        self.active_year_label.setStyleSheet("font-size: 13px; color: #27ae60; font-weight: bold;")
+        summary_layout.addWidget(self.active_year_label)
+        
+        main_layout.addWidget(summary_frame)
+
+        # Set styles
+        self.setStyleSheet("""
+            #yearsPanel, #termsPanel {
+                background-color: transparent;
+            }
+            #summaryFrame {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                margin-top: 10px;
+            }
+            QPushButton {
+                border-radius: 4px;
+                font-weight: 500;
+            }
+            QPushButton#successButton {
+                background-color: #27ae60;
+                color: white;
+                border: none;
+            }
+            QPushButton#successButton:hover {
+                background-color: #219653;
+            }
+            QPushButton#infoButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+            }
+            QPushButton#infoButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton#dangerButton {
+                background-color: #e74c3c;
+                color: white;
+                border: none;
+            }
+            QPushButton#dangerButton:hover {
+                background-color: #c0392b;
+            }
+        """)
+
+    def load_academic_years(self):
+        """Load academic years into the list widget"""
         try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT * FROM AcademicYear")
-                years = c.fetchall()
-                for year in years:
-                    self.year_filter.addItem(year[1], year[0])
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to load academic years: {str(e)}")
-        
-        self.year_filter.setCurrentIndex(0)
-        self.year_filter.setMaximumWidth(150)
-        filter_layout.addWidget(self.Search_Input)
-        filter_layout.addWidget(self.year_filter)
-        filter_layout.addStretch()
-        
-        self.results_label = QLabel("0 results")
-        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
-        filter_layout.addWidget(self.results_label)
-        layout.addLayout(filter_layout)
-
-        # Connect search input and year filter to reload data
-        self.Search_Input.textChanged.connect(self.Load_Data)
-        self.year_filter.currentIndexChanged.connect(self.Load_Data)
-
-        # Table
-        self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Academic Year", "Term", "Starting Date", "Ending Date", "Action"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setShowGrid(True)
-        self.table.verticalHeader().setVisible(False)
-        
-        layout.addWidget(self.table)
-
-        # Add Load data
-        self.Load_Data()
-        self.update_results_count()
+            self.years_list.clear()
+            search_text = self.years_search.text().strip()
             
-    def Load_Data(self):
+            with get_db_connection() as (conn, c):
+                if search_text:
+                    c.execute("SELECT AcademicYearID, Year FROM AcademicYear WHERE Year LIKE ? ORDER BY Year DESC", 
+                            (f"%{search_text}%",))
+                else:
+                    c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
+                
+                years = c.fetchall()
+                
+                for year_id, year_name in years:
+                    item = QListWidgetItem(year_name)
+                    item.setData(Qt.UserRole, year_id)
+                    
+                    # Check if this year has terms
+                    c.execute("SELECT COUNT(*) FROM Term WHERE AcademicYear = ?", (year_id,))
+                    term_count = c.fetchone()[0]
+                    
+                    # Add term count as tooltip
+                    item.setToolTip(f"{term_count} term{'s' if term_count != 1 else ''}")
+                    
+                    # Style based on whether it's the current year
+                    if year_name.startswith(str(QDate.currentDate().year())):
+                        item.setBackground(QColor("#e8f5e9"))
+                        item.setForeground(QColor("#2e7d32"))
+                    
+                    self.years_list.addItem(item)
+                
+                # Select first item if available
+                if years and not self.current_year_id:
+                    self.years_list.setCurrentRow(0)
+                    self.on_year_selected(self.years_list.item(0))
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load academic years: {str(e)}")
+
+    def on_year_selected(self, item):
+        """Handle year selection"""
+        if not item:
+            return
+            
+        self.current_year_id = item.data(Qt.UserRole)
+        year_name = item.text()
+        
+        # Update terms title
+        self.terms_title.setText(f"📚 Terms - {year_name}")
+        
+        # Update active year label
+        self.active_year_label.setText(f"Active Year: {year_name}")
+        
+        # Load terms for selected year
+        self.load_terms_for_year()
+
+    def load_terms_for_year(self):
+        """Load terms for the selected academic year"""
+        if not self.current_year_id:
+            self.terms_table.setRowCount(0)
+            self.total_terms_label.setText("Total Terms: 0")
+            self.current_term_label.setText("Current Term: None")
+            return
+            
         try:
             with get_db_connection() as (conn, c):
-                self.table.setRowCount(0)
-                # Get selected year filter
-                selected_year_id = self.year_filter.currentData()
+                # Get year name
+                c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (self.current_year_id,))
+                year_result = c.fetchone()
+                if not year_result:
+                    return
+                year_name = year_result[0]
                 
-                query = """
-                    SELECT AcademicYear.Year, Term.TermName, Term.StartDate, Term.EndDate, Term.TermID
-                    FROM Term
-                    JOIN AcademicYear ON Term.AcademicYear = AcademicYear.AcademicYearID
-                """
+                # Get terms for this year
+                c.execute("""
+                    SELECT TermID, TermName, StartDate, EndDate 
+                    FROM Term 
+                    WHERE AcademicYear = ? 
+                    ORDER BY StartDate
+                """, (self.current_year_id,))
                 
-                # Add search filter
-                search_text = self.Search_Input.text().strip()
-                params = ()
-                if search_text:
-                    query += " WHERE (AcademicYear.Year LIKE ? OR Term.TermName LIKE ?)"
-                    params += (f"%{search_text}%", f"%{search_text}%")
+                terms = c.fetchall()
                 
-                # Add year filter if selected
-                if selected_year_id and selected_year_id != "All Years":
-                    if "WHERE" in query:
-                        query += " AND AcademicYear.AcademicYearID = ?"
-                    else:
-                        query += " WHERE AcademicYear.AcademicYearID = ?"
-                    params += (selected_year_id,)
+                self.terms_table.setRowCount(len(terms))
+                current_date = QDate.currentDate().toString("yyyy-MM-dd")
+                has_current_term = False
                 
-                c.execute(query, params)
-                results = c.fetchall()
-
-                # Check if year exists and has no terms
-                if selected_year_id and selected_year_id != "All Years":
-                    c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (selected_year_id,))
-                    year_row = c.fetchone()
-                    if year_row and not results:
-                        self.table.setRowCount(0)
-                        self.update_results_count()
-                        msg_box = QMessageBox(self)
-                        msg_box.setIcon(QMessageBox.Information)
-                        msg_box.setWindowTitle("No Terms")
-                        msg_box.setText(f"The year '{year_row[0]}' does not have any terms.")
-                        msg_box.setStandardButtons(QMessageBox.Ok)
-                        msg_box.setModal(False)
-                        msg_box.show()
-                        return
-
-                for row_data in results:
-                    row = self.table.rowCount()
-                    self.table.insertRow(row)
-                    self.table.setRowHeight(row, 50)
+                for i, (term_id, term_name, start_date, end_date) in enumerate(terms):
+                    # Term Name
+                    name_item = QTableWidgetItem(term_name)
+                    name_item.setData(Qt.UserRole, term_id)
+                    self.terms_table.setItem(i, 0, name_item)
                     
-                    # Display only first 4 columns (hide TermID)
-                    for col, data in enumerate(row_data[:4]):
-                        self.table.setItem(row, col, QTableWidgetItem(str(data)))
+                    # Start Date
+                    start_item = QTableWidgetItem(start_date)
+                    self.terms_table.setItem(i, 1, start_item)
                     
-                    # Actions - ComboBox
+                    # End Date
+                    end_item = QTableWidgetItem(end_date)
+                    self.terms_table.setItem(i, 2, end_item)
+                    
+                    # Calculate and display duration
+                    start = QDate.fromString(start_date, "yyyy-MM-dd")
+                    end = QDate.fromString(end_date, "yyyy-MM-dd")
+                    days = start.daysTo(end)
+                    duration_item = QTableWidgetItem(f"{days} days")
+                    self.terms_table.setItem(i, 3, duration_item)
+                    
+                    # Check if current date is within term
+                    if start_date <= current_date <= end_date:
+                        has_current_term = True
+                        for col in range(4):
+                            item = self.terms_table.item(i, col)
+                            if item:
+                                item.setBackground(QColor("#e8f5e9"))
+                                item.setForeground(QColor("#2e7d32"))
+                    
+                    # Add action comboBox
                     action_combo = QComboBox()
-                    action_combo.addItems(["Select Action", "Edit", "Delete"])
-                    
-                    # Store term_id (5th column)
-                    term_id = row_data[4]
-                    
-                    # Connect with lambda using term_id
+                    action_combo.addItems(["Select Actions", "Edit", "Delete"])
                     action_combo.currentIndexChanged.connect(
                         lambda index, tid=term_id, cb=action_combo: 
-                        self.on_term_action_selected_by_id(index, tid, cb)
+                        self.on_term_action_selected(index, tid, cb)
                     )
-                    
-                    self.table.setCellWidget(row, 4, action_combo)
-                # Ensure header stretches after data reload
-                self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                self.update_results_count()
+                    self.terms_table.setCellWidget(i, 4, action_combo)
                 
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to load data: {str(e)}")
-    
-    def on_term_action_selected_by_id(self, index, term_id, combo_box):
-        """Handle term action selection using term_id"""
-        if index == 0:
+                # Update statistics
+                self.total_terms_label.setText(f"Total Terms: {len(terms)}")
+                if has_current_term:
+                    self.current_term_label.setText("Current Term: In Session")
+                else:
+                    self.current_term_label.setText("Current Term: Not in Session")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load terms: {str(e)}")
+
+    def on_term_action_selected(self, index, term_id, combo_box):
+        """Handle term action selection"""
+        if index == 0:  # "Actions" placeholder
             return
         
-        action = combo_box.itemText(index)
-        combo_box.setCurrentIndex(0)
+        action = combo_box.currentText()
+        combo_box.setCurrentIndex(0)  # Reset
         
-        
-        if action == "Edit":
+        if "Edit" in action:
             self.editTerm_by_id(term_id)
-        elif action == "Delete":
+        elif "Delete" in action:
             self.deleteTerm_by_id(term_id)
 
-    def update_results_count(self):
-        count = self.table.rowCount()
-        self.results_label.setText(f"{count} results")
-    
+    def edit_selected_year(self):
+        """Edit the currently selected year"""
+        current_item = self.years_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Selection", "Please select an academic year to edit.")
+            return
+            
+        year_id = current_item.data(Qt.UserRole)
+        year_name = current_item.text()
+        
+        # Call your existing editYear method with the selected year
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Academic Year")
+        dialog.setFixedSize(350, 200)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+                border-radius: 10px;
+            }
+            QLabel {
+                font-size: 16px;
+                color: #2D3748;
+            }
+            QLineEdit {
+                background-color: #F7FAFC;
+                border: 1px solid #E0E3E7;
+                padding: 10px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                border-radius: 5px;
+                font-size: 15px;
+            }
+            QPushButton#cancel {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                border: 1px solid #E0E3E7;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+            }
+            QPushButton#cancel:hover {
+                background-color: #E2E8F0;
+            }
+            QLabel#error {
+                color: #E53E3E;
+                font-size: 13px;
+            }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        label = QLabel("Edit Academic Year")
+        layout.addWidget(label)
+
+        year_input = QLineEdit(year_name)
+        year_input.setPlaceholderText("e.g. 2024-2025")
+        layout.addWidget(year_input)
+
+        error_label = QLabel("")
+        error_label.setObjectName("error")
+        layout.addWidget(error_label)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancel")
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def save_edit():
+            new_year_name = year_input.text().strip()
+            if not new_year_name:
+                error_label.setText("Year name cannot be empty.")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("SELECT 1 FROM AcademicYear WHERE Year = ? AND AcademicYearID != ?", 
+                            (new_year_name, year_id))
+                    if c.fetchone():
+                        error_label.setText("This academic year already exists.")
+                        return
+                    
+                    c.execute("UPDATE AcademicYear SET Year = ? WHERE AcademicYearID = ?", 
+                            (new_year_name, year_id))
+                    conn.commit()
+                    dialog.accept()
+                    QMessageBox.information(self, "Success", f"Academic Year updated successfully.")
+                    self.load_academic_years()
+                    
+            except Exception as e:
+                error_label.setText(f"Error updating year: {str(e)}")
+
+        save_btn.clicked.connect(save_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def delete_selected_year(self):
+        """Delete the currently selected year"""
+        current_item = self.years_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Selection", "Please select an academic year to delete.")
+            return
+            
+        year_id = current_item.data(Qt.UserRole)
+        year_name = current_item.text()
+        
+        # Call your existing deleteYear logic
+        try:
+            with get_db_connection() as (conn, c):
+                # Check for child relations
+                c.execute("SELECT 1 FROM Term WHERE AcademicYear = ?", (year_id,))
+                if c.fetchone():
+                    QMessageBox.warning(self, "Cannot Delete", 
+                                      "This year has related terms and cannot be deleted.")
+                    return
+                
+                # Confirmation
+                reply = QMessageBox.question(
+                    self, 'Confirm Delete',
+                    f"Are you sure you want to delete the academic year '{year_name}'?\n\n"
+                    "This action cannot be undone.",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    c.execute("DELETE FROM AcademicYear WHERE AcademicYearID = ?", (year_id,))
+                    conn.commit()
+                    QMessageBox.information(self, "Deleted", f"Academic Year '{year_name}' deleted.")
+                    self.current_year_id = None
+                    self.load_academic_years()
+                    self.load_terms_for_year()  # Clear terms display
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to delete year: {str(e)}")
+
     def addYear(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Academic Year")
@@ -1775,6 +2232,7 @@ class AcademicYearTerm(QWidget):
         btn_layout.addWidget(save_btn)
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
+        dialog.exec_()
 
         def save_year():
             year_name = year_input.text().strip()
@@ -1798,10 +2256,9 @@ class AcademicYearTerm(QWidget):
             except sqlite3.Error as e:
                 error_label.setText(f"Error saving year: {str(e)}")
 
-        save_btn.clicked.connect(save_year)
-        cancel_btn.clicked.connect(dialog.reject)
-        dialog.exec_()
-
+            save_btn.clicked.connect(save_year)
+            cancel_btn.clicked.connect(dialog.reject)
+            
     def addTerm(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Term")
@@ -2182,257 +2639,9 @@ class AcademicYearTerm(QWidget):
                 
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Database Error", f"Failed to load term data: {str(e)}")    
-    def editYear(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Edit Academic Year")
-        dialog.setFixedSize(350, 220)
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #FFFFFF;
-                border-radius: 10px;
-            }
-            QLabel {
-                font-size: 16px;
-                color: #2D3748;
-            }
-            QComboBox, QLineEdit {
-                background-color: #F7FAFC;
-                border: 1px solid #E0E3E7;
-                padding: 10px;
-                border-radius: 5px;
-                font-size: 15px;
-            }
-            QPushButton {
-                background-color: #4299E1;
-                color: white;
-                border: none;
-                padding: 8px 18px;
-                border-radius: 5px;
-                font-size: 15px;
-            }
-            QPushButton#cancel {
-                background-color: #EDF2F7;
-                color: #2D3748;
-                border: 1px solid #E0E3E7;
-            }
-            QPushButton:hover {
-                background-color: #3182CE;
-            }
-            QPushButton#cancel:hover {
-                background-color: #E2E8F0;
-            }
-            QLabel#error {
-                color: #E53E3E;
-                font-size: 13px;
-            }
-        """)
 
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        label = QLabel("Select Academic Year to Edit")
-        layout.addWidget(label)
-
-        year_combo = QComboBox()
-        
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-                years = c.fetchall()
-                year_combo.addItem("Select Year", None)
-                for y in years:
-                    year_combo.addItem(y[1], y[0])
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to load academic years: {str(e)}")
-            
-        layout.addWidget(year_combo)
-
-        new_label = QLabel("New Year Name")
-        layout.addWidget(new_label)
-
-        year_input = QLineEdit()
-        year_input.setPlaceholderText("e.g. 2024-2025")
-        layout.addWidget(year_input)
-
-        error_label = QLabel("")
-        error_label.setObjectName("error")
-        layout.addWidget(error_label)
-
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        save_btn = QPushButton("Save")
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("cancel")
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-
-        def save_edit():
-            year_id = year_combo.currentData()
-            new_year_name = year_input.text().strip()
-            if not year_id:
-                error_label.setText("Please select a year to edit.")
-                return
-            if not new_year_name:
-                error_label.setText("Year name cannot be empty.")
-                return
-            
-            try:
-                with get_db_connection() as (conn, c):
-                    c.execute("SELECT 1 FROM AcademicYear WHERE Year = ? AND AcademicYearID != ?", (new_year_name, year_id))
-                    if c.fetchone():
-                        error_label.setText("This academic year already exists.")
-                        return
-                    
-                    c.execute("UPDATE AcademicYear SET Year = ? WHERE AcademicYearID = ?", (new_year_name, year_id))
-                    conn.commit()
-                    dialog.accept()
-                    QMessageBox.information(self, "Success", f"Academic Year updated successfully.")
-                    self.Load_Data()
-                    
-            except sqlite3.Error as e:
-                error_label.setText(f"Error updating year: {str(e)}")
-
-        save_btn.clicked.connect(save_edit)
-        cancel_btn.clicked.connect(dialog.reject)
-        dialog.exec_()
-
-    def deleteYear(self):
-        # Dialog for deleting academic year
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Delete Academic Year")
-        dialog.setFixedSize(350, 180)
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #FFFFFF;
-                border-radius: 10px;
-            }
-            QLabel {
-                font-size: 16px;
-                color: #2D3748;
-            }
-            QComboBox {
-                background-color: #F7FAFC;
-                border: 1px solid #E0E3E7;
-                padding: 10px;
-                border-radius: 5px;
-                font-size: 15px;
-            }
-            QPushButton {
-                background-color: #E53E3E;
-                color: white;
-                border: none;
-                padding: 8px 18px;
-                border-radius: 5px;
-                font-size: 15px;
-            }
-            QPushButton#cancel {
-                background-color: #EDF2F7;
-                color: #2D3748;
-                border: 1px solid #E0E3E7;
-            }
-            QPushButton:hover {
-                background-color: #C53030;
-            }
-            QPushButton#cancel:hover {
-                background-color: #E2E8F0;
-            }
-            QLabel#error {
-                color: #E53E3E;
-                font-size: 13px;
-            }
-        """)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        label = QLabel("Select Academic Year to Delete")
-        layout.addWidget(label)
-
-        year_combo = QComboBox()
-        
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-                years = c.fetchall()
-                year_combo.addItem("Select Year", None)
-                for y in years:
-                    year_combo.addItem(y[1], y[0])
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to load academic years: {str(e)}")
-            
-        layout.addWidget(year_combo)
-
-        error_label = QLabel("")
-        error_label.setObjectName("error")
-        layout.addWidget(error_label)
-
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        delete_btn = QPushButton("Delete")
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("cancel")
-        btn_layout.addWidget(delete_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-
-        def do_delete():
-            year_id = year_combo.currentData()
-            if not year_id:
-                error_label.setText("Please select a year to delete.")
-                return
-            
-            try:
-                with get_db_connection() as (conn, c):
-                    # Check for child relations in Term
-                    c.execute("SELECT 1 FROM Term WHERE AcademicYear = ?", (year_id,))
-                    if c.fetchone():
-                        error_label.setText("Cannot delete: This year has related terms.")
-                        return
-                    
-                    # Check for child relations in Class
-                    c.execute("SELECT 1 FROM Class WHERE AcademicYear = ?", (year_id,))
-                    if c.fetchone():
-                        error_label.setText("Cannot delete: This year has related classes.")
-                        return
-
-                    # Get year name for message
-                    year_name = year_combo.currentText()
-                    msg = QMessageBox(self)
-                    msg.setIcon(QMessageBox.Warning)
-                    msg.setWindowTitle("Delete Academic Year")
-                    msg.setText(
-                        f"Are you sure you want to delete the academic year '{year_name}'?\n\n"
-                        "This action cannot be undone.\n\n"
-                        "Note:\n"
-                        "- If this year is linked to any terms or classes, deletion is not allowed."
-                    )
-                    msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-                    ret = msg.exec_()
-                    if ret != QMessageBox.Yes:
-                        return
-
-                    c.execute("DELETE FROM AcademicYear WHERE AcademicYearID = ?", (year_id,))
-                    conn.commit()
-                    dialog.accept()
-                    QMessageBox.information(self, "Deleted", f"Academic Year '{year_name}' has been deleted successfully.")
-                    self.Load_Data()
-                    
-            except sqlite3.Error as e:
-                error_label.setText(f"Error deleting year: {str(e)}")
-
-        delete_btn.clicked.connect(do_delete)
-        cancel_btn.clicked.connect(dialog.reject)
-        dialog.exec_()
-
-    def handle_year_action(self, index):
-        action = self.year_action_combo.itemData(index)
-        if action == "add":
-            self.addYear()
-        elif action == "edit":
-            self.editYear()
-        elif action == "delete":
-            self.deleteYear()
-        self.year_action_combo.setCurrentIndex(0)
+    # Keep all your existing methods (addYear, addTerm, editTerm_by_id, deleteTerm_by_id)
+    # They will work exactly the same    
 
 class Class(QWidget):
     def __init__(self):
@@ -4758,10 +4967,11 @@ class UniformDashBoard(QWidget):
          # --- Uniform List Section (Full Width CRUD) ---
         uniform_frame = QFrame()
         uniform_frame.setObjectName("summaryCard")
+        uniform_frame.setMinimumHeight(300)
         uniform_layout = QVBoxLayout(uniform_frame)
         
         uni_header = QHBoxLayout()
-        uni_title = QLabel("Uniform Catalog (CRUD)")
+        uni_title = QLabel("Uniform Catalog")
         uni_title.setObjectName("sectionTitle")
         uni_header.addWidget(uni_title)
         uni_header.addStretch()
@@ -4809,6 +5019,7 @@ class UniformDashBoard(QWidget):
         # --- Recent Inventory Section ---
         inventory_frame = QFrame()
         inventory_frame.setObjectName("summaryCard")
+        inventory_frame.setMinimumHeight(300)
         inventory_layout = QVBoxLayout(inventory_frame)
         
         inv_header = QHBoxLayout()
@@ -5244,8 +5455,8 @@ class InventoryManagement(QWidget):
                         high_in = qty
                     elif row[2] == "Out" and qty > high_out:
                         high_out = qty
-                    # Add actions
-                    self.add_action_buttons(i, row[0])
+                    # Add actions COMBOBOX instead of buttons
+                    self.add_action_combo(i, row[0])
                     self.table.setRowHeight(i, 40)
                 
                 self.results_label.setText(f"{len(rows)} results retrieved")
@@ -5254,25 +5465,49 @@ class InventoryManagement(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
 
-    def add_action_buttons(self, row, inv_id):
-        actions_widget = QWidget()
-        actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(2, 2, 2, 2)
-        actions_layout.setSpacing(2)
+    def add_action_combo(self, row, inv_id):
+        """Add comboBox for actions instead of buttons"""
+        action_combo = QComboBox()
+        action_combo.addItems(["Select Action", "Edit", "Delete"])
+        
+        # Style the comboBox to match your existing design
+        action_combo.setFixedWidth(100)
+        action_combo.setStyleSheet("""
+            QComboBox {
+                padding: 3px;
+                border: 1px solid #d1d5db;
+                border-radius: 4px;
+                background-color: white;
+            }
+            QComboBox:hover {
+                border-color: #9ca3af;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+        
+        # Connect the comboBox using lambda to capture inv_id
+        action_combo.currentIndexChanged.connect(
+            lambda index, iid=inv_id, cb=action_combo: 
+            self.handle_inventory_action(index, iid, cb)
+        )
+        
+        self.table.setCellWidget(row, 7, action_combo)
 
-        edit_btn = QPushButton("Edit")
-        edit_btn.setFixedWidth(60)
-        edit_btn.clicked.connect(lambda: self.update_inventory(inv_id))
-        delete_btn = QPushButton("Delete")
-        delete_btn.setFixedWidth(60)
-        delete_btn.clicked.connect(lambda: self.delete_inventory(inv_id))
-
-        actions_layout.addWidget(edit_btn)
-        actions_layout.addWidget(delete_btn)
-        actions_layout.addStretch()
-
-        self.table.setCellWidget(row, 7, actions_widget)
-
+    def handle_inventory_action(self, index, inv_id, combo_box):
+        """Handle inventory action selection from comboBox"""
+        if index == 0:  # "Select Action"
+            return
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset to "Select Action"
+        
+        if action == "Edit":
+            self.update_inventory(inv_id)  # Your existing edit method
+        elif action == "Delete":
+            self.delete_inventory(inv_id)  # Your existing delete method
+    
     def print_table(self):
         # Placeholder for print functionality
         QMessageBox.information(self, "Print", "Printing table... (placeholder)")
@@ -5404,6 +5639,7 @@ class InventoryManagement(QWidget):
         price_edit.setStyleSheet("")
         price_edit.setPlaceholderText("Enter price per unit")
         price_edit.setToolTip("Enter the price per unit for this inventory transaction")
+    
     def save_inventory(self, dialog, uniform_combo, type_combo, quantity_edit, price_edit, date_edit, ref_edit):
         """Save new inventory transaction"""
         uniform_id = uniform_combo.currentData()
@@ -5478,6 +5714,7 @@ class InventoryManagement(QWidget):
                 
         except Exception as e:
             QMessageBox.warning(dialog, "Error", f"Failed to save inventory: {str(e)}")
+    
     def update_inventory(self, inv_id):
         try:
             with get_db_connection() as (conn, c):
@@ -7526,18 +7763,1292 @@ class Expense(QWidget):
                 QMessageBox.critical(self, "Error", f"Delete failed: {e}")
 
 ### end of expenditure ####
+### Categories management
+class CategoryManagement(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.current_department_id = None
+        self.current_category_id = None
+        self.init_ui()
+        # Delay loading departments until UI is fully initialized
+        QTimer.singleShot(100, self.load_departments)
+        
+    def init_ui(self):
+        # Main Layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
 
+        # ========== HEADER SECTION ==========
+        header_frame = QFrame()
+        header_frame.setMaximumHeight(80)
+        header_layout = QVBoxLayout(header_frame)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(10)
+
+        # Title
+        title_layout = QHBoxLayout()
+        title = QLabel("Category Management System")
+        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #2C3E50;")
+        title_layout.addWidget(title)
+        title_layout.addStretch()
+        
+        # Quick Stats
+        stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(15)
+        
+        self.dept_count_label = QLabel("Departments: 0")
+        self.dept_count_label.setStyleSheet("""
+            QLabel {
+                background-color: #F7FAFC;
+                color: #4A5568;
+                padding: 4px 10px;
+                border-radius: 4px;
+                border: 1px solid #E2E8F0;
+                font-size: 13px;
+            }
+        """)
+        stats_layout.addWidget(self.dept_count_label)
+        
+        self.category_count_label = QLabel("Categories: 0")
+        self.category_count_label.setStyleSheet("""
+            QLabel {
+                background-color: #F7FAFC;
+                color: #4A5568;
+                padding: 4px 10px;
+                border-radius: 4px;
+                border: 1px solid #E2E8F0;
+                font-size: 13px;
+            }
+        """)
+        stats_layout.addWidget(self.category_count_label)
+        
+        self.subcategory_count_label = QLabel("Subcategories: 0")
+        self.subcategory_count_label.setStyleSheet("""
+            QLabel {
+                background-color: #F7FAFC;
+                color: #4A5568;
+                padding: 4px 10px;
+                border-radius: 4px;
+                border: 1px solid #E2E8F0;
+                font-size: 13px;
+            }
+        """)
+        stats_layout.addWidget(self.subcategory_count_label)
+        
+        stats_layout.addStretch()
+        title_layout.addLayout(stats_layout)
+        
+        header_layout.addLayout(title_layout)
+
+        # ========== DEPARTMENT QUICK ACCESS BAR ==========
+        self.dept_bar_frame = QFrame()
+        self.dept_bar_frame.setMaximumHeight(60)
+        dept_bar_layout = QHBoxLayout(self.dept_bar_frame)
+        dept_bar_layout.setContentsMargins(0, 5, 0, 5)
+        dept_bar_layout.setSpacing(15)
+
+        # Department label
+        dept_label = QLabel("Department:")
+        dept_label.setStyleSheet("font-weight: bold; color: #4A5568; font-size: 14px;")
+        dept_bar_layout.addWidget(dept_label)
+
+        # Departments as horizontal tabs/buttons (using a widget container)
+        self.dept_buttons_container = QWidget()
+        self.dept_buttons_layout = QHBoxLayout(self.dept_buttons_container)
+        self.dept_buttons_layout.setSpacing(8)
+        self.dept_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        dept_bar_layout.addWidget(self.dept_buttons_container)
+
+        # Department Action Buttons (Edit/Delete)
+        dept_action_layout = QHBoxLayout()
+        dept_action_layout.setSpacing(5)
+
+        self.edit_dept_btn = QPushButton("Edit")
+        self.edit_dept_btn.clicked.connect(self.edit_department)
+        self.edit_dept_btn.setFixedHeight(30)
+        self.edit_dept_btn.setFixedWidth(60)
+        self.edit_dept_btn.setEnabled(False)
+        dept_action_layout.addWidget(self.edit_dept_btn)
+
+        self.delete_dept_btn = QPushButton("Delete")
+        self.delete_dept_btn.clicked.connect(self.delete_department)
+        self.delete_dept_btn.setFixedHeight(30)
+        self.delete_dept_btn.setFixedWidth(70)
+        self.delete_dept_btn.setEnabled(False)
+        dept_action_layout.addWidget(self.delete_dept_btn)
+
+        dept_bar_layout.addLayout(dept_action_layout)
+        dept_bar_layout.addStretch()
+
+        # Add Department Button
+        add_dept_btn = QPushButton("+ Add Department")
+        add_dept_btn.clicked.connect(self.add_department)
+        add_dept_btn.setFixedHeight(30)
+        dept_bar_layout.addWidget(add_dept_btn)
+
+        header_layout.addWidget(self.dept_bar_frame)
+        main_layout.addWidget(header_frame)
+
+        # ========== MAIN CONTENT AREA ==========
+        content_container = QFrame()
+        content_container.setObjectName("contentContainer")
+        content_layout = QHBoxLayout(content_container)
+        content_layout.setSpacing(20)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
+        # ========== LEFT PANEL: Categories (45%) ==========
+        category_panel = QFrame()
+        category_panel.setObjectName("categoryPanel")
+        category_layout = QVBoxLayout(category_panel)
+        category_layout.setContentsMargins(0, 0, 0, 0)
+        category_layout.setSpacing(10)
+
+        # Categories Header
+        category_header = QFrame()
+        category_header.setMaximumHeight(50)
+        category_header_layout = QHBoxLayout(category_header)
+        category_header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.category_title = QLabel("CATEGORIES")
+        self.category_title.setStyleSheet("""
+            QLabel {
+                font-size: 15px;
+                font-weight: bold;
+                color: #2C3E50;
+                padding: 10px 0;
+            }
+        """)
+        category_header_layout.addWidget(self.category_title)
+        category_header_layout.addStretch()
+        
+        # Add Category Button
+        add_category_btn = QPushButton("+ Add Category")
+        add_category_btn.clicked.connect(self.add_category)
+        add_category_btn.setFixedHeight(30)
+        category_header_layout.addWidget(add_category_btn)
+        
+        category_layout.addWidget(category_header)
+
+        # Category Filter Bar
+        filter_frame = QFrame()
+        filter_frame.setMaximumHeight(40)
+        filter_layout = QHBoxLayout(filter_frame)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        
+        filter_label = QLabel("Filter by Type:")
+        filter_label.setStyleSheet("color: #718096; font-size: 13px;")
+        filter_layout.addWidget(filter_label)
+        
+        self.type_filter = QComboBox()
+        self.type_filter.addItems(["All Types", "Supplies", "Expenses"])
+        self.type_filter.setFixedHeight(28)
+        self.type_filter.currentIndexChanged.connect(self.load_categories)
+        filter_layout.addWidget(self.type_filter)
+        
+        filter_layout.addStretch()
+        category_layout.addWidget(filter_frame)
+
+        # Categories Table
+        self.category_table = QTableWidget()
+        self.category_table.setColumnCount(4)
+        self.category_table.setHorizontalHeaderLabels(["Type", "Category", "Subcats", "Actions"])
+        self.category_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.category_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.category_table.setColumnWidth(0, 100)
+        self.category_table.setColumnWidth(2, 80)
+        self.category_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.category_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.category_table.setAlternatingRowColors(True)
+        self.category_table.itemClicked.connect(self.on_category_selected)
+        self.category_table.verticalHeader().setVisible(False)
+        category_layout.addWidget(self.category_table)
+
+        content_layout.addWidget(category_panel, 4)
+
+        # ========== RIGHT PANEL: Subcategories (55%) ==========
+        subcategory_panel = QFrame()
+        subcategory_panel.setObjectName("subcategoryPanel")
+        subcategory_layout = QVBoxLayout(subcategory_panel)
+        subcategory_layout.setContentsMargins(0, 0, 0, 0)
+        subcategory_layout.setSpacing(10)
+
+        # Subcategories Header
+        subcategory_header = QFrame()
+        subcategory_header.setMaximumHeight(50)
+        subcategory_header_layout = QHBoxLayout(subcategory_header)
+        subcategory_header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.subcategory_title = QLabel("SUBCATEGORIES")
+        self.subcategory_title.setStyleSheet("""
+            QLabel {
+                font-size: 15px;
+                font-weight: bold;
+                color: #2C3E50;
+                padding: 10px 0;
+            }
+        """)
+        subcategory_header_layout.addWidget(self.subcategory_title)
+        subcategory_header_layout.addStretch()
+        
+        # Add Subcategory Button
+        add_subcat_btn = QPushButton("+ Add Subcategory")
+        add_subcat_btn.clicked.connect(self.add_subcategory)
+        add_subcat_btn.setFixedHeight(30)
+        subcategory_header_layout.addWidget(add_subcat_btn)
+        
+        subcategory_layout.addWidget(subcategory_header)
+
+        # Subcategories Info Bar
+        info_frame = QFrame()
+        info_frame.setMaximumHeight(40)
+        info_layout = QHBoxLayout(info_frame)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.subcat_info_label = QLabel("Select a category to view subcategories")
+        self.subcat_info_label.setStyleSheet("color: #718096; font-size: 13px; font-style: italic;")
+        info_layout.addWidget(self.subcat_info_label)
+        
+        info_layout.addStretch()
+        
+        self.usage_label = QLabel("Usage: 0 items")
+        self.usage_label.setStyleSheet("""
+            QLabel {
+                background-color: #F7FAFC;
+                color: #4A5568;
+                padding: 4px 10px;
+                border-radius: 4px;
+                border: 1px solid #E2E8F0;
+                font-size: 12px;
+            }
+        """)
+        info_layout.addWidget(self.usage_label)
+        
+        subcategory_layout.addWidget(info_frame)
+
+        # Subcategories Table
+        self.subcategory_table = QTableWidget()
+        self.subcategory_table.setColumnCount(3)
+        self.subcategory_table.setHorizontalHeaderLabels(["Subcategory", "Usage", "Actions"])
+        self.subcategory_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.subcategory_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.subcategory_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.subcategory_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.subcategory_table.setAlternatingRowColors(True)
+        self.subcategory_table.verticalHeader().setVisible(False)
+        subcategory_layout.addWidget(self.subcategory_table)
+
+        content_layout.addWidget(subcategory_panel, 5)
+
+        main_layout.addWidget(content_container)
+
+        # ========== BREADCRUMB NAVIGATION ==========
+        breadcrumb_frame = QFrame()
+        breadcrumb_frame.setMaximumHeight(50)
+        breadcrumb_layout = QHBoxLayout(breadcrumb_frame)
+        breadcrumb_layout.setContentsMargins(15, 10, 15, 10)
+        
+        self.breadcrumb_label = QLabel("Select a department to begin")
+        self.breadcrumb_label.setStyleSheet("font-size: 13px; color: #4A5568;")
+        breadcrumb_layout.addWidget(self.breadcrumb_label)
+        
+        breadcrumb_layout.addStretch()
+        
+        # Navigation indicators
+        indicator_layout = QHBoxLayout()
+        indicator_layout.setSpacing(15)
+        
+        self.dept_indicator = QLabel("Department")
+        self.dept_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+        indicator_layout.addWidget(self.dept_indicator)
+        
+        self.cat_indicator = QLabel("Category")
+        self.cat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+        indicator_layout.addWidget(self.cat_indicator)
+        
+        self.subcat_indicator = QLabel("Subcategory")
+        self.subcat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+        indicator_layout.addWidget(self.subcat_indicator)
+        
+        breadcrumb_layout.addLayout(indicator_layout)
+        
+        main_layout.addWidget(breadcrumb_frame)
+
+        # Apply styles
+        self.apply_styles()
+
+    def apply_styles(self):
+        """Apply all stylesheets"""
+        self.setStyleSheet("""
+            QFrame#contentContainer {
+                background-color: transparent;
+            }
+            QPushButton {
+                border-radius: 4px;
+                font-weight: 500;
+                border: 1px solid #CBD5E0;
+                background-color: #F7FAFC;
+                color: #4A5568;
+                padding: 0 12px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #EDF2F7;
+                border-color: #A0AEC0;
+            }
+            QPushButton:checked {
+                background-color: #4299E1;
+                color: white;
+                border: none;
+            }
+            QPushButton:checked:hover {
+                background-color: #3182CE;
+            }
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #E2E8F0;
+                border-radius: 6px;
+                gridline-color: #EDF2F7;
+            }
+            QTableWidget::item {
+                padding: 8px 4px;
+                border-bottom: 1px solid #F7FAFC;
+                font-size: 13px;
+            }
+            QTableWidget::item:selected {
+                background-color: #EBF8FF;
+            }
+            QHeaderView::section {
+                background-color: #F8FAFC;
+                padding: 8px 4px;
+                border: none;
+                border-bottom: 2px solid #E2E8F0;
+                font-weight: bold;
+                font-size: 12px;
+                color: #4A5568;
+            }
+            QComboBox {
+                border: 1px solid #CBD5E0;
+                border-radius: 4px;
+                padding: 2px 8px;
+                background-color: white;
+                font-size: 12px;
+            }
+        """)
+
+    def load_departments(self):
+        """Load departments as horizontal buttons"""
+        try:
+            # Clear existing buttons
+            self.clear_layout(self.dept_buttons_layout)
+            
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT DeptID, DeptName FROM Department ORDER BY DeptName")
+                departments = c.fetchall()
+                
+                for dept_id, dept_name in departments:
+                    dept_btn = QPushButton(dept_name)
+                    dept_btn.setCheckable(True)
+                    dept_btn.setFixedHeight(32)
+                    dept_btn.setProperty("dept_id", dept_id)
+                    
+                    # Set initial checked state
+                    if dept_id == self.current_department_id:
+                        dept_btn.setChecked(True)
+                    
+                    dept_btn.clicked.connect(lambda checked, d_id=dept_id: self.on_department_selected(d_id))
+                    self.dept_buttons_layout.addWidget(dept_btn)
+                
+                # Update department count
+                self.dept_count_label.setText(f"Departments: {len(departments)}")
+                
+                # Auto-select first department if none selected
+                if not self.current_department_id and departments:
+                    first_dept_id = departments[0][0]
+                    self.on_department_selected(first_dept_id)
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load departments: {str(e)}")
+
+    def clear_layout(self, layout):
+        """Safely clear all widgets from a layout"""
+        if layout:
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+
+    def on_department_selected(self, dept_id):
+        """Handle department selection from button"""
+        self.current_department_id = dept_id
+        
+        # Enable edit/delete buttons
+        self.edit_dept_btn.setEnabled(True)
+        self.delete_dept_btn.setEnabled(True)
+        
+        # Update button states
+        for i in range(self.dept_buttons_layout.count()):
+            widget = self.dept_buttons_layout.itemAt(i).widget()
+            if widget and isinstance(widget, QPushButton):
+                widget.setChecked(widget.property("dept_id") == dept_id)
+        
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT DeptName FROM Department WHERE DeptID = ?", (dept_id,))
+                result = c.fetchone()
+                if result:
+                    dept_name = result[0]
+                    
+                    # Update UI
+                    self.category_title.setText(f"CATEGORIES - {dept_name.upper()}")
+                    self.breadcrumb_label.setText(f"Department: {dept_name}")
+                    self.dept_indicator.setStyleSheet("color: #4299E1; font-weight: bold; font-size: 12px;")
+                    self.cat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+                    self.subcat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+        
+        except Exception as e:
+            print(f"Error getting department name: {e}")
+        
+        # Load categories and clear subcategories
+        self.load_categories()
+        self.clear_subcategories()
+
+    def on_category_selected(self, item):
+        """Handle category selection"""
+        if not item:
+            return
+            
+        row = self.category_table.currentRow()
+        if row == -1:
+            return
+            
+        cat_id = self.category_table.item(row, 0).data(Qt.UserRole)
+        cat_name = self.category_table.item(row, 1).text()
+        
+        self.current_category_id = cat_id
+        
+        # Get department name
+        dept_name = ""
+        for i in range(self.dept_buttons_layout.count()):
+            widget = self.dept_buttons_layout.itemAt(i).widget()
+            if widget and isinstance(widget, QPushButton) and widget.isChecked():
+                dept_name = widget.text()
+                break
+        
+        # Update UI
+        self.subcategory_title.setText(f"SUBCATEGORIES - {cat_name.upper()}")
+        self.breadcrumb_label.setText(f"Department: {dept_name} → Category: {cat_name}")
+        self.dept_indicator.setStyleSheet("color: #4299E1; font-weight: bold; font-size: 12px;")
+        self.cat_indicator.setStyleSheet("color: #4299E1; font-weight: bold; font-size: 12px;")
+        self.subcat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+        self.subcat_info_label.setText(f"Subcategories for {cat_name}")
+        
+        # Load subcategories
+        self.load_subcategories()
+
+    def clear_subcategories(self):
+        """Clear subcategories display"""
+        self.subcategory_table.setRowCount(0)
+        self.subcategory_title.setText("SUBCATEGORIES")
+        self.subcat_info_label.setText("Select a category to view subcategories")
+        self.usage_label.setText("Usage: 0 items")
+        
+        # Reset indicators if no department selected
+        if not self.current_department_id:
+            self.breadcrumb_label.setText("Select a department to begin")
+            self.dept_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+            self.cat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+            self.subcat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
+            self.edit_dept_btn.setEnabled(False)
+            self.delete_dept_btn.setEnabled(False)
+
+    def load_categories(self):
+        """Load categories for the selected department"""
+        if not self.current_department_id:
+            self.category_table.setRowCount(0)
+            self.category_count_label.setText("Categories: 0")
+            return
+            
+        try:
+            type_filter = self.type_filter.currentText()
+            
+            with get_db_connection() as (conn, c):
+                # Build query
+                if type_filter == "All Types":
+                    query = "SELECT CatID, Type, CatName FROM Category WHERE Department = ? ORDER BY Type, CatName"
+                    params = (self.current_department_id,)
+                else:
+                    query = "SELECT CatID, Type, CatName FROM Category WHERE Department = ? AND Type = ? ORDER BY CatName"
+                    params = (self.current_department_id, type_filter)
+                
+                c.execute(query, params)
+                categories = c.fetchall()
+                
+                self.category_table.setRowCount(len(categories))
+                for i, (cat_id, cat_type, cat_name) in enumerate(categories):
+                    # Type
+                    type_item = QTableWidgetItem(cat_type)
+                    type_item.setData(Qt.UserRole, cat_id)
+                    self.category_table.setItem(i, 0, type_item)
+                    
+                    # Category Name
+                    name_item = QTableWidgetItem(cat_name)
+                    self.category_table.setItem(i, 1, name_item)
+                    
+                    # Subcategories count
+                    c.execute("SELECT COUNT(*) FROM SubCategory WHERE CategoryID = ?", (cat_id,))
+                    subcat_count = c.fetchone()[0]
+                    count_item = QTableWidgetItem(str(subcat_count))
+                    count_item.setTextAlignment(Qt.AlignCenter)
+                    self.category_table.setItem(i, 2, count_item)
+                    
+                    # Actions
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Actions", "Edit", "Delete"])
+                    action_combo.setFixedHeight(28)
+                    action_combo.currentIndexChanged.connect(
+                        lambda index, cid=cat_id, cb=action_combo: 
+                        self.on_category_action(index, cid, cb)
+                    )
+                    self.category_table.setCellWidget(i, 3, action_combo)
+                
+                # Update count
+                self.category_count_label.setText(f"Categories: {len(categories)}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load categories: {str(e)}")
+
+    def load_subcategories(self):
+        """Load subcategories for the selected category"""
+        if not self.current_category_id:
+            self.subcategory_table.setRowCount(0)
+            self.subcategory_count_label.setText("Subcategories: 0")
+            self.usage_label.setText("Usage: 0 items")
+            return
+            
+        try:
+            with get_db_connection() as (conn, c):
+                # Get subcategories
+                c.execute("SELECT SubCatID, SubCategoryName FROM SubCategory WHERE CategoryID = ? ORDER BY SubCategoryName", 
+                         (self.current_category_id,))
+                subcategories = c.fetchall()
+                
+                self.subcategory_table.setRowCount(len(subcategories))
+                total_usage = 0
+                
+                for i, (subcat_id, subcat_name) in enumerate(subcategories):
+                    # Subcategory Name
+                    name_item = QTableWidgetItem(subcat_name)
+                    name_item.setData(Qt.UserRole, subcat_id)
+                    self.subcategory_table.setItem(i, 0, name_item)
+                    
+                    # Usage count
+                    c.execute("SELECT COUNT(*) FROM Supplies WHERE Subcategory = ?", (subcat_id,))
+                    usage_count = c.fetchone()[0]
+                    total_usage += usage_count
+                    
+                    usage_item = QTableWidgetItem(str(usage_count))
+                    usage_item.setTextAlignment(Qt.AlignCenter)
+                    self.subcategory_table.setItem(i, 1, usage_item)
+                    
+                    # Actions
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Actions", "Edit", "Delete"])
+                    action_combo.setFixedHeight(28)
+                    action_combo.currentIndexChanged.connect(
+                        lambda index, sid=subcat_id, cb=action_combo: 
+                        self.on_subcategory_action(index, sid, cb)
+                    )
+                    self.subcategory_table.setCellWidget(i, 2, action_combo)
+                
+                # Update counts
+                self.subcategory_count_label.setText(f"Subcategories: {len(subcategories)}")
+                self.usage_label.setText(f"Usage: {total_usage} items")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load subcategories: {str(e)}")
+
+    def on_category_action(self, index, cat_id, combo_box):
+        """Handle category action selection"""
+        if index == 0:
+            return
+        
+        action = combo_box.currentText()
+        combo_box.setCurrentIndex(0)
+        
+        if action == "Edit":
+            self.edit_category(cat_id)
+        elif action == "Delete":
+            self.delete_category(cat_id)
+
+    def on_subcategory_action(self, index, subcat_id, combo_box):
+        """Handle subcategory action selection"""
+        if index == 0:
+            return
+        
+        action = combo_box.currentText()
+        combo_box.setCurrentIndex(0)
+        
+        if action == "Edit":
+            self.edit_subcategory(subcat_id)
+        elif action == "Delete":
+            self.delete_subcategory(subcat_id)
+
+    # ========== CRUD METHODS ==========
+    
+    def add_department(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Department")
+        dialog.setFixedSize(350, 180)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        name_label = QLabel("Department Name:")
+        layout.addWidget(name_label)
+        
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("e.g., Administration, Academics, Sports")
+        layout.addWidget(name_input)
+        
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #e74c3c;")
+        layout.addWidget(error_label)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        def save_department():
+            dept_name = name_input.text().strip()
+            if not dept_name:
+                error_label.setText("Department name is required")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("SELECT 1 FROM Department WHERE DeptName = ?", (dept_name,))
+                    if c.fetchone():
+                        error_label.setText("Department already exists")
+                        return
+                    
+                    c.execute("INSERT INTO Department (DeptName) VALUES (?)", (dept_name,))
+                    conn.commit()
+                    dialog.accept()
+                    self.load_departments()
+                    QMessageBox.information(self, "Success", f"Department '{dept_name}' added")
+                    
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
+        
+        save_btn.clicked.connect(save_department)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def edit_department(self):
+        if not self.current_department_id:
+            QMessageBox.warning(self, "No Selection", "Please select a department to edit")
+            return
+        
+        # Find department name
+        dept_name = ""
+        for i in range(self.dept_buttons_layout.count()):
+            widget = self.dept_buttons_layout.itemAt(i).widget()
+            if widget and isinstance(widget, QPushButton) and widget.isChecked():
+                dept_name = widget.text()
+                break
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Department")
+        dialog.setFixedSize(350, 180)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        name_label = QLabel("Department Name:")
+        layout.addWidget(name_label)
+        
+        name_input = QLineEdit(dept_name)
+        layout.addWidget(name_input)
+        
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #e74c3c;")
+        layout.addWidget(error_label)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        def save_edit():
+            new_name = name_input.text().strip()
+            if not new_name:
+                error_label.setText("Department name is required")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("SELECT 1 FROM Department WHERE DeptName = ? AND DeptID != ?", 
+                            (new_name, self.current_department_id))
+                    if c.fetchone():
+                        error_label.setText("Department name already exists")
+                        return
+                    
+                    c.execute("UPDATE Department SET DeptName = ? WHERE DeptID = ?", 
+                            (new_name, self.current_department_id))
+                    conn.commit()
+                    dialog.accept()
+                    self.load_departments()
+                    QMessageBox.information(self, "Success", "Department updated")
+                    
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
+        
+        save_btn.clicked.connect(save_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def delete_department(self):
+        if not self.current_department_id:
+            QMessageBox.warning(self, "No Selection", "Please select a department to delete")
+            return
+        
+        # Get department name
+        dept_name = ""
+        for i in range(self.dept_buttons_layout.count()):
+            widget = self.dept_buttons_layout.itemAt(i).widget()
+            if widget and isinstance(widget, QPushButton) and widget.isChecked():
+                dept_name = widget.text()
+                break
+        
+        # Check dependencies
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT COUNT(*) FROM Category WHERE Department = ?", (self.current_department_id,))
+                category_count = c.fetchone()[0]
+                
+                if category_count > 0:
+                    QMessageBox.warning(self, "Cannot Delete", 
+                                      f"Cannot delete '{dept_name}' because it has {category_count} categories")
+                    return
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to check dependencies: {str(e)}")
+            return
+        
+        # Confirmation
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                   f"Delete department '{dept_name}'?",
+                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM Department WHERE DeptID = ?", (self.current_department_id,))
+                    conn.commit()
+                    
+                    # Reset selection and reload
+                    self.current_department_id = None
+                    self.current_category_id = None
+                    self.load_departments()
+                    self.clear_subcategories()
+                    
+                    QMessageBox.information(self, "Deleted", f"Department '{dept_name}' deleted")
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete department: {str(e)}")
+
+    def add_category(self):
+        if not self.current_department_id:
+            QMessageBox.warning(self, "No Department", "Please select a department first")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Category")
+        dialog.setFixedSize(400, 250)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Type
+        type_label = QLabel("Category Type:")
+        layout.addWidget(type_label)
+        
+        type_combo = QComboBox()
+        type_combo.addItems(["Supplies", "Expenses"])
+        layout.addWidget(type_combo)
+        
+        # Name
+        name_label = QLabel("Category Name:")
+        layout.addWidget(name_label)
+        
+        name_input = QLineEdit()
+        layout.addWidget(name_input)
+        
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #e74c3c;")
+        layout.addWidget(error_label)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        def save_category():
+            cat_type = type_combo.currentText()
+            cat_name = name_input.text().strip()
+            
+            if not cat_name:
+                error_label.setText("Category name is required")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("""
+                        SELECT 1 FROM Category 
+                        WHERE Type = ? AND Department = ? AND CatName = ?
+                    """, (cat_type, self.current_department_id, cat_name))
+                    
+                    if c.fetchone():
+                        error_label.setText("Category already exists")
+                        return
+                    
+                    c.execute("""
+                        INSERT INTO Category (Type, Department, CatName) 
+                        VALUES (?, ?, ?)
+                    """, (cat_type, self.current_department_id, cat_name))
+                    
+                    conn.commit()
+                    dialog.accept()
+                    self.load_categories()
+                    QMessageBox.information(self, "Success", f"Category '{cat_name}' added")
+                    
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
+        
+        save_btn.clicked.connect(save_category)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def edit_category(self, cat_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT Type, CatName FROM Category WHERE CatID = ?", (cat_id,))
+                result = c.fetchone()
+                if not result:
+                    return
+                cat_type, cat_name = result
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load category: {str(e)}")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Category")
+        dialog.setFixedSize(400, 250)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Type (display only)
+        type_label = QLabel("Category Type:")
+        layout.addWidget(type_label)
+        
+        type_display = QLabel(cat_type)
+        layout.addWidget(type_display)
+        
+        # Name
+        name_label = QLabel("Category Name:")
+        layout.addWidget(name_label)
+        
+        name_input = QLineEdit(cat_name)
+        layout.addWidget(name_input)
+        
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #e74c3c;")
+        layout.addWidget(error_label)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        def save_edit():
+            new_name = name_input.text().strip()
+            if not new_name:
+                error_label.setText("Category name is required")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("""
+                        SELECT 1 FROM Category 
+                        WHERE Type = ? AND Department = ? AND CatName = ? AND CatID != ?
+                    """, (cat_type, self.current_department_id, new_name, cat_id))
+                    
+                    if c.fetchone():
+                        error_label.setText("Category name already exists")
+                        return
+                    
+                    c.execute("UPDATE Category SET CatName = ? WHERE CatID = ?", (new_name, cat_id))
+                    conn.commit()
+                    dialog.accept()
+                    self.load_categories()
+                    QMessageBox.information(self, "Success", "Category updated")
+                    
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
+        
+        save_btn.clicked.connect(save_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def delete_category(self, cat_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT CatName FROM Category WHERE CatID = ?", (cat_id,))
+                result = c.fetchone()
+                if not result:
+                    return
+                cat_name = result[0]
+                
+                c.execute("SELECT COUNT(*) FROM SubCategory WHERE CategoryID = ?", (cat_id,))
+                subcat_count = c.fetchone()[0]
+                
+                if subcat_count > 0:
+                    QMessageBox.warning(self, "Cannot Delete", 
+                                      f"Cannot delete '{cat_name}' because it has {subcat_count} subcategories")
+                    return
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to check dependencies: {str(e)}")
+            return
+        
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                   f"Delete category '{cat_name}'?",
+                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM Category WHERE CatID = ?", (cat_id,))
+                    conn.commit()
+                    self.load_categories()
+                    self.clear_subcategories()
+                    QMessageBox.information(self, "Deleted", f"Category '{cat_name}' deleted")
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete category: {str(e)}")
+
+    def add_subcategory(self):
+        if not self.current_category_id:
+            QMessageBox.warning(self, "No Category", "Please select a category first")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Subcategory")
+        dialog.setFixedSize(350, 180)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        name_label = QLabel("Subcategory Name:")
+        layout.addWidget(name_label)
+        
+        name_input = QLineEdit()
+        layout.addWidget(name_input)
+        
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #e74c3c;")
+        layout.addWidget(error_label)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        def save_subcategory():
+            subcat_name = name_input.text().strip()
+            if not subcat_name:
+                error_label.setText("Subcategory name is required")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("""
+                        SELECT 1 FROM SubCategory 
+                        WHERE CategoryID = ? AND SubCategoryName = ?
+                    """, (self.current_category_id, subcat_name))
+                    
+                    if c.fetchone():
+                        error_label.setText("Subcategory already exists")
+                        return
+                    
+                    c.execute("""
+                        INSERT INTO SubCategory (CategoryID, SubCategoryName) 
+                        VALUES (?, ?)
+                    """, (self.current_category_id, subcat_name))
+                    
+                    conn.commit()
+                    dialog.accept()
+                    self.load_subcategories()
+                    QMessageBox.information(self, "Success", f"Subcategory '{subcat_name}' added")
+                    
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
+        
+        save_btn.clicked.connect(save_subcategory)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def edit_subcategory(self, subcat_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT SubCategoryName FROM SubCategory WHERE SubCatID = ?", (subcat_id,))
+                result = c.fetchone()
+                if not result:
+                    return
+                subcat_name = result[0]
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load subcategory: {str(e)}")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Subcategory")
+        dialog.setFixedSize(350, 180)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        name_label = QLabel("Subcategory Name:")
+        layout.addWidget(name_label)
+        
+        name_input = QLineEdit(subcat_name)
+        layout.addWidget(name_input)
+        
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #e74c3c;")
+        layout.addWidget(error_label)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        def save_edit():
+            new_name = name_input.text().strip()
+            if not new_name:
+                error_label.setText("Subcategory name is required")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("""
+                        SELECT 1 FROM SubCategory 
+                        WHERE CategoryID = ? AND SubCategoryName = ? AND SubCatID != ?
+                    """, (self.current_category_id, new_name, subcat_id))
+                    
+                    if c.fetchone():
+                        error_label.setText("Subcategory name already exists")
+                        return
+                    
+                    c.execute("UPDATE SubCategory SET SubCategoryName = ? WHERE SubCatID = ?", 
+                            (new_name, subcat_id))
+                    conn.commit()
+                    dialog.accept()
+                    self.load_subcategories()
+                    QMessageBox.information(self, "Success", "Subcategory updated")
+                    
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
+        
+        save_btn.clicked.connect(save_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+
+    def delete_subcategory(self, subcat_id):
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT SubCategoryName FROM SubCategory WHERE SubCatID = ?", (subcat_id,))
+                result = c.fetchone()
+                if not result:
+                    return
+                subcat_name = result[0]
+                
+                c.execute("SELECT COUNT(*) FROM Supplies WHERE Subcategory = ?", (subcat_id,))
+                usage_count = c.fetchone()[0]
+                
+                if usage_count > 0:
+                    QMessageBox.warning(self, "Cannot Delete", 
+                                      f"Cannot delete '{subcat_name}' because it is used in {usage_count} items")
+                    return
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to check dependencies: {str(e)}")
+            return
+        
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                   f"Delete subcategory '{subcat_name}'?",
+                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM SubCategory WHERE SubCatID = ?", (subcat_id,))
+                    conn.commit()
+                    self.load_subcategories()
+                    QMessageBox.information(self, "Deleted", f"Subcategory '{subcat_name}' deleted")
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete subcategory: {str(e)}")
+
+### end of categories management ###
 
 class About(QWidget):
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self)
-        layout.addStretch()
-        label = QLabel("About Page")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("font-size: 28px; font-weight: bold; color: #2D3748;")
-        layout.addWidget(label)
-        layout.addStretch()                    
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(24, 24, 24, 24)
+
+        # ---- Scroll Area (important for long content) ----
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setSpacing(14)
+
+        # ---- Title ----
+        title = QLabel("About Pinnacle SF")
+        title.setAlignment(Qt.AlignLeft)
+        title.setProperty("role", "title")  # styled via QSS if needed
+        content_layout.addWidget(title)
+
+        # ---- Section helper ----
+        def section_title(text):
+            lbl = QLabel(text)
+            lbl.setProperty("role", "section")
+            return lbl
+
+        def paragraph(text):
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            return lbl
+
+        # ---- System Overview ----
+        content_layout.addWidget(section_title("System Overview"))
+        content_layout.addWidget(paragraph(
+            "Pinnacle SF is a school finance management system designed to improve "
+            "clarity, transparency, and accountability in the handling of school "
+            "financial data. It focuses on monitoring how funds are collected, used, "
+            "and reported within clearly defined boundaries."
+        ))
+
+        # ---- Purpose & Motivation ----
+        content_layout.addWidget(section_title("Purpose & Motivation"))
+        content_layout.addWidget(paragraph(
+            "The system was developed to reduce uncertainty and mistrust surrounding "
+            "the management of school funds. By clearly recording financial "
+            "transactions, Pinnacle SF helps ensure that financial activities are "
+            "transparent and verifiable."
+        ))
+
+        # ---- Scope of Management ----
+        content_layout.addWidget(section_title("Scope of Management"))
+        content_layout.addWidget(paragraph(
+            "Pinnacle SF manages a specific portion of school financial operations, "
+            "including school fees, supplies, and operational expenses."
+        ))
+        content_layout.addWidget(paragraph(
+            "Important: This system does not represent the complete financial position "
+            "of a school. It reflects only the data managed within the system."
+        ))
+
+        # ---- Fees ----
+        content_layout.addWidget(section_title("Fees Management"))
+        content_layout.addWidget(paragraph(
+            "The system provides clear term-based insights into expected fees, collected "
+            "fees, and outstanding balances. Percentages are used to help finance "
+            "officers quickly understand collection performance."
+        ))
+
+        # ---- Supplies & Expenses ----
+        content_layout.addWidget(section_title("Supplies & Expenses Tracking"))
+        content_layout.addWidget(paragraph(
+            "Supplies and expenses are recorded using categories. This structure makes "
+            "it easier to understand how funds were used, analyze spending patterns, "
+            "and support internal reviews."
+        ))
+
+        # ---- Reporting ----
+        content_layout.addWidget(section_title("Reporting & Decision Support"))
+        content_layout.addWidget(paragraph(
+            "All reports are term-based and designed to be easy to read and interpret. "
+            "The system emphasizes summarized insights supported by categorized data. "
+            "Reports can be exported for use in PDF or Excel formats."
+        ))
+
+        # ---- Target Users ----
+        content_layout.addWidget(section_title("Target Users"))
+        content_layout.addWidget(paragraph(
+            "Pinnacle SF is primarily designed for finance officers responsible for "
+            "managing and reviewing school financial records."
+        ))
+
+        # ---- Limitations ----
+        content_layout.addWidget(section_title("Limitations & Transparency"))
+        content_layout.addWidget(paragraph(
+            "Non-fees income is not currently included in the system. This limitation "
+            "is intentional and clearly defined to prevent misinterpretation of "
+            "financial reports. Future improvements may be considered, but are not "
+            "guaranteed."
+        ))
+
+        # ---- System Info ----
+        content_layout.addWidget(section_title("System Information"))
+        content_layout.addWidget(paragraph(
+            "System Name: Pinnacle SF\n"
+            "Developer: Shema Nathan"
+        ))
+
+        content_layout.addStretch()
+
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
 
 class Account(QWidget):
     def __init__(self):
