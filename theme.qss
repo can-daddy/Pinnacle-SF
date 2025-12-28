@@ -260,7 +260,6 @@ QComboBox {
     border: 1px solid #E2E8F0;
     border-radius: 5px;
     padding: 6px 8px;
-    min-height: 28px;
 }
 
 QComboBox:focus {
@@ -788,4 +787,48 @@ QLabel[role="section"] {
     font-size: 15px;
     font-weight: 600;
     margin-top: 12px;
+}
+/* =====================================================
+   STRUCTURAL OVERRIDES (Keep Theme Colors Intact)
+   ===================================================== */
+
+/* ---------- QLabel: remove unwanted borders ---------- */
+QLabel {
+    border: none;
+    background: transparent;
+    padding: 0px;
+    margin: 0px;
+}
+
+
+/* ---------- QComboBox: better fit (especially in tables) ---------- */
+QComboBox {
+    min-height: 22px;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+QComboBox::drop-down {
+    width: 20px;
+    border: none;
+}
+
+QComboBox::down-arrow {
+    width: 8px;
+    height: 8px;
+}
+
+/* ComboBox inside table cells */
+QTableView QComboBox,
+QTableWidget QComboBox {
+    margin: 0px;
+    padding: 1px 4px;
+    min-height: 20px;
+}
+
+
+/* ---------- QPushButton: excluded (structure only, no colors) ---------- */
+QPushButton {
+    padding: 6px 12px;
+    border-radius: 5px;
 }

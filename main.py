@@ -14,38 +14,507 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtChart import *
 from PyQt5.QtPrintSupport import QPrinter
-from dashboard import Dashboard
-from reports_page import Reports
+from finance_service import FinanceService
+from report_generator import ReportGenerator
+import os
 
 
-# Enhanced connection function with context manager
+DB_NAME = "Database.db"
+
+
+def initialize_database():
+    """
+    Check if Database.db exists in the current working directory.
+    If not, create it and apply the schema.
+    """
+    db_path = os.path.join(os.getcwd(), DB_NAME)
+
+    if os.path.exists(db_path):
+        # Database already exists → nothing to do
+        return
+
+    # Create database and schema
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.executescript(SCHEMA_SQL)
+        conn.commit()
+    finally:
+        conn.close()
+
+SCHEMA_SQL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS "AcademicYear"(
+        "AcademicYearID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "Year" TEXT NOT NULL UNIQUE
+    );
+
+    CREATE TABLE IF NOT EXISTS "Class"(
+        "ClassID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "ClassName" TEXT NOT NULL,
+        "AcademicYear" TEXT NOT NULL,
+        FOREIGN KEY("AcademicYear") REFERENCES "AcademicYear"("AcademicYearID")
+    );
+
+    CREATE TABLE IF NOT EXISTS "Term"(
+        "TermID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "TermName" TEXT NOT NULL,
+        "AcademicYear" TEXT NOT NULL,
+        "StartDate" TEXT NOT NULL,
+        "EndDate" TEXT NOT NULL,
+        FOREIGN KEY("AcademicYear") REFERENCES "AcademicYear"("AcademicYearID")
+    );
+
+    CREATE TABLE IF NOT EXISTS "Students"(
+        "StudentID" TEXT PRIMARY KEY,
+        "Student_Name" TEXT NOT NULL,
+        "FeePayer" TEXT NOT NULL,
+        "PayRate" INTEGER NOT NULL,
+        "Parent_Name" TEXT NOT NULL,
+        "Parent_Contact" TEXT NOT NULL,
+        "Parent_Contact2" TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS "StudentTerm"(
+        "StudentTermID" INTEGER PRIMARY KEY,
+        "StudentID" TEXT NOT NULL,
+        "ClassID" INTEGER NOT NULL,
+        "TermID" INTEGER NOT NULL,
+        "PayRate" INTEGER NOT NULL CHECK(PayRate BETWEEN 0 AND 100),
+        FOREIGN KEY("StudentID") REFERENCES "Students"("StudentID") ON DELETE CASCADE,
+        FOREIGN KEY("ClassID") REFERENCES "Class"("ClassID"),
+        FOREIGN KEY("TermID") REFERENCES "Term"("TermID"),
+        UNIQUE(StudentID, ClassID, TermID)
+    );
+
+    CREATE TABLE IF NOT EXISTS "Fees"(
+        "FeesID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "Class" TEXT NOT NULL,
+        "Term" TEXT NOT NULL,
+        "Amount" REAL NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS "FeesPayment"(
+        "FeesPaymentID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "StudentTermID" INTEGER NOT NULL,
+        "FeesID" INTEGER NOT NULL,
+        "AmountPaid" REAL NOT NULL,
+        "TransactionDate" TEXT NOT NULL,
+        "ReferenceNumber" TEXT NOT NULL,
+        "DoneOn" TEXT NOT NULL,
+        FOREIGN KEY("StudentTermID") REFERENCES "StudentTerm"("StudentTermID") ON DELETE CASCADE,
+        FOREIGN KEY("FeesID") REFERENCES "Fees"("FeesID")
+    );
+
+    CREATE TABLE IF NOT EXISTS "Uniform"(
+        "UniformId" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "UniformName" TEXT NOT NULL,
+        "UniformPrice" REAL NOT NULL,
+        "Quantity" INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS "UniformInventory"(
+        "UniformInventoryID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "UniformID" INTEGER NOT NULL,
+        "Type" TEXT NOT NULL CHECK(Type IN ('In','Out')),
+        "Quantity" INTEGER NOT NULL CHECK(Quantity > 0),
+        "Price" REAL NOT NULL CHECK(Price >= 0),
+        "Date" TEXT NOT NULL,
+        "ReferencesNotes" TEXT,
+        FOREIGN KEY("UniformID") REFERENCES "Uniform"("UniformId")
+    );
+
+    CREATE TABLE IF NOT EXISTS "Department"(
+        "DeptID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "DeptName" TEXT UNIQUE NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS "Category"(
+        "CatID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "Type" TEXT NOT NULL CHECK(Type IN ('Supplies','Expenses')),
+        "Department" INTEGER NOT NULL,
+        "CatName" TEXT NOT NULL,
+        UNIQUE(Type, Department, CatName),
+        FOREIGN KEY("Department") REFERENCES "Department"("DeptID")
+    );
+
+    CREATE TABLE IF NOT EXISTS "SubCategory"(
+        "SubCatID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "CategoryID" INTEGER NOT NULL,
+        "SubCategoryName" TEXT NOT NULL,
+        UNIQUE(CategoryID, SubCategoryName),
+        FOREIGN KEY("CategoryID") REFERENCES "Category"("CatID") ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS "Supplies"(
+        "SuppliesID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "Name" TEXT NOT NULL,
+        "Subcategory" INTEGER NOT NULL,
+        "Quantity" INTEGER NOT NULL,
+        "Unit" TEXT NOT NULL,
+        FOREIGN KEY("Subcategory") REFERENCES "SubCategory"("SubCatID")
+    );
+
+    CREATE TABLE IF NOT EXISTS "SuppliesInventory"(
+        "Sup_Inv_ID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "Supplies_ID" INTEGER NOT NULL,
+        "Type" TEXT NOT NULL CHECK(Type IN ('In','Out')),
+        "Quantity" INTEGER NOT NULL CHECK(Quantity > 0),
+        "Price" REAL NOT NULL CHECK(Price >= 0),
+        "Date" TEXT NOT NULL,
+        "ReferencesNotes" TEXT,
+        FOREIGN KEY("Supplies_ID") REFERENCES "Supplies"("SuppliesID")
+    );
+
+    CREATE TABLE IF NOT EXISTS "Expenses"(
+        "ExpID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "ExpSubCategory" INTEGER NOT NULL,
+        "ExpAmount" REAL NOT NULL,
+        "ExpDate" TEXT NOT NULL,
+        "ExpReference" TEXT,
+        "ExpDescription" TEXT,
+        FOREIGN KEY("ExpSubCategory") REFERENCES "SubCategory"("SubCatID")
+    );
+
+    CREATE TABLE IF NOT EXISTS "UniformExpenses"(
+        "U_ExpID" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "U_SubCategory" INTEGER NOT NULL,
+        "U_ExpAmount" REAL NOT NULL,
+        "U_ExpDate" TEXT NOT NULL,
+        "U_ExpReference" TEXT,
+        "U_ExpDescription" TEXT NOT NULL,
+        FOREIGN KEY("U_SubCategory") REFERENCES "SubCategory"("SubCatID")
+    );
+    """
+
 @contextmanager
 def get_db_connection():
     """Context manager for database connections that handles opening and closing automatically"""
     conn = None
     try:
+        # Ensure database is initialized
+        initialize_database()
+        
         conn = sqlite3.connect("Database.db")
         conn.row_factory = sqlite3.Row  # Optional: for named column access
         c = conn.cursor()
+        
+        # Enable foreign keys for every connection
+        c.execute("PRAGMA foreign_keys = ON")
+        
         yield conn, c
     except sqlite3.Error as e:
-        print(f"Database connection error: {e}")
+        QMessageBox.warning(None, "Database Error", f"Database connection error: {str(e)}")
         raise
     finally:
         if conn:
             conn.close()
-            
-# Alternative: Simple function that always returns a fresh connection
-def get_db_connection_simple():
-    """Simple function that always returns a fresh connection"""
-    try:
-        conn = sqlite3.connect("Database.db")
-        c = conn.cursor()
-        return conn, c
-    except sqlite3.Error as e:
-        print(f"Database connection error: {e}")
-        raise
 
+### Dashboard ###
+class Dashboard(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.finance_service = FinanceService()
+        self.init_ui()
+        self.load_terms()
+
+    def init_ui(self):
+        # Main Layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
+
+        # Scroll Area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content_widget = QWidget()
+        self.content_layout = QVBoxLayout(content_widget)
+        self.content_layout.setSpacing(20)
+        scroll.setWidget(content_widget)
+        
+        # --- Header Section ---
+        header_layout = QHBoxLayout()
+        
+        # Title
+        title_label = QLabel("School Finance Dashboard")
+        title_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #2D3748;")
+        
+        # Term Selector
+        self.term_selector = QComboBox()
+        self.term_selector.setFixedWidth(200)
+        self.term_selector.setStyleSheet("""
+            QComboBox {
+                padding: 8px;
+                border: 1px solid #E2E8F0;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+        """)
+        self.term_selector.currentIndexChanged.connect(self.update_dashboard)
+        
+        # Current Date
+        date_label = QLabel(datetime.now().strftime("%B %d, %Y"))
+        date_label.setStyleSheet("font-size: 16px; color: #718096;")
+        
+        # Report Button
+        report_btn = QPushButton("Financial Report")
+        report_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2B6CB0;
+                color: white;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2C5282;
+            }
+        """)
+        report_btn.clicked.connect(self.open_financial_report)
+        
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        header_layout.addWidget(report_btn) # Add button here
+        header_layout.addWidget(QLabel("Term:"))
+        header_layout.addWidget(self.term_selector)
+        header_layout.addWidget(date_label)
+        
+        self.content_layout.addLayout(header_layout)
+
+        # --- Summary Cards Section ---
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(15)
+        
+        self.card_fees_collected = self.create_card("Fees Collected", "0.00", "#3182CE") # Blue
+        self.card_outstanding = self.create_card("Outstanding Fees", "0.00", "#DD6B20") # Orange
+        self.card_expenses = self.create_card("Total Expenses", "0.00", "#E53E3E") # Red
+        self.card_supplies = self.create_card("Supplies Cost", "0.00", "#805AD5") # Purple
+        
+        cards_layout.addWidget(self.card_fees_collected)
+        cards_layout.addWidget(self.card_outstanding)
+        cards_layout.addWidget(self.card_expenses)
+        cards_layout.addWidget(self.card_supplies)
+        
+        self.content_layout.addLayout(cards_layout)
+
+        # --- Fees Overview Section ---
+        fees_section_layout = QHBoxLayout()
+        
+        # Fees Chart
+        fees_chart_frame = QFrame()
+        fees_chart_frame.setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E2E8F0;")
+        fees_chart_layout = QVBoxLayout(fees_chart_frame)
+        fees_chart_label = QLabel("Fees Collection Overview")
+        fees_chart_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2D3748; border: none;")
+        fees_chart_layout.addWidget(fees_chart_label)
+        
+        self.fees_figure = Figure(figsize=(5, 4), dpi=100)
+        self.fees_canvas = FigureCanvas(self.fees_figure)
+        fees_chart_layout.addWidget(self.fees_canvas)
+        
+        # Outstanding Fees Table
+        outstanding_frame = QFrame()
+        outstanding_frame.setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E2E8F0;")
+        outstanding_layout = QVBoxLayout(outstanding_frame)
+        outstanding_label = QLabel("Top Outstanding Classes")
+        outstanding_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2D3748; border: none;")
+        outstanding_layout.addWidget(outstanding_label)
+        
+        self.outstanding_table = QTableWidget()
+        self.outstanding_table.setColumnCount(3)
+        self.outstanding_table.setHorizontalHeaderLabels(["Class", "Balance", "%"])
+        self.outstanding_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.outstanding_table.verticalHeader().setVisible(False)
+        self.outstanding_table.setStyleSheet("border: none;")
+        outstanding_layout.addWidget(self.outstanding_table)
+        
+        fees_section_layout.addWidget(fees_chart_frame, 1)
+        fees_section_layout.addWidget(outstanding_frame, 1)
+        
+        self.content_layout.addLayout(fees_section_layout)
+
+        # --- Expenses & Supplies Section ---
+        bottom_section_layout = QHBoxLayout()
+        
+        # Expenses Chart
+        exp_chart_frame = QFrame()
+        exp_chart_frame.setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E2E8F0;")
+        exp_chart_layout = QVBoxLayout(exp_chart_frame)
+        exp_chart_label = QLabel("Expenses by Category")
+        exp_chart_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2D3748; border: none;")
+        exp_chart_layout.addWidget(exp_chart_label)
+        
+        self.exp_figure = Figure(figsize=(5, 4), dpi=100)
+        self.exp_canvas = FigureCanvas(self.exp_figure)
+        exp_chart_layout.addWidget(self.exp_canvas)
+        
+        # Supplies Summary
+        supplies_frame = QFrame()
+        supplies_frame.setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E2E8F0;")
+        supplies_layout = QVBoxLayout(supplies_frame)
+        supplies_label = QLabel("Supplies Summary (Top 5)")
+        supplies_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2D3748; border: none;")
+        supplies_layout.addWidget(supplies_label)
+        
+        self.supplies_table = QTableWidget()
+        self.supplies_table.setColumnCount(3)
+        self.supplies_table.setHorizontalHeaderLabels(["Item", "Qty", "Cost"])
+        self.supplies_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.supplies_table.verticalHeader().setVisible(False)
+        self.supplies_table.setStyleSheet("border: none;")
+        supplies_layout.addWidget(self.supplies_table)
+        
+        bottom_section_layout.addWidget(exp_chart_frame, 1)
+        bottom_section_layout.addWidget(supplies_frame, 1)
+        
+        self.content_layout.addLayout(bottom_section_layout)
+        
+        main_layout.addWidget(scroll)
+
+    def create_card(self, title, value, color):
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: white;
+                border-radius: 8px;
+                border-left: 5px solid {color};
+                border-top: 1px solid #E2E8F0;
+                border-right: 1px solid #E2E8F0;
+                border-bottom: 1px solid #E2E8F0;
+            }}
+        """)
+        layout = QVBoxLayout(card)
+        
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("color: #718096; font-size: 14px; border: none;")
+        
+        self.value_lbl = QLabel(value)
+        self.value_lbl.setStyleSheet("color: #2D3748; font-size: 24px; font-weight: bold; border: none;")
+        # Store reference to value label to update it later
+        card.value_label = self.value_lbl 
+        
+        layout.addWidget(title_lbl)
+        layout.addWidget(self.value_lbl)
+        return card
+
+    def open_financial_report(self):
+        dialog = FinancialReportDialog(self)
+        dialog.exec_()
+
+    def load_terms(self):
+        self.term_selector.clear()
+        try:
+            terms = self.finance_service.get_all_terms()
+            for term in terms:
+                self.term_selector.addItem(f"{term['TermName']} ({term['Year']})", term['TermID'])
+        except Exception as e:
+            QMessageBox.warning(f"Error loading terms: {e}")
+
+    def update_dashboard(self):
+        term_id = self.term_selector.currentData()
+        if not term_id:
+            return
+
+        try:
+            # Get Term Dates
+            term_dates = self.finance_service.get_term_dates(term_id)
+            if not term_dates:
+                return
+            start_date = term_dates['StartDate']
+            end_date = term_dates['EndDate']
+
+            # --- 1. Fees Data ---
+            fees_summary = self.finance_service.get_term_fees_summary(term_id)
+            total_collected = fees_summary['collected']
+            outstanding = fees_summary['outstanding']
+            
+            # Update Cards
+            self.card_fees_collected.value_label.setText(f"{total_collected:,.2f}")
+            self.card_outstanding.value_label.setText(f"{outstanding:,.2f}")
+
+            # --- 2. Expenses Data ---
+            total_expenses = self.finance_service.get_term_expenses(start_date, end_date)
+            self.card_expenses.value_label.setText(f"{total_expenses:,.2f}")
+
+            # --- 3. Supplies Data ---
+            total_supplies = self.finance_service.get_term_supplies(start_date, end_date)
+            self.card_supplies.value_label.setText(f"{total_supplies:,.2f}")
+
+            # --- 5. Charts & Tables ---
+            self.update_fees_chart(total_collected, outstanding)
+            self.update_expenses_chart(start_date, end_date)
+            self.update_outstanding_table(term_id)
+            self.update_supplies_table(start_date, end_date)
+
+        except Exception as e:
+            QMessageBox.warning(f"Error updating dashboard: {e}")
+
+    def update_fees_chart(self, collected, outstanding):
+        self.fees_figure.clear()
+        ax = self.fees_figure.add_subplot(111)
+        
+        if collected == 0 and outstanding == 0:
+            labels = ['No Data']
+            sizes = [1]
+            colors = ['#E2E8F0']
+        else:
+            labels = ['Collected', 'Outstanding']
+            sizes = [collected, outstanding]
+            colors = ['#48BB78', '#E53E3E']
+            
+        ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+        ax.axis('equal')
+        self.fees_canvas.draw()
+
+    def update_expenses_chart(self, start_date, end_date):
+        self.exp_figure.clear()
+        ax = self.exp_figure.add_subplot(111)
+        
+        try:
+            data = self.finance_service.get_expenses_by_category(start_date, end_date)
+            
+            if data:
+                categories = [row[0] for row in data]
+                amounts = [row[1] for row in data]
+                ax.bar(categories, amounts, color='#4299E1')
+                ax.set_ylabel('Amount ()')
+                plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+            else:
+                ax.text(0.5, 0.5, 'No Expenses', ha='center', va='center')
+                    
+        except Exception as e:
+            QMessageBox.warning(f"Chart Error: {e}")
+            
+        self.exp_figure.tight_layout()
+        self.exp_canvas.draw()
+
+    def update_outstanding_table(self, term_id):
+        self.outstanding_table.setRowCount(0)
+        try:
+            rows = self.finance_service.get_outstanding_fees_by_class(term_id)
+            for row_idx, row_data in enumerate(rows):
+                self.outstanding_table.insertRow(row_idx)
+                self.outstanding_table.setItem(row_idx, 0, QTableWidgetItem(row_data['class_name']))
+                self.outstanding_table.setItem(row_idx, 1, QTableWidgetItem(f"{row_data['balance']:,.2f}"))
+                self.outstanding_table.setItem(row_idx, 2, QTableWidgetItem(f"{row_data['percentage']:.1f}%"))
+        except Exception as e:
+            QMessageBox.warning(f"Table Error: {e}")
+
+    def update_supplies_table(self, start_date, end_date):
+        self.supplies_table.setRowCount(0)
+        try:
+            rows = self.finance_service.get_top_supplies(start_date, end_date)
+            for row_idx, row in enumerate(rows):
+                self.supplies_table.insertRow(row_idx)
+                self.supplies_table.setItem(row_idx, 0, QTableWidgetItem(str(row[0])))
+                self.supplies_table.setItem(row_idx, 1, QTableWidgetItem(str(row[1])))
+                self.supplies_table.setItem(row_idx, 2, QTableWidgetItem(f"{row[2]:,.2f}"))
+        except Exception as e:
+            QMessageBox.warning(f"Supplies Error: {e}")
+
+###End Dashboard ###
 
 ### Student Management Initial Start ###
 class StudentManagement(QWidget):
@@ -1325,7 +1794,7 @@ class Window(QMainWindow):
         self.sidebar_layout.setSpacing(10)
         
         # Toggle button
-        self.toggle_btn = QPushButton(QIcon("Icons/menu-icon.png"), "Menu")
+        self.toggle_btn = QPushButton(QIcon("Icons/menu-icon.png"), "")
         self.toggle_btn.setCursor(Qt.SizeHorCursor)
         self.toggle_btn.setIconSize(QSize(24, 24))
         self.toggle_btn.clicked.connect(self.toggle_sidebar)
@@ -1340,8 +1809,8 @@ class Window(QMainWindow):
             ("Expenditure", "Icons/expenses-icon.png"),
             ("Classes", "Icons/classes-icon.png"),
             ("Academic Calendar", "Icons/Calendar.png"),
-            ("Reports", "Icons/report-icon.png"),
-            ("Categorization","Icons/category_64px.png")
+            ("Categorization","Icons/category_64px.png"),
+            ("Reports", "Icons/report-icon.png")
         ]
         
         self.menu_buttons = []
@@ -1360,7 +1829,6 @@ class Window(QMainWindow):
         
         # Combine both menu lists for easier management
         all_menu_items = [
-            ("Account", "Icons/account-icon.png"),
             ("About", "Icons/about-icon.png")
         ]
         
@@ -1390,7 +1858,7 @@ class Window(QMainWindow):
         self.header_layout.addWidget(self.page_title)
         self.header_layout.addStretch()
         
-        self.school_name = QLabel("Springfield High School")
+        self.school_name = QLabel("Pinnacle-SF")
         self.header_layout.addWidget(self.school_name)
         
         self.content_layout.addWidget(self.header)
@@ -1420,7 +1888,6 @@ class Window(QMainWindow):
         self.ReportsPage = Reports()
         self.CategoryPage = CategoryManagement()
         self.AboutPage = About()
-        self.AccountPage = Account()
         
         # Add pages to stacked widget
         self.body.addWidget(self.DashboardPage)
@@ -1433,7 +1900,6 @@ class Window(QMainWindow):
         self.body.addWidget(self.ReportsPage)
         self.body.addWidget(self.CategoryPage)
         self.body.addWidget(self.AboutPage)
-        self.body.addWidget(self.AccountPage)
         
         # Add stacked widget to container layout
         self.body_layout.addWidget(self.body)
@@ -1464,7 +1930,6 @@ class Window(QMainWindow):
             "Reports": (self.ReportsPage, 7),
             "Categorization": (self.CategoryPage, 8),
             "About": (self.AboutPage, 9),
-            "Account": (self.AccountPage, 10)
         }
         
         # Set Dashboard as active initially
@@ -1495,7 +1960,6 @@ class Window(QMainWindow):
                         color: white;
                         border: none;
                         text-align: left;
-                        padding-left: 15px;
                         border-radius: 6px;
                         font-weight: 500;
                     }
@@ -1516,7 +1980,6 @@ class Window(QMainWindow):
                         color: #343A40;
                         border: none;
                         text-align: left;
-                        padding-left: 15px;
                         border-radius: 6px;
                         font-weight: 400;
                     }
@@ -1542,19 +2005,7 @@ class Window(QMainWindow):
                 border-right: 1px solid #E9ECEF;
             }
             
-            QPushButton#toggle_btn {
-                background-color: #1A365D;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px;
-                font-weight: 500;
-                margin-bottom: 10px;
-            }
             
-            QPushButton#toggle_btn:hover {
-                background-color: #2C5282;
-            }
             
             QLabel#page_title {
                 font-size: 22px;
@@ -1563,7 +2014,7 @@ class Window(QMainWindow):
             }
             
             QLabel#school_name {
-                font-size: 14px;
+                font-size: 18px;
                 color: #6C757D;
                 font-weight: 500;
             }
@@ -1600,7 +2051,6 @@ class Window(QMainWindow):
         
         # Set object names for styling
         self.sidebar.setObjectName("sidebar")
-        self.toggle_btn.setObjectName("toggle_btn")
         self.page_title.setObjectName("page_title")
         self.school_name.setObjectName("school_name")
         self.separator.setObjectName("separator")
@@ -1613,7 +2063,6 @@ class Window(QMainWindow):
             for btn in self.menu_buttons:
                 btn.setText("")
                 btn.setIconSize(QSize(20, 20))
-            self.toggle_btn.setText("")
             self.sidebar_expanded = False
         else:
             self.sidebar.setFixedWidth(250)
@@ -1621,7 +2070,6 @@ class Window(QMainWindow):
             for btn in self.menu_buttons:
                 btn.setText(btn.original_text)
                 btn.setIconSize(QSize(24, 24))
-            self.toggle_btn.setText("Menu")
             self.sidebar_expanded = True
         
 class AcademicYearTerm(QWidget):
@@ -1636,17 +2084,6 @@ class AcademicYearTerm(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(15)
-
-        # Header
-        header_layout = QHBoxLayout()
-        title = QLabel("Academic Calendar")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #2C3E50;")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        
-        
-        
-        main_layout.addLayout(header_layout)
 
         # Split View Container
         split_container = QFrame()
@@ -1680,7 +2117,6 @@ class AcademicYearTerm(QWidget):
 
         # Add Year Button
         add_year_btn = QPushButton("Add Year")
-        add_year_btn.setObjectName("successButton")
         add_year_btn.clicked.connect(self.addYear)
         years_header.addWidget(add_year_btn)
 
@@ -1750,7 +2186,6 @@ class AcademicYearTerm(QWidget):
         
         # Add Term Button
         add_term_btn = QPushButton("Add Term")
-        add_term_btn.setObjectName("successButton")
         add_term_btn.clicked.connect(self.addTerm)
         add_term_btn.setFixedHeight(32)
         terms_header.addWidget(add_term_btn)
@@ -1763,7 +2198,8 @@ class AcademicYearTerm(QWidget):
         self.terms_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.terms_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.terms_table.setColumnWidth(3, 100)  # Duration column
-        self.terms_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Actions column
+        self.terms_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.terms_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.terms_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.terms_table.setAlternatingRowColors(True)
         self.terms_table.setStyleSheet("""
@@ -1829,45 +2265,7 @@ class AcademicYearTerm(QWidget):
         main_layout.addWidget(summary_frame)
 
         # Set styles
-        self.setStyleSheet("""
-            #yearsPanel, #termsPanel {
-                background-color: transparent;
-            }
-            #summaryFrame {
-                background-color: white;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                margin-top: 10px;
-            }
-            QPushButton {
-                border-radius: 4px;
-                font-weight: 500;
-            }
-            QPushButton#successButton {
-                background-color: #27ae60;
-                color: white;
-                border: none;
-            }
-            QPushButton#successButton:hover {
-                background-color: #219653;
-            }
-            QPushButton#infoButton {
-                background-color: #3498db;
-                color: white;
-                border: none;
-            }
-            QPushButton#infoButton:hover {
-                background-color: #2980b9;
-            }
-            QPushButton#dangerButton {
-                background-color: #e74c3c;
-                color: white;
-                border: none;
-            }
-            QPushButton#dangerButton:hover {
-                background-color: #c0392b;
-            }
-        """)
+        
 
     def load_academic_years(self):
         """Load academic years into the list widget"""
@@ -1919,7 +2317,7 @@ class AcademicYearTerm(QWidget):
         year_name = item.text()
         
         # Update terms title
-        self.terms_title.setText(f"📚 Terms - {year_name}")
+        self.terms_title.setText(f" Terms - {year_name}")
         
         # Update active year label
         self.active_year_label.setText(f"Active Year: {year_name}")
@@ -1959,6 +2357,7 @@ class AcademicYearTerm(QWidget):
                 has_current_term = False
                 
                 for i, (term_id, term_name, start_date, end_date) in enumerate(terms):
+                    self.terms_table.setRowHeight(i, 40)
                     # Term Name
                     name_item = QTableWidgetItem(term_name)
                     name_item.setData(Qt.UserRole, term_id)
@@ -2651,18 +3050,11 @@ class Class(QWidget):
         layout.setSpacing(15)
 
         # Header row
-        header_layout = QHBoxLayout()
-        title = QLabel("Class Management")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
         add_class_btn = QPushButton("Add Class")
         add_class_btn.clicked.connect(self.addClass)
-        header_layout.addWidget(add_class_btn)
-        layout.addLayout(header_layout)
-
         # Filter row
         filter_layout = QHBoxLayout()
+        filter_layout.setContentsMargins(20, 20, 20, 5)
         self.Search_Input = QLineEdit()
         self.Search_Input.setPlaceholderText("Search...")
         self.Search_Input.setClearButtonEnabled(True)
@@ -2679,6 +3071,7 @@ class Class(QWidget):
         filter_layout.addWidget(self.Search_Input)
         filter_layout.addWidget(self.year_filter)
         filter_layout.addStretch()
+        filter_layout.addWidget(add_class_btn)
         self.results_label = QLabel("0 results")
         self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
         filter_layout.addWidget(self.results_label)
@@ -3338,7 +3731,7 @@ class FeesManagementPage(QWidget):
                 )
                 
         except sqlite3.Error as e:
-            print(f"Error populating academic years: {e}")
+            QMessageBox.warning(f"Error populating academic years: {e}")
 
     def update_class_term_combos(self, academic_year_combo, class_combo, term_combo):
         """Update class and term combos based on selected academic year"""
@@ -3370,7 +3763,7 @@ class FeesManagementPage(QWidget):
                     term_combo.addItem(term_name, term_id)
                     
         except sqlite3.Error as e:
-            print(f"Error updating class/term combos: {e}")
+            QMessageBox.warning(f"Error updating class/term combos: {e}")
 
     def show_add_fee_dialog(self):
         dialog = QDialog(self)
@@ -3527,7 +3920,7 @@ class FeesPaymentPage(QWidget):
                     self.class_combo.addItem(class_[0], class_[0])
                     
         except Exception as e:
-            print(f"Error loading filter options: {e}")
+            QMessageBox.warning(f"Error loading filter options: {e}")
 
     def load_data(self):
         """Load payment data with filters"""
@@ -3642,7 +4035,7 @@ class FeesPaymentPage(QWidget):
 
                 
         except Exception as e:
-            print(f"Error loading data: {e}")
+            QMessageBox.warning(f"Error loading data: {e}")
 
     def show_payment_history(self, student_term_id, fees_id):
         """Show payment history dialog for a student"""
@@ -4248,7 +4641,7 @@ class PaymentHistoryPage(QWidget):
                 self.update_class_term_filters()
                 
         except Exception as e:
-            print(f"Error loading filter options: {e}")
+            QMessageBox.warning(f"Error loading filter options: {e}")
 
     def update_class_term_filters(self):
         """Update class and term dropdowns based on selected academic year"""
@@ -4272,7 +4665,7 @@ class PaymentHistoryPage(QWidget):
                     for class_id, class_name in c.fetchall():
                         self.class_combo.addItem(class_name, class_id)
             except Exception as e:
-                print(f"Error loading classes: {e}")
+                QMessageBox.warning(f"Error loading classes: {e}")
         
         # Update TERM dropdown  
         self.term_combo.clear()
@@ -4292,7 +4685,7 @@ class PaymentHistoryPage(QWidget):
                     for term_id, term_name in c.fetchall():
                         self.term_combo.addItem(term_name, term_id)
             except Exception as e:
-                print(f"Error loading terms: {e}")
+                QMessageBox.warning(f"Error loading terms: {e}")
 
     def load_data(self):
         """Load raw payment history data with filters"""
@@ -4398,7 +4791,7 @@ class PaymentHistoryPage(QWidget):
                 )
                 
         except Exception as e:
-            print(f"Error loading payment history: {e}")
+            QMessageBox.warning(f"Error loading payment history: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load payment history: {str(e)}")
 
     def add_action_combo(self, row, payment_id, student_term_id, fees_id):
@@ -5259,7 +5652,7 @@ class UniformDashBoard(QWidget):
                     # Add action buttons
                     self.add_uniform_action_buttons(i, row[0])
         except Exception as e:
-            print(f"Error loading uniform list: {e}")
+            QMessageBox.warning(f"Error loading uniform list: {e}")
 
     def generate_colors(self, n, base_color):
         """Generate a color palette based on a base color"""
@@ -5381,7 +5774,6 @@ class InventoryManagement(QWidget):
         metrics_layout.addWidget(self.high_in_label)
         metrics_layout.addWidget(self.high_out_label)
         metrics_layout.addStretch()
-        metrics_layout.addWidget(print_btn)
         metrics_layout.addWidget(new_inv_btn)
         layout.addLayout(metrics_layout)
 
@@ -5606,7 +5998,7 @@ class InventoryManagement(QWidget):
                         quantity_edit.setToolTip(f"Current available quantity: {available_qty}. You cannot issue more than available stock.")
                         return
             except Exception as e:
-                print(f"Error fetching available quantity: {e}")
+                QMessageBox.warning(f"Error fetching available quantity: {e}")
         
         # Default placeholder for "In" or no uniform selected
         quantity_edit.setPlaceholderText("Enter quantity")
@@ -5631,7 +6023,7 @@ class InventoryManagement(QWidget):
                         price_edit.setToolTip("Price is automatically set from uniform's current price (read-only for Out transactions)")
                         return
             except Exception as e:
-                print(f"Error fetching uniform price: {e}")
+                QMessageBox.warning(f"Error fetching uniform price: {e}")
         
         # For "In" transactions or if price not available
         price_edit.clear()
@@ -6897,7 +7289,7 @@ def recalculate_supply_stock(supply_id):
             conn.commit()
             return net_qty
     except Exception as e:
-        print(f"Stock recalculation error: {e}")
+        QMessageBox.warning(f"Stock recalculation error: {e}")
         raise
 
 def validate_inventory_change(supply_id, new_type=None, new_qty=0, exclude_inv_id=None):
@@ -6933,7 +7325,7 @@ def validate_inventory_change(supply_id, new_type=None, new_qty=0, exclude_inv_i
             
             return total_in >= total_out, total_in - total_out
     except Exception as e:
-        print(f"Validation error: {e}")
+        QMessageBox.warning(f"Validation error: {e}")
         return False, 0
 
 class Expenditure(QWidget):
@@ -7025,6 +7417,7 @@ class Supplies(QWidget):
                 self.table.setRowCount(0)
                 for row_idx, row_data in enumerate(rows):
                     self.table.insertRow(row_idx)
+                    self.table.setRowHeight(row_idx, 40)
                     # Data columns
                     for col_idx, data in enumerate(row_data):
                         self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(data) if data is not None else ""))
@@ -7097,7 +7490,7 @@ class Supplies(QWidget):
                         for cat in cats:
                             cat_combo.addItem(cat[1], cat[0])
                 except Exception as e:
-                    print(e)
+                    QMessageBox.warning(e)
 
         def update_subcategories():
             subcat_combo.clear()
@@ -7111,7 +7504,7 @@ class Supplies(QWidget):
                         for sub in subcats:
                             subcat_combo.addItem(sub[1], sub[0])
                 except Exception as e:
-                    print(e)
+                    QMessageBox.warning(e)
 
         dept_combo.currentIndexChanged.connect(update_categories)
         cat_combo.currentIndexChanged.connect(update_subcategories)
@@ -7331,6 +7724,7 @@ class SuppliesInventory(QWidget):
                 self.table.setRowCount(0)
                 for row_idx, row_data in enumerate(rows):
                     self.table.insertRow(row_idx)
+                    self.table.setRowHeight(row_idx, 40)
                     for col_idx, data in enumerate(row_data):
                         self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(data)))
                     
@@ -7338,21 +7732,26 @@ class SuppliesInventory(QWidget):
                     action_widget = QWidget()
                     action_layout = QHBoxLayout(action_widget)
                     action_layout.setContentsMargins(5, 2, 5, 2)
-                    
-                    edit_btn = QPushButton("Edit")
-                    edit_btn.setStyleSheet("background-color: #38A169;")
-                    edit_btn.clicked.connect(lambda _, rid=row_data[0]: self.edit_inventory(rid))
-                    
-                    del_btn = QPushButton("Delete")
-                    del_btn.setStyleSheet("background-color: #E53E3E;")
-                    del_btn.clicked.connect(lambda _, rid=row_data[0], sid=row_data[1]: self.delete_inventory(rid, sid))
-                    
-                    action_layout.addWidget(edit_btn)
-                    action_layout.addWidget(del_btn)
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Select Action", "Edit", "Delete"])
+                    action_combo.currentIndexChanged.connect(lambda idx, inv_id=row_data[0], supply_id=row_data[1], cb=action_combo: 
+                                                     self.on_inventory_action_selected(idx, inv_id, supply_id, cb))
+                    action_layout.addWidget(action_combo)
                     self.table.setCellWidget(row_idx, 7, action_widget)
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load inventory: {e}")
+    
+    def on_inventory_action_selected(self, index, inv_id, supply_id, combo_box):
+        """Handle inventory action selection"""
+        if index == 0:
+            return
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset
+        if action == "Edit":
+            self.edit_inventory(inv_id)
+        elif action == "Delete":
+            self.delete_inventory(inv_id, supply_id)
 
     def edit_inventory(self, inv_id):
         try:
@@ -7540,6 +7939,7 @@ class Expense(QWidget):
                 self.table.setRowCount(0)
                 for idx, row in enumerate(rows):
                     self.table.insertRow(idx)
+                    self.table.setRowHeight(idx, 40)
                     # row: ExpID, CatName, SubCategoryName, ExpAmount, ExpDate, ExpDescription
                     self.table.setItem(idx, 0, QTableWidgetItem(str(row[0] if row[0] is not None else "")))
                     self.table.setItem(idx, 1, QTableWidgetItem(str(row[1] if row[1] else "")))
@@ -7568,6 +7968,7 @@ class Expense(QWidget):
 
     def add_expense(self):
         dialog = QDialog(self)
+        dialog.setStyleSheet(DialogStyles())
         dialog.setWindowTitle("Add New Expense")
         dialog.setMinimumWidth(420)
         layout = QVBoxLayout(dialog)
@@ -7591,7 +7992,7 @@ class Expense(QWidget):
                 for cat in cats:
                     category_combo.addItem(cat[1], cat[0])
         except Exception as e:
-            print(f"Error loading categories: {e}")
+            QMessageBox.warning(f"Error loading categories: {e}")
 
         def update_subcats():
             subcat_combo.clear()
@@ -7605,7 +8006,7 @@ class Expense(QWidget):
                         for s in subcats:
                             subcat_combo.addItem(s[1], s[0])
                 except Exception as e:
-                    print(e)
+                    QMessageBox.warning(e)
 
         category_combo.currentIndexChanged.connect(update_subcats)
 
@@ -7655,6 +8056,7 @@ class Expense(QWidget):
                 return
 
             dialog = QDialog(self)
+            dialog.setStyleSheet(DialogStyles())
             dialog.setWindowTitle("Edit Expense")
             dialog.setMinimumWidth(420)
             layout = QVBoxLayout(dialog)
@@ -7786,64 +8188,9 @@ class CategoryManagement(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(10)
 
-        # Title
-        title_layout = QHBoxLayout()
-        title = QLabel("Category Management System")
-        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #2C3E50;")
-        title_layout.addWidget(title)
-        title_layout.addStretch()
-        
-        # Quick Stats
-        stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(15)
-        
-        self.dept_count_label = QLabel("Departments: 0")
-        self.dept_count_label.setStyleSheet("""
-            QLabel {
-                background-color: #F7FAFC;
-                color: #4A5568;
-                padding: 4px 10px;
-                border-radius: 4px;
-                border: 1px solid #E2E8F0;
-                font-size: 13px;
-            }
-        """)
-        stats_layout.addWidget(self.dept_count_label)
-        
-        self.category_count_label = QLabel("Categories: 0")
-        self.category_count_label.setStyleSheet("""
-            QLabel {
-                background-color: #F7FAFC;
-                color: #4A5568;
-                padding: 4px 10px;
-                border-radius: 4px;
-                border: 1px solid #E2E8F0;
-                font-size: 13px;
-            }
-        """)
-        stats_layout.addWidget(self.category_count_label)
-        
-        self.subcategory_count_label = QLabel("Subcategories: 0")
-        self.subcategory_count_label.setStyleSheet("""
-            QLabel {
-                background-color: #F7FAFC;
-                color: #4A5568;
-                padding: 4px 10px;
-                border-radius: 4px;
-                border: 1px solid #E2E8F0;
-                font-size: 13px;
-            }
-        """)
-        stats_layout.addWidget(self.subcategory_count_label)
-        
-        stats_layout.addStretch()
-        title_layout.addLayout(stats_layout)
-        
-        header_layout.addLayout(title_layout)
-
         # ========== DEPARTMENT QUICK ACCESS BAR ==========
         self.dept_bar_frame = QFrame()
-        self.dept_bar_frame.setMaximumHeight(60)
+        self.dept_bar_frame.setMinimumHeight(60)
         dept_bar_layout = QHBoxLayout(self.dept_bar_frame)
         dept_bar_layout.setContentsMargins(0, 5, 0, 5)
         dept_bar_layout.setSpacing(15)
@@ -7953,11 +8300,9 @@ class CategoryManagement(QWidget):
         self.category_table = QTableWidget()
         self.category_table.setColumnCount(4)
         self.category_table.setHorizontalHeaderLabels(["Type", "Category", "Subcats", "Actions"])
-        self.category_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.category_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.category_table.setColumnWidth(0, 100)
-        self.category_table.setColumnWidth(2, 80)
-        self.category_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.category_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.category_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.category_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.category_table.setAlternatingRowColors(True)
         self.category_table.itemClicked.connect(self.on_category_selected)
@@ -8032,7 +8377,7 @@ class CategoryManagement(QWidget):
         self.subcategory_table.setHorizontalHeaderLabels(["Subcategory", "Usage", "Actions"])
         self.subcategory_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.subcategory_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.subcategory_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.subcategory_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.subcategory_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.subcategory_table.setAlternatingRowColors(True)
         self.subcategory_table.verticalHeader().setVisible(False)
@@ -8104,36 +8449,7 @@ class CategoryManagement(QWidget):
             QPushButton:checked:hover {
                 background-color: #3182CE;
             }
-            QTableWidget {
-                background-color: white;
-                border: 1px solid #E2E8F0;
-                border-radius: 6px;
-                gridline-color: #EDF2F7;
-            }
-            QTableWidget::item {
-                padding: 8px 4px;
-                border-bottom: 1px solid #F7FAFC;
-                font-size: 13px;
-            }
-            QTableWidget::item:selected {
-                background-color: #EBF8FF;
-            }
-            QHeaderView::section {
-                background-color: #F8FAFC;
-                padding: 8px 4px;
-                border: none;
-                border-bottom: 2px solid #E2E8F0;
-                font-weight: bold;
-                font-size: 12px;
-                color: #4A5568;
-            }
-            QComboBox {
-                border: 1px solid #CBD5E0;
-                border-radius: 4px;
-                padding: 2px 8px;
-                background-color: white;
-                font-size: 12px;
-            }
+            
         """)
 
     def load_departments(self):
@@ -8159,8 +8475,6 @@ class CategoryManagement(QWidget):
                     dept_btn.clicked.connect(lambda checked, d_id=dept_id: self.on_department_selected(d_id))
                     self.dept_buttons_layout.addWidget(dept_btn)
                 
-                # Update department count
-                self.dept_count_label.setText(f"Departments: {len(departments)}")
                 
                 # Auto-select first department if none selected
                 if not self.current_department_id and departments:
@@ -8207,7 +8521,7 @@ class CategoryManagement(QWidget):
                     self.subcat_indicator.setStyleSheet("color: #718096; font-size: 12px;")
         
         except Exception as e:
-            print(f"Error getting department name: {e}")
+            QMessageBox.warning(f"Error getting department name: {e}")
         
         # Load categories and clear subcategories
         self.load_categories()
@@ -8286,6 +8600,7 @@ class CategoryManagement(QWidget):
                 
                 self.category_table.setRowCount(len(categories))
                 for i, (cat_id, cat_type, cat_name) in enumerate(categories):
+                    self.category_table.setRowHeight(i, 40)
                     # Type
                     type_item = QTableWidgetItem(cat_type)
                     type_item.setData(Qt.UserRole, cat_id)
@@ -8312,8 +8627,7 @@ class CategoryManagement(QWidget):
                     )
                     self.category_table.setCellWidget(i, 3, action_combo)
                 
-                # Update count
-                self.category_count_label.setText(f"Categories: {len(categories)}")
+               
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load categories: {str(e)}")
@@ -8337,6 +8651,7 @@ class CategoryManagement(QWidget):
                 total_usage = 0
                 
                 for i, (subcat_id, subcat_name) in enumerate(subcategories):
+                    self.subcategory_table.setRowHeight(i, 40)
                     # Subcategory Name
                     name_item = QTableWidgetItem(subcat_name)
                     name_item.setData(Qt.UserRole, subcat_id)
@@ -8362,7 +8677,7 @@ class CategoryManagement(QWidget):
                     self.subcategory_table.setCellWidget(i, 2, action_combo)
                 
                 # Update counts
-                self.subcategory_count_label.setText(f"Subcategories: {len(subcategories)}")
+                
                 self.usage_label.setText(f"Usage: {total_usage} items")
                 
         except Exception as e:
@@ -8934,7 +9249,412 @@ class CategoryManagement(QWidget):
                 QMessageBox.critical(self, "Error", f"Failed to delete subcategory: {str(e)}")
 
 ### end of categories management ###
+### Report###
+class Reports(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.finance_service = FinanceService()
+        self.report_generator = ReportGenerator()
+        self.current_term_data = {}
+        self.init_ui()
+        self.load_terms()
 
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+
+        # Header
+        header_lbl = QLabel("Financial Reports")
+        header_lbl.setStyleSheet("font-size: 24px; font-weight: bold; color: #2D3748;")
+        layout.addWidget(header_lbl)
+
+        # Controls Container
+        controls_frame = QFrame()
+        controls_frame.setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E2E8F0;")
+        controls_layout = QHBoxLayout(controls_frame)
+        controls_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Term Selection
+        term_lbl = QLabel("Select Term:")
+        term_lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #4A5568;")
+        self.term_selector = QComboBox()
+        self.term_selector.setFixedWidth(200)
+        self.term_selector.setStyleSheet("""
+            QComboBox {
+                padding: 8px;
+                border: 1px solid #E2E8F0;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+        """)
+        self.term_selector.currentIndexChanged.connect(self.load_term_data)
+        
+        controls_layout.addWidget(term_lbl)
+        controls_layout.addWidget(self.term_selector)
+        controls_layout.addStretch()
+        
+        layout.addWidget(controls_frame)
+
+        # Summary Cards Area
+        self.cards_layout = QHBoxLayout()
+        self.lbl_fees = self.create_summary_card("Fees Collected", "0.00", "#3182CE")
+        self.lbl_expenses = self.create_summary_card("Total Expenses", "0.00", "#E53E3E")
+        self.lbl_supplies = self.create_summary_card("Supplies Cost", "0.00", "#805AD5")
+        
+        self.cards_layout.addWidget(self.lbl_fees)
+        self.cards_layout.addWidget(self.lbl_expenses)
+        self.cards_layout.addWidget(self.lbl_supplies)
+        layout.addLayout(self.cards_layout)
+
+        # Actions Area
+        actions_frame = QFrame()
+        actions_frame.setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E2E8F0;")
+        actions_layout = QVBoxLayout(actions_frame)
+        actions_layout.setContentsMargins(20, 20, 20, 20)
+        
+        actions_title = QLabel("Export Options")
+        actions_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #2D3748; margin-bottom: 10px;")
+        actions_layout.addWidget(actions_title)
+        
+        btn_layout = QHBoxLayout()
+        
+        btn_pdf = button("Generate PDF Report","secondary")
+        btn_pdf.setCursor(Qt.PointingHandCursor)
+        btn_pdf.clicked.connect(self.export_pdf)
+        
+        btn_excel = button("Generate Excel Report","Success","Lg")
+        btn_excel.setCursor(Qt.PointingHandCursor)
+        btn_excel.clicked.connect(self.export_excel)
+        
+        btn_layout.addWidget(btn_pdf)
+        btn_layout.addWidget(btn_excel)
+        btn_layout.addStretch()
+        
+        actions_layout.addLayout(btn_layout)
+        layout.addWidget(actions_frame)
+        
+        # Disclaimer
+        disclaimer_lbl = QLabel("Note: Reports reflect only system-recorded data. External income (grants, donations) is excluded.")
+        disclaimer_lbl.setStyleSheet("color: #718096; font-style: italic; margin-top: 20px;")
+        layout.addWidget(disclaimer_lbl)
+        
+        layout.addStretch()
+
+    def create_summary_card(self, title, value, color):
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: white;
+                border-radius: 8px;
+                border-left: 5px solid {color};
+                border-top: 1px solid #E2E8F0;
+                border-right: 1px solid #E2E8F0;
+                border-bottom: 1px solid #E2E8F0;
+                min-height: 100px;
+            }}
+        """)
+        l = QVBoxLayout(frame)
+        t = QLabel(title)
+        t.setStyleSheet("color: #718096; font-size: 14px; border: none;")
+        v = QLabel(value)
+        v.setStyleSheet("color: #2D3748; font-size: 24px; font-weight: bold; border: none;")
+        v.setAlignment(Qt.AlignLeft)
+        l.addWidget(t)
+        l.addWidget(v)
+        frame.value_label = v
+        return frame
+
+    def load_terms(self):
+        self.term_selector.clear()
+        try:
+            terms = self.finance_service.get_all_terms()
+            for term in terms:
+                self.term_selector.addItem(f"{term['TermName']} - {term['Year']}", term['TermID'])
+        except Exception as e:
+            QMessageBox.warning(f"Error loading terms: {e}")
+
+    def load_term_data(self):
+        term_id = self.term_selector.currentData()
+        if not term_id:
+            return
+
+        try:
+            term_dates = self.finance_service.get_term_dates(term_id)
+            if not term_dates:
+                return
+            start_date = term_dates['StartDate']
+            end_date = term_dates['EndDate']
+
+            fees_summary = self.finance_service.get_term_fees_summary(term_id)
+            total_expenses = self.finance_service.get_term_expenses(start_date, end_date)
+            total_supplies = self.finance_service.get_term_supplies(start_date, end_date)
+
+            self.lbl_fees.value_label.setText(f"{fees_summary['collected']:,.2f}")
+            self.lbl_expenses.value_label.setText(f"{total_expenses:,.2f}")
+            self.lbl_supplies.value_label.setText(f"{total_supplies:,.2f}")
+
+            # Store basic info for export
+            self.current_term_data = {
+                'term_name': self.term_selector.currentText(),
+                'start_date': start_date,
+                'end_date': end_date,
+                'fees_summary': fees_summary,
+                'expenses_total': total_expenses,
+                'supplies_total': total_supplies,
+                'term_id': term_id
+            }
+
+        except Exception as e:
+            QMessageBox.warning(f"Error loading data: {e}")
+
+    def fetch_detailed_data(self):
+        """Helper to fetch all detailed data needed for reports"""
+        if not self.current_term_data:
+            return None
+            
+        term_id = self.current_term_data['term_id']
+        start_date = self.current_term_data['start_date']
+        end_date = self.current_term_data['end_date']
+        
+        return {
+            'fees_breakdown': self.finance_service.get_term_fees_breakdown_by_class(term_id),
+            'supplies_breakdown': self.finance_service.get_supplies_by_category(start_date, end_date),
+            'supplies_details': self.finance_service.get_supplies_details(start_date, end_date),
+            'expenses_breakdown': self.finance_service.get_expenses_by_category_with_percentage(start_date, end_date),
+            'expenses_details': self.finance_service.get_expenses_details(start_date, end_date)
+        }
+
+    def export_pdf(self):
+        if not self.current_term_data:
+            return
+        
+        filename, _ = QFileDialog.getSaveFileName(self, "Save PDF Report", f"Financial_Report_{self.current_term_data['term_name']}.pdf", "PDF Files (*.pdf)")
+        if filename:
+            try:
+                details = self.fetch_detailed_data()
+                self.report_generator.generate_pdf(
+                    filename,
+                    self.current_term_data['term_name'],
+                    self.current_term_data['start_date'],
+                    self.current_term_data['end_date'],
+                    self.current_term_data['fees_summary'],
+                    details['fees_breakdown'],
+                    self.current_term_data['supplies_total'],
+                    details['supplies_breakdown'],
+                    details['supplies_details'],
+                    self.current_term_data['expenses_total'],
+                    details['expenses_breakdown'],
+                    details['expenses_details']
+                )
+                QMessageBox.information(self, "Success", "PDF Report generated successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
+
+    def export_excel(self):
+        if not self.current_term_data:
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Excel Report", f"Financial_Report_{self.current_term_data['term_name']}.xlsx", "Excel Files (*.xlsx)")
+        if filename:
+            try:
+                details = self.fetch_detailed_data()
+                self.report_generator.generate_excel(
+                    filename,
+                    self.current_term_data['term_name'],
+                    self.current_term_data['start_date'],
+                    self.current_term_data['end_date'],
+                    self.current_term_data['fees_summary'],
+                    details['fees_breakdown'],
+                    self.current_term_data['supplies_total'],
+                    details['supplies_breakdown'],
+                    details['supplies_details'],
+                    self.current_term_data['expenses_total'],
+                    details['expenses_breakdown'],
+                    details['expenses_details']
+                )
+                QMessageBox.information(self, "Success", "Excel Report generated successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to generate Excel: {str(e)}")
+
+class FinancialReportDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Term Financial Summary Report")
+        self.setFixedSize(600, 500)
+        self.finance_service = FinanceService()
+        self.report_generator = ReportGenerator()
+        self.current_term_data = {}
+        self.init_ui()
+        self.load_terms()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+
+        # Header
+        header_lbl = QLabel("Generate Financial Report")
+        header_lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #2D3748;")
+        layout.addWidget(header_lbl)
+
+        # Term Selection
+        term_layout = QHBoxLayout()
+        term_lbl = QLabel("Select Term:")
+        self.term_selector = QComboBox()
+        self.term_selector.currentIndexChanged.connect(self.load_term_data)
+        term_layout.addWidget(term_lbl)
+        term_layout.addWidget(self.term_selector)
+        layout.addLayout(term_layout)
+
+        # Disclaimer
+        disclaimer_frame = QFrame()
+        disclaimer_frame.setStyleSheet("""
+            QFrame {
+                background-color: #FFF5F5;
+                border: 1px solid #FC8181;
+                border-radius: 5px;
+                padding: 10px;
+            }
+        """)
+        disclaimer_layout = QVBoxLayout(disclaimer_frame)
+        disclaimer_lbl = QLabel("<b>IMPORTANT:</b> This report does not include donations, grants, rentals, or other external income sources. It reflects only the data recorded in this system.")
+        disclaimer_lbl.setWordWrap(True)
+        disclaimer_lbl.setStyleSheet("color: #C53030; font-size: 12px;")
+        disclaimer_layout.addWidget(disclaimer_lbl)
+        layout.addWidget(disclaimer_frame)
+
+        # Summary Cards
+        self.cards_layout = QHBoxLayout()
+        self.lbl_fees = self.create_summary_label("Fees Collected", "0.00")
+        self.lbl_expenses = self.create_summary_label("Total Expenses", "0.00")
+        self.lbl_supplies = self.create_summary_label("Supplies Cost", "0.00")
+        
+        self.cards_layout.addWidget(self.lbl_fees)
+        self.cards_layout.addWidget(self.lbl_expenses)
+        self.cards_layout.addWidget(self.lbl_supplies)
+        layout.addLayout(self.cards_layout)
+
+        # Export Buttons
+        btn_layout = QHBoxLayout()
+        btn_pdf = QPushButton("Export PDF")
+        btn_pdf.setStyleSheet("background-color: #E53E3E; color: white; padding: 10px; font-weight: bold;")
+        btn_pdf.clicked.connect(self.export_pdf)
+        
+        btn_excel = QPushButton("Export Excel")
+        btn_excel.setStyleSheet("background-color: #38A169; color: white; padding: 10px; font-weight: bold;")
+        btn_excel.clicked.connect(self.export_excel)
+        
+        btn_layout.addWidget(btn_pdf)
+        btn_layout.addWidget(btn_excel)
+        layout.addLayout(btn_layout)
+        
+        layout.addStretch()
+
+    def create_summary_label(self, title, value):
+        frame = QFrame()
+        frame.setStyleSheet("background-color: #F7FAFC; border-radius: 5px; border: 1px solid #E2E8F0;")
+        l = QVBoxLayout(frame)
+        t = QLabel(title)
+        t.setStyleSheet("color: #718096; font-size: 12px;")
+        v = QLabel(value)
+        v.setStyleSheet("color: #2D3748; font-size: 18px; font-weight: bold;")
+        v.setAlignment(Qt.AlignCenter)
+        l.addWidget(t, alignment=Qt.AlignCenter)
+        l.addWidget(v, alignment=Qt.AlignCenter)
+        frame.value_label = v
+        return frame
+
+    def load_terms(self):
+        self.term_selector.clear()
+        try:
+            terms = self.finance_service.get_all_terms()
+            for term in terms:
+                self.term_selector.addItem(f"{term['TermName']} ({term['Year']})", term['TermID'])
+        except Exception as e:
+            QMessageBox.warning(f"Error loading terms: {e}")
+
+    def load_term_data(self):
+        term_id = self.term_selector.currentData()
+        if not term_id:
+            return
+
+        try:
+            term_dates = self.finance_service.get_term_dates(term_id)
+            if not term_dates:
+                return
+            start_date = term_dates['StartDate']
+            end_date = term_dates['EndDate']
+
+            fees_summary = self.finance_service.get_term_fees_summary(term_id)
+            total_expenses = self.finance_service.get_term_expenses(start_date, end_date)
+            total_supplies = self.finance_service.get_term_supplies(start_date, end_date)
+
+            self.lbl_fees.value_label.setText(f"{fees_summary['collected']:,.2f}")
+            self.lbl_expenses.value_label.setText(f"{total_expenses:,.2f}")
+            self.lbl_supplies.value_label.setText(f"{total_supplies:,.2f}")
+
+            # Store for export
+            self.current_term_data = {
+                'term_name': self.term_selector.currentText(),
+                'start_date': start_date,
+                'end_date': end_date,
+                'fees': fees_summary,
+                'expenses': total_expenses,
+                'supplies': total_supplies,
+                'term_id': term_id
+            }
+
+        except Exception as e:
+            QMessageBox.warning(f"Error loading data: {e}")
+
+    def export_pdf(self):
+        if not self.current_term_data:
+            return
+        
+        filename, _ = QFileDialog.getSaveFileName(self, "Save PDF Report", f"Financial_Report_{self.current_term_data['term_name']}.pdf", "PDF Files (*.pdf)")
+        if filename:
+            try:
+                self.report_generator.generate_pdf(
+                    filename,
+                    self.current_term_data['term_name'],
+                    self.current_term_data['start_date'],
+                    self.current_term_data['end_date'],
+                    self.current_term_data['fees'],
+                    self.current_term_data['expenses'],
+                    self.current_term_data['supplies']
+                )
+                QMessageBox.information(self, "Success", "PDF Report generated successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
+
+    def export_excel(self):
+        if not self.current_term_data:
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Excel Report", f"Financial_Report_{self.current_term_data['term_name']}.xlsx", "Excel Files (*.xlsx)")
+        if filename:
+            try:
+                # Fetch breakdown data for Excel
+                fees_breakdown = self.finance_service.get_outstanding_fees_by_class(self.current_term_data['term_id'], limit=100)
+                expenses_breakdown = self.finance_service.get_expenses_by_category(self.current_term_data['start_date'], self.current_term_data['end_date'], limit=100)
+
+                self.report_generator.generate_excel(
+                    filename,
+                    self.current_term_data['term_name'],
+                    self.current_term_data['start_date'],
+                    self.current_term_data['end_date'],
+                    self.current_term_data['fees'],
+                    self.current_term_data['expenses'],
+                    self.current_term_data['supplies'],
+                    fees_breakdown,
+                    expenses_breakdown
+                )
+                QMessageBox.information(self, "Success", "Excel Report generated successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to generate Excel: {str(e)}")
+
+### End of Report###
 class About(QWidget):
     def __init__(self):
         super().__init__()
@@ -9050,28 +9770,307 @@ class About(QWidget):
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
 
-class Account(QWidget):
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.addStretch()
-        label = QLabel("Account Page")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("font-size: 28px; font-weight: bold; color: #2D3748;")
-        layout.addWidget(label)
-        layout.addStretch()                    
+             
+
+def button(text, button_type="primary", size="md", icon_path=None, icon_toolTip = None, icon_size=24 ):
+    """
+    Create a Bootstrap-inspired button with optional icons.
+
+    :param text: The text to display on the button.
+    :param button_type: The type of the button (primary, success, danger, etc.).
+    :param size: The size of the button (sm, md, lg).
+    :param icon_path: The file path to the icon (optional).
+    :param icon_size: The size of the icon (default: 24px).
+    :return: QPushButton styled as a Bootstrap button.
+    """
+    button = QPushButton(text)
+    button.setToolTip(icon_toolTip)
+    # Button Styles Dictionary
+    styles = {
+        "primary": "background-color: #007bff; color: white; border: 1px solid #007bff;",
+        "secondary": "background-color: #6c757d; color: white; border: 1px solid #6c757d;",
+        "success": "background-color: #28a745; color: white; border: 1px solid #28a745;",
+        "danger": "background-color: #dc3545; color: white; border: 1px solid #dc3545;",
+        "warning": "background-color: #ffc107; color: black; border: 1px solid #ffc107;",
+        "info": "background-color: #17a2b8; color: white; border: 1px solid #17a2b8;",
+        "light": "background-color: #f8f9fa; color: black; border: 1px solid #f8f9fa;",
+        "dark": "background-color: #343a40; color: white; border: 1px solid #343a40;",
+    }
+
+    # Button Sizes Dictionary
+    sizes = {
+        "sm": "padding: 4px 10px; font-size: 12px;",
+        "md": "padding: 6px 12px; font-size: 14px;",
+        "lg": "padding: 10px 16px; font-size: 18px;",
+    }
+
+    # Apply Styles
+    button.setStyleSheet(f"""
+        QPushButton {{
+            border-radius: 5px;
+            font-family: 'Poppins', sans-serif;
+            font-weight: bold;
+            {styles.get(button_type, styles['primary'])} /* Default to primary if type is invalid */
+            {sizes.get(size, sizes['md'])} /* Default to medium if size is invalid */
+        }}
+        QPushButton:hover {{
+            opacity: 0.9; /* Slight fade effect on hover */
+        }}
+    """)
+
+    # Optional: Set Icon
+    if icon_path:
+        button.setIcon(QIcon(icon_path))
+        button.setIconSize(QSize(icon_size, icon_size))
+
+    # Optional: Set Cursor to Hand Pointer
+    button.setCursor(Qt.PointingHandCursor)
+
+    return button
+
+def DialogStyles():
+    dialog = """
+    QDialog {
+        background-color: #F9F9F9;
+        border-radius: 12px;
+        font-family: 'Segoe UI', 'Lato', sans-serif;
+        font-size: 14px;
+        color: #2E2E2E;
+    }
+
+    QLabel {
+        font-weight: 500;
+        margin-bottom: 4px;
+    }
+
+    QLineEdit, QComboBox, QDateEdit, QSpinBox {
+        background-color: #FFFFFF;
+        border: 1px solid #CCCCCC;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 14px;
+        color: #2E2E2E;
+    }
+
+    QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QSpinBox:focus {
+        border: 1.5px solid #007BFF;
+        background-color: #FFFFFF;
+    }
+
+    QPushButton {
+        background-color: #007BFF;
+        color: white;
+        padding: 8px 16px;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+    }
+
+    QPushButton:hover {
+        background-color: #0056b3;
+    }
+
+    QPushButton:disabled {
+        background-color: #cccccc;
+        color: #666666;
+    }
+
+    QCheckBox {
+        spacing: 6px;
+    }
+
+    QCheckBox::indicator {
+        width: 16px;
+        height: 16px;
+    }
+
+    QCheckBox::indicator:checked {
+        background-color: #007BFF;
+        border: 1px solid #007BFF;
+    }
+
+    QGroupBox {
+        border: 1px solid #E0E0E0;
+        border-radius: 8px;
+        margin-top: 10px;
+        padding: 10px;
+    }
+
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0 3px 0 3px;
+        font-weight: bold;
+    }
+    """
+    return dialog
+
+def FormStyles():
+    form_css = """
+       *{
+        background-color: white;
+        }
+        QLineEdit, QSpinBox {
+        padding: 6px 10px;
+        border: 1px solid #ced4da;
+        border-radius: 3px;
+        height: 30px;
+        font: 12pt;
+        } 
+        QDateEdit {
+        border: 1px solid #ced4da; /* Light gray border */
+        border-radius: 8px; /* Rounded corners */
+        background-color: #ffffff; /* White background */
+        padding: 5px 10px; /* Padding inside the input */
+        color: #495057; /* Text color */
+        font-size: 14px; /* Font size */
+        height: 30px; /* Input height */
+        }
+    
+        QDateEdit:hover {
+            border: 1px solid #80bdff; /* Blue border on hover */
+            background-color: #f8f9fa; /* Light gray background */
+        }
+    
+        QDateEdit:focus {
+            border: 1px solid #007bff; /* Bootstrap blue for focus */
+            outline: none; /* Remove outline */
+        }
+    
+        QDateEdit::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 20px; /* Dropdown width */
+            border-left: 1px solid #ced4da; /* Divider for dropdown */
+        }
+    
+        QDateEdit::down-arrow {
+            image: url('icons/calendar.png'); /* Replace with your icon path */
+            width: 14px;
+            height: 14px;
+        }
+    
+        QDateEdit::down-arrow:hover {
+            image: url('icons/calendar_hover_16px.png'); /* Hover icon */
+        }
+    
+        QDateEdit::down-arrow:pressed {
+            image: url('icons/calendar_pressed_16px.png'); /* Pressed icon */
+        }
+    
+        QCalendarWidget {
+            border: 1px solid #dee2e6; /* Border for calendar popup */
+            border-radius: 8px;
+            background-color: #ffffff; /* White background */
+            color: #212529; /* Text color */
+            font-size: 14px;
+        }
+    
+        QCalendarWidget QToolButton {
+            color: #495057; /* Month and Year text color */
+            background-color: #f8f9fa; /* Light gray button background */
+            border: none; /* No border */
+            border-radius: 5px;
+            padding: 5px;
+            font-weight: bold;
+        }
+    
+        QCalendarWidget QToolButton:hover {
+            background-color: #e2e6ea; /* Hover background color */
+        }
+    
+        QCalendarWidget QToolButton:pressed {
+            background-color: #d4d8dc; /* Pressed background color */
+        }
+    
+        QCalendarWidget QTableView {
+            border: none;
+            color: #495057; /* Day numbers color */
+            gridline-color: #dee2e6; /* Gridline color */
+        }
+    
+        QCalendarWidget QTableView:selected {
+            background-color: #007bff; /* Selected day background */
+            color: #ffffff; /* Selected day text */
+        }
+        QComboBox {
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        padding: 8px 12px;
+        background-color: #f8f9fa;
+        font-size: 16px;
+        color: #212529;
+        }
+
+        QComboBox:hover {
+            border-color: #86b7fe;
+        }
+
+        QComboBox:focus {
+            border-color: #0d6efd;
+            outline: 2px solid #0d6efd;
+            outline-offset: 1px;
+        }
+
+        QComboBox QAbstractItemView {
+            border: 1px solid #ced4da;
+            background-color: #fff;
+            selection-background-color: #0d6efd;
+            selection-color: white;
+            padding: 6px 12px;
+            font-size: 16px;
+        }
+
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 25px;
+            border-left: 1px solid #ced4da;
+            background-color: #e9ecef;
+        }
+
+        QFrame{
+        border-radius: 5px;
+        }
+        QPushButton {
+        border-radius: 5px;
+        font-family: 'Poppins', sans-serif;
+        font-weight: bold;
+        background-color: #007bff;
+        color: white; 
+        border: 1px solid #007bff;
+        padding: 6px 12px;
+        font-size: 14px;
+        text-align: center;
+        }
+
+        QPushButton:hover {
+            background-color: #0056b3;
+            border: 1px solid #0056b3;
+        }
+
+        QPushButton:pressed {
+            background-color: #004080;
+            border: 1px solid #004080;
+        }
+
+        QPushButton:focus {
+            outline: 2px solid #80bdff;
+        }
+    """
+    return form_css
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
+    initialize_database()
     # Load global stylesheet
     try:
         with open("theme.qss", "r") as f:
             stylesheet = f.read()
             app.setStyleSheet(stylesheet)
     except FileNotFoundError:
-        print("Warning: theme.qss not found. Running without global stylesheet.")
-    
+        QMessageBox.warning("Warning: theme.qss not found. Running without global stylesheet.")
+
     window = Window()
     print("Application opened.")
     window.show()

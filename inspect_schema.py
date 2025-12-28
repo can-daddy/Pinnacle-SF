@@ -6,7 +6,7 @@ def inspect_schema():
         c = conn.cursor()
         c.execute("SELECT name, sql FROM sqlite_master WHERE type='table';")
         tables = c.fetchall()
-        with open("schema_dump.txt", "w") as f:
+        with open("schema.txt", "w") as f:
             for table in tables:
                 f.write(f"--- Table: {table[0]} ---\n")
                 f.write(table[1] if table[1] else "NO SQL")

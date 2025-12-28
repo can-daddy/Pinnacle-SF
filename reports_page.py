@@ -78,9 +78,8 @@ class Reports(QWidget):
         btn_pdf.setObjectName("largeDangerButton")
         btn_pdf.clicked.connect(self.export_pdf)
         
-        btn_excel = QPushButton("Generate Excel Report")
+        btn_excel = button("Generate Excel Report",)
         btn_excel.setCursor(Qt.PointingHandCursor)
-        btn_excel.setObjectName("largeSuccessButton")
         btn_excel.clicked.connect(self.export_excel)
         
         btn_layout.addWidget(btn_pdf)
