@@ -14,10 +14,13 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtChart import *
 from PyQt5.QtPrintSupport import QPrinter
-from finance_service import FinanceService
-from report_generator import ReportGenerator
 import os
-
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from utilis import resource_path
 
 DB_NAME = "Database.db"
 
@@ -548,7 +551,7 @@ class StudentsTab(QWidget):
         self.filterbyStatus = QComboBox()
         self.filterbyStatus.addItem("All PayRate",None)
         self.filterbyStatus.addItem("Full Scholarship",0)
-        self.filterbyStatus.addItem("25% Scholarship",75)
+        self.filterbyStatus.addItem("20% Scholarship",80)
         self.filterbyStatus.addItem("No Scholarship",100)
         self.filterbyStatus.currentIndexChanged.connect(self.load_data)
 
@@ -604,7 +607,7 @@ class StudentsTab(QWidget):
         status_combo = QComboBox()
         status_combo.addItem("Select PayRate",None)
         status_combo.addItem("Full Scholarship",0)
-        status_combo.addItem("25% Scholarship",75)
+        status_combo.addItem("20% Scholarship",80)
         status_combo.addItem("No Scholarship",100)
         parent_name_edit = QLineEdit()
         contact_edit = QLineEdit()
@@ -787,7 +790,7 @@ class StudentsTab(QWidget):
                 status_combo = QComboBox()
                 status_combo.addItem("Select PayRate",None)
                 status_combo.addItem("Full Scholarship",0)
-                status_combo.addItem("25% Scholarship",75)
+                status_combo.addItem("20% Scholarship",80)
                 status_combo.addItem("No Scholarship",100)
                 status_combo.setCurrentText(status_combo.itemText(status_combo.findData(student_data[3])))
                 parent_name_edit = QLineEdit(student_data[4])
@@ -1134,7 +1137,7 @@ class EnrollmentsTab(QWidget):
                 payrate_combo = QComboBox()
                 payrate_combo.addItem("Select PayRate",None)
                 payrate_combo.addItem("Full Scholarship",0)
-                payrate_combo.addItem("25% Scholarship",75)
+                payrate_combo.addItem("20% Scholarship",80)
                 payrate_combo.addItem("No Scholarship",100)
                 self.populate_combos(class_combo, term_combo)
                 class_combo.setCurrentIndex(class_combo.findData(data[1]))
@@ -1459,7 +1462,7 @@ class ImportWizard(QWizard):
         super().__init__(parent)
         self.setWindowTitle("Student Import Wizard")
         
-        # Light theme stylesheet for a modern, web-like light tone
+        # Light theme stylesheet
         light_style = """
         QWizard {
             background-color: #f8f9fa;
@@ -1478,7 +1481,7 @@ class ImportWizard(QWizard):
         QPushButton:hover {
             background-color: #0056b3;
         }
-        QComboBox {
+        QComboBox, QLineEdit, QSpinBox {
             background-color: white;
             border: 1px solid #ced4da;
             padding: 4px;
@@ -1492,6 +1495,13 @@ class ImportWizard(QWizard):
             border: 1px solid #dee2e6;
             gridline-color: #dee2e6;
         }
+        QCheckBox {
+            color: #495057;
+        }
+        QTableWidget {
+            background-color: white;
+            border: 1px solid #dee2e6;
+        }
         """
         self.setStyleSheet(light_style)
         
@@ -1500,170 +1510,728 @@ class ImportWizard(QWizard):
         self.excel_file = None
         self.term_id = None
         self.class_id = None
+        self.academic_year_id = None
         self.data = None
+        self.generate_ids = True  # Default to True
+        self.starting_sequence = 1
         
         # Add pages
         self.intro_page_id = self.addPage(self.create_intro_page())
         self.file_page_id = self.addPage(self.create_file_page())
         self.config_page_id = self.addPage(self.create_config_page())
+        self.id_generation_page_id = self.addPage(self.create_id_generation_page())
         self.preview_page_id = self.addPage(self.create_preview_page())
         self.finish_page_id = self.addPage(self.create_finish_page())
+        
+        # Connect page change signal
+        self.currentIdChanged.connect(self.on_page_changed)
 
     def create_intro_page(self):
         page = QWizardPage()
         page.setTitle("Choose Import Mode")
+        page.setSubTitle("Select how you want to import students")
+        
         layout = QVBoxLayout()
-        label = QLabel("Select the import method:")
-        layout.addWidget(label)
+        
+        # Description label
+        desc_label = QLabel("Choose the appropriate import method for your needs:")
+        desc_label.setWordWrap(True)
+        layout.addWidget(desc_label)
+        
+        # Mode selection
         self.mode_group = QButtonGroup()
-        radio1 = QRadioButton("Insert new students with initial term enrollment")
-        radio2 = QRadioButton("Enrollment only")
-        self.mode_group.addButton(radio1, 1)
-        self.mode_group.addButton(radio2, 2)
-        layout.addWidget(radio1)
-        layout.addWidget(radio2)
+        
+        # Mode 1: New students with enrollment
+        mode1_frame = QFrame()
+        mode1_frame.setFrameStyle(QFrame.Box | QFrame.Raised)
+        mode1_frame.setStyleSheet("""
+            QFrame {
+                background-color: #e8f4f8;
+                border: 1px solid #b8daff;
+                border-radius: 5px;
+                padding: 10px;
+                margin: 5px;
+            }
+        """)
+        mode1_layout = QVBoxLayout(mode1_frame)
+        self.radio_new_students = QRadioButton("Insert new students with initial term enrollment")
+        self.radio_new_students.setChecked(True)
+        mode1_desc = QLabel("Use this for importing completely new students.")
+        mode1_desc.setWordWrap(True)
+        mode1_desc.setStyleSheet("color: #666; font-size: 12px; margin-left: 20px;")
+        mode1_layout.addWidget(self.radio_new_students)
+        mode1_layout.addWidget(mode1_desc)
+        
+        # Mode 2: Enrollment only
+        mode2_frame = QFrame()
+        mode2_frame.setFrameStyle(QFrame.Box | QFrame.Raised)
+        mode2_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 5px;
+                padding: 10px;
+                margin: 5px;
+            }
+        """)
+        mode2_layout = QVBoxLayout(mode2_frame)
+        self.radio_enrollment_only = QRadioButton("Enrollment only (existing students)")
+        mode2_desc = QLabel("Use this for enrolling existing students in a new term/class.")
+        mode2_desc.setWordWrap(True)
+        mode2_desc.setStyleSheet("color: #666; font-size: 12px; margin-left: 20px;")
+        mode2_layout.addWidget(self.radio_enrollment_only)
+        mode2_layout.addWidget(mode2_desc)
+        
+        self.mode_group.addButton(self.radio_new_students, 1)
+        self.mode_group.addButton(self.radio_enrollment_only, 2)
+        
+        layout.addWidget(mode1_frame)
+        layout.addWidget(mode2_frame)
+        layout.addStretch()
+        
         page.setLayout(layout)
         return page
 
     def create_file_page(self):
         page = QWizardPage()
         page.setTitle("Select Excel File")
+        page.setSubTitle("Choose the Excel file containing student data")
+        
         layout = QVBoxLayout()
+        
+        # File selection area
+        file_frame = QFrame()
+        file_frame.setFrameStyle(QFrame.Box | QFrame.Sunken)
+        file_frame.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border-radius: 5px;
+                padding: 15px;
+            }
+        """)
+        file_layout = QVBoxLayout(file_frame)
+        
+        # File info
         self.file_label = QLabel("No file selected")
-        layout.addWidget(self.file_label)
-        btn = QPushButton("Browse")
+        self.file_label.setStyleSheet("font-style: italic; color: #6c757d;")
+        
+        # File format info
+        format_label = QLabel("Expected Excel format:")
+        format_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        
+        format_info = QLabel("For new students: Student_Name, FeePayer, PayRate, Parent_Name, Parent_Contact\n"
+                            "Note: StudentID column is optional (will be auto-generated if missing)")
+        format_info.setStyleSheet("font-size: 12px; color: #666; background-color: #f8f9fa; padding: 5px; border-radius: 3px;")
+        format_info.setWordWrap(True)
+        
+        # Browse button
+        btn = QPushButton("📁 Browse for Excel File")
         btn.clicked.connect(self.browse_file)
-        layout.addWidget(btn)
+        
+        file_layout.addWidget(self.file_label)
+        file_layout.addWidget(format_label)
+        file_layout.addWidget(format_info)
+        file_layout.addWidget(btn)
+        
+        layout.addWidget(file_frame)
+        layout.addStretch()
+        
         page.setLayout(layout)
         return page
 
     def browse_file(self):
-        file, _ = QFileDialog.getOpenFileName(self, "Select Excel File", "", "Excel Files (*.xlsx *.xls)")
+        file, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Select Excel File", 
+            "", 
+            "Excel Files (*.xlsx *.xls);;All Files (*.*)"
+        )
         if file:
             self.excel_file = file
-            self.file_label.setText(file)
+            self.file_label.setText(f"Selected: {os.path.basename(file)}")
+            self.file_label.setStyleSheet("color: #28a745; font-weight: bold;")
 
     def create_config_page(self):
         page = QWizardPage()
         page.setTitle("Configure Enrollment")
+        page.setSubTitle("Select the academic year, term, and class for enrollment")
+        
         layout = QVBoxLayout()
         
+        # Configuration frame
+        config_frame = QFrame()
+        config_frame.setFrameStyle(QFrame.Box | QFrame.Raised)
+        config_frame.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #dee2e6;
+                border-radius: 5px;
+                padding: 15px;
+            }
+        """)
+        config_layout = QGridLayout(config_frame)
+        config_layout.setSpacing(10)
+        
         # Academic Year selection
-        year_label = QLabel("Select Academic Year:")
+        year_label = QLabel("Academic Year:")
+        year_label.setStyleSheet("font-weight: bold;")
         self.academic_combo = QComboBox()
+        self.academic_combo.setMinimumWidth(200)
+        
         try:
             with get_db_connection() as (conn, c):
-                c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
                 years = c.fetchall()
+                self.academic_combo.addItem("Select Academic Year", None)
                 for yid, yname in years:
-                    self.academic_combo.addItem(yname if yname else f"Year {yid}", yid)
+                    self.academic_combo.addItem(yname, yid)
         except sqlite3.Error as e:
             QMessageBox.warning(self, "Database Error", f"Failed to load academic years: {str(e)}")
         
         self.academic_combo.currentIndexChanged.connect(self.load_terms_and_classes)
         
-        layout.addWidget(year_label)
-        layout.addWidget(self.academic_combo)
+        config_layout.addWidget(year_label, 0, 0)
+        config_layout.addWidget(self.academic_combo, 0, 1)
         
         # Term selection
-        term_label = QLabel("Select Term:")
+        term_label = QLabel("Term:")
+        term_label.setStyleSheet("font-weight: bold;")
         self.term_combo = QComboBox()
-        layout.addWidget(term_label)
-        layout.addWidget(self.term_combo)
+        self.term_combo.setMinimumWidth(200)
+        self.term_combo.addItem("Select Term", None)
+        config_layout.addWidget(term_label, 1, 0)
+        config_layout.addWidget(self.term_combo, 1, 1)
         
         # Class selection
-        class_label = QLabel("Select Class:")
+        class_label = QLabel("Class:")
+        class_label.setStyleSheet("font-weight: bold;")
         self.class_combo = QComboBox()
-        layout.addWidget(class_label)
-        layout.addWidget(self.class_combo)
+        self.class_combo.setMinimumWidth(200)
+        self.class_combo.addItem("Select Class", None)
+        config_layout.addWidget(class_label, 2, 0)
+        config_layout.addWidget(self.class_combo, 2, 1)
+        
+        layout.addWidget(config_frame)
+        layout.addStretch()
         
         page.setLayout(layout)
-        
-        # Preselect first year if available
-        if self.academic_combo.count() > 0:
-            self.academic_combo.setCurrentIndex(0)
-        
         return page
 
     def load_terms_and_classes(self):
         year_id = self.academic_combo.currentData()
-        if year_id is None:
-            return
+        self.academic_year_id = year_id
         
         self.term_combo.clear()
         self.class_combo.clear()
         
+        if year_id is None:
+            self.term_combo.addItem("Select Term", None)
+            self.class_combo.addItem("Select Class", None)
+            return
+        
         try:
             with get_db_connection() as (conn, c):
                 # Load terms for selected year
-                c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ?", (year_id,))
+                c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ? ORDER BY TermName", (year_id,))
                 terms = c.fetchall()
+                self.term_combo.addItem("Select Term", None)
                 for tid, tname in terms:
-                    self.term_combo.addItem(tname if tname else f"Term {tid}", tid)
+                    self.term_combo.addItem(tname, tid)
                 
                 # Load classes for selected year
-                c.execute("SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ?", (year_id,))
+                c.execute("SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ? ORDER BY ClassName", (year_id,))
                 classes = c.fetchall()
+                self.class_combo.addItem("Select Class", None)
                 for cid, cname in classes:
-                    self.class_combo.addItem(cname if cname else f"Class {cid}", cid)
+                    self.class_combo.addItem(cname, cid)
+                    
+                # Update ID preview if we're on that page
+                if self.currentId() == self.id_generation_page_id:
+                    self.update_id_preview()
+                    
         except sqlite3.Error as e:
             QMessageBox.warning(self, "Database Error", f"Failed to load terms/classes: {str(e)}")
-    
+
+    def create_id_generation_page(self):
+        page = QWizardPage()
+        page.setTitle("Student ID Generation")
+        page.setSubTitle("Configure how Student IDs should be generated")
+        
+        layout = QVBoxLayout()
+        
+        # ID generation options
+        options_frame = QFrame()
+        options_frame.setFrameStyle(QFrame.Box | QFrame.Raised)
+        options_frame.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #dee2e6;
+                border-radius: 5px;
+                padding: 15px;
+            }
+        """)
+        options_layout = QVBoxLayout(options_frame)
+        
+        # Checkbox for ID generation
+        self.generate_ids_checkbox = QCheckBox("Generate Student IDs automatically")
+        self.generate_ids_checkbox.setChecked(True)
+        self.generate_ids_checkbox.stateChanged.connect(self.on_generate_ids_changed)
+        
+        # Format explanation
+        format_label = QLabel("Format: AcademicYear-0001 (e.g., 2024-0001)")
+        format_label.setStyleSheet("color: #666; font-size: 12px; margin-left: 20px;")
+        
+        # Starting sequence
+        seq_layout = QHBoxLayout()
+        seq_label = QLabel("Starting sequence number:")
+        self.start_sequence_spin = QSpinBox()
+        self.start_sequence_spin.setRange(1, 9999)
+        self.start_sequence_spin.setValue(1)
+        self.start_sequence_spin.valueChanged.connect(self.update_id_preview)
+        seq_layout.addWidget(seq_label)
+        seq_layout.addWidget(self.start_sequence_spin)
+        seq_layout.addStretch()
+        
+        # Last ID preview
+        self.last_id_label = QLabel("Select an academic year to see ID preview")
+        self.last_id_label.setStyleSheet("""
+            QLabel {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 3px;
+                padding: 10px;
+                margin-top: 10px;
+                font-family: monospace;
+            }
+        """)
+        
+        options_layout.addWidget(self.generate_ids_checkbox)
+        options_layout.addWidget(format_label)
+        options_layout.addLayout(seq_layout)
+        options_layout.addWidget(self.last_id_label)
+        
+        layout.addWidget(options_frame)
+        
+        # Preview area for ID generation
+        preview_label = QLabel("Preview of generated IDs:")
+        preview_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        layout.addWidget(preview_label)
+        
+        self.id_preview_table = QTableWidget(5, 2)
+        self.id_preview_table.setHorizontalHeaderLabels(["#", "Generated StudentID"])
+        self.id_preview_table.horizontalHeader().setStretchLastSection(True)
+        self.id_preview_table.setMaximumHeight(150)
+        layout.addWidget(self.id_preview_table)
+        
+        layout.addStretch()
+        
+        page.setLayout(layout)
+        return page
+
+    def on_generate_ids_changed(self, state):
+        self.generate_ids = (state == Qt.Checked)
+        self.start_sequence_spin.setEnabled(self.generate_ids)
+        self.update_id_preview()
+
+    def generate_student_id(self, year_name, sequence_number):
+        """Generate StudentID in format: Year-0001"""
+        # Clean year name (take first part before any dash)
+        if isinstance(year_name, str):
+            year_clean = str(year_name).strip().split('-')[0]
+        else:
+            year_clean = str(year_name)
+        
+        # Format sequence number with leading zeros
+        seq_formatted = f"{sequence_number:04d}"
+        
+        return f"{year_clean}-{seq_formatted}"
+
+    def get_existing_sequence(self, year_id):
+        """Get the highest existing sequence number for the given academic year"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Get the year name
+                c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (year_id,))
+                year_result = c.fetchone()
+                if not year_result:
+                    return 0
+                
+                year_name = year_result[0]
+                
+                # Get all existing StudentIDs for this year
+                c.execute("""
+                    SELECT StudentID FROM Students 
+                    WHERE StudentID LIKE ? AND StudentID GLOB ? 
+                    ORDER BY StudentID DESC
+                """, (f"{year_name}-%", f"{year_name}-[0-9][0-9][0-9][0-9]"))
+                
+                existing_ids = [row[0] for row in c.fetchall()]
+                
+                if not existing_ids:
+                    return 0
+                
+                # Find the highest sequence number
+                max_seq = 0
+                for student_id in existing_ids:
+                    try:
+                        # Extract sequence number from format "Year-0001"
+                        parts = student_id.split('-')
+                        if len(parts) == 2 and parts[1].isdigit():
+                            seq = int(parts[1])
+                            max_seq = max(max_seq, seq)
+                    except (ValueError, IndexError):
+                        continue
+                
+                return max_seq
+                
+        except sqlite3.Error as e:
+            print(f"Error getting existing sequence: {str(e)}")
+            return 0
+
+    def update_id_preview(self):
+        """Update the ID preview based on current settings"""
+        self.id_preview_table.clearContents()
+        
+        if not self.generate_ids:
+            self.last_id_label.setText("ID generation is disabled")
+            self.id_preview_table.setRowCount(1)
+            self.id_preview_table.setItem(0, 0, QTableWidgetItem("1"))
+            self.id_preview_table.setItem(0, 1, QTableWidgetItem("Will use StudentID from Excel"))
+            return
+        
+        if not self.academic_year_id:
+            self.last_id_label.setText("Please select an academic year first")
+            self.id_preview_table.setRowCount(1)
+            self.id_preview_table.setItem(0, 0, QTableWidgetItem("1"))
+            self.id_preview_table.setItem(0, 1, QTableWidgetItem("Select academic year to see preview"))
+            return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # Get year name
+                c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (self.academic_year_id,))
+                year_result = c.fetchone()
+                if not year_result:
+                    return
+                
+                year_name = year_result[0]
+                
+                # Get existing highest sequence
+                existing_max = self.get_existing_sequence(self.academic_year_id)
+                
+                # Get starting sequence (use higher of existing+1 or user specified)
+                user_start = self.start_sequence_spin.value()
+                actual_start = max(existing_max + 1, user_start)
+                
+                # Update preview
+                self.id_preview_table.setRowCount(5)
+                
+                for i in range(5):
+                    sequence_num = actual_start + i
+                    student_id = self.generate_student_id(year_name, sequence_num)
+                    
+                    # Add to table
+                    self.id_preview_table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
+                    self.id_preview_table.setItem(i, 1, QTableWidgetItem(student_id))
+                
+                # Update label
+                if existing_max > 0:
+                    self.last_id_label.setText(f"Last existing ID: {year_name}-{existing_max:04d}\n"
+                                              f"Starting from: {year_name}-{actual_start:04d}")
+                else:
+                    self.last_id_label.setText(f"No existing IDs found for {year_name}\n"
+                                              f"Starting from: {year_name}-{actual_start:04d}")
+        
+        except sqlite3.Error as e:
+            self.last_id_label.setText(f"Error: {str(e)}")
+
     def create_preview_page(self):
         page = QWizardPage()
         page.setTitle("Preview Data")
+        page.setSubTitle("Review the data before importing")
+        
         layout = QVBoxLayout()
+        
+        # Data preview table
         self.table_view = QTableView()
+        self.table_view.setAlternatingRowColors(True)
+        self.table_view.setSelectionBehavior(QTableView.SelectRows)
+        self.table_view.horizontalHeader().setStretchLastSection(True)
+        
+        # Summary label
+        self.summary_label = QLabel("No data loaded")
+        self.summary_label.setStyleSheet("font-weight: bold; color: #6c757d;")
+        
+        layout.addWidget(self.summary_label)
         layout.addWidget(self.table_view)
+        
         page.setLayout(layout)
         return page
 
     def create_finish_page(self):
         page = QWizardPage()
-        page.setTitle("Finish Import")
+        page.setTitle("Ready to Import")
+        page.setSubTitle("Click Finish to import the data")
+        
         layout = QVBoxLayout()
-        label = QLabel("Review the preview and click Finish to import the data.")
-        layout.addWidget(label)
+        
+        # Summary frame
+        summary_frame = QFrame()
+        summary_frame.setFrameStyle(QFrame.Box | QFrame.Raised)
+        summary_frame.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 2px solid #28a745;
+                border-radius: 5px;
+                padding: 15px;
+            }
+        """)
+        summary_layout = QVBoxLayout(summary_frame)
+        
+        self.import_summary_label = QLabel("Import summary will appear here")
+        self.import_summary_label.setWordWrap(True)
+        self.import_summary_label.setStyleSheet("font-size: 14px;")
+        
+        summary_layout.addWidget(self.import_summary_label)
+        layout.addWidget(summary_frame)
+        
+        # Warning/Info label
+        self.final_warning_label = QLabel("⚠️ Review the preview carefully. This action cannot be undone.")
+        self.final_warning_label.setStyleSheet("color: #856404; background-color: #fff3cd; padding: 10px; border-radius: 3px;")
+        self.final_warning_label.setWordWrap(True)
+        layout.addWidget(self.final_warning_label)
+        
+        layout.addStretch()
+        
         page.setLayout(layout)
         return page
 
-    def initializePage(self, page_id):
-        super().initializePage(page_id)
+    def on_page_changed(self, page_id):
+        """Handle page changes to update content"""
         if page_id == self.preview_page_id:
             self.load_data()
+        elif page_id == self.finish_page_id:
+            self.update_finish_summary()
+        elif page_id == self.id_generation_page_id:
+            self.update_id_preview()
 
     def load_data(self):
         if not self.excel_file:
-            QMessageBox.warning(self, "Error", "No Excel file selected.")
-            return
-        
+                QMessageBox.warning(self, "Error", "No Excel file selected.")
+                return
         try:
+            # Load the Excel file with proper handling
             self.data = pd.read_excel(self.excel_file)
+            
+            # Fix column names - replace spaces with underscores
+            self.data.columns = [col.strip().replace(' ', '_') for col in self.data.columns]
+            
+            # Handle "Parent Contact2" -> "Parent_Contact2"
+            if 'Parent_Contact2' in self.data.columns:
+                # Already correct
+                pass
+            elif 'Parent_Contact_2' in self.data.columns:
+                self.data.rename(columns={'Parent_Contact_2': 'Parent_Contact2'}, inplace=True)
+            
+            # Check mode
             self.mode = self.mode_group.checkedId()
             
-            if self.mode == 1:  # New students
-                required_cols = ['StudentID', 'Student_Name', 'FeePayer', 'PayRate', 'Parent_Name', 'Parent_Contact']
-                if not all(col in self.data.columns for col in required_cols):
-                    raise ValueError("Missing required columns for new students: " + ", ".join(required_cols))
+            # For new students mode
+            if self.mode == 1:
+                # Define expected columns (StudentID is optional)
+                expected_cols = ['Student_Name', 'FeePayer', 'PayRate', 'Parent_Name', 'Parent_Contact']
+                
+                # Check for missing required columns
+                missing_cols = []
+                for col in expected_cols:
+                    if col not in self.data.columns:
+                        missing_cols.append(col)
+                
+                if missing_cols:
+                    raise ValueError(f"Missing required columns: {', '.join(missing_cols)}\n"
+                                    f"Found columns: {', '.join(self.data.columns)}")
+                
+                # === FIX 1: Convert columns to string BEFORE using .str accessor ===
+                # First, ensure all expected string columns exist and are object type
+                for col in expected_cols:
+                    if col in self.data.columns:
+                        # Convert to string, handling NaN values
+                        self.data[col] = self.data[col].astype(str)
+                
+                # Now we can safely use .str methods
+                if 'FeePayer' in self.data.columns:
+                    # Convert to string first (already done above)
+                    # Then strip whitespace
+                    self.data['FeePayer'] = self.data['FeePayer'].str.strip()
+                    # Replace empty FeePayer with 'parents' as default
+                    self.data.loc[self.data['FeePayer'] == 'nan', 'FeePayer'] = 'parents'
+                    self.data.loc[self.data['FeePayer'] == '', 'FeePayer'] = 'parents'
+                
+                # Handle PayRate - allow 0 and convert properly
+                if 'PayRate' in self.data.columns:
+                    # First convert to numeric, coerce errors to NaN
+                    self.data['PayRate'] = pd.to_numeric(self.data['PayRate'], errors='coerce')
+                    # Fill NaN with 0
+                    self.data['PayRate'] = self.data['PayRate'].fillna(0)
+                    # Convert to float
+                    self.data['PayRate'] = self.data['PayRate'].astype(float)
+                
+                # === FIX 2: Clean up string columns SAFELY ===
+                string_columns = self.data.select_dtypes(include=['object']).columns
+                for col in string_columns:
+                    # Ensure it's string type
+                    self.data[col] = self.data[col].astype(str)
+                    # Now we can use .str methods
+                    self.data[col] = self.data[col].str.strip()
+                    # Replace 'nan' string with empty string
+                    self.data.loc[self.data[col] == 'nan', col] = ''
+                
+                # Generate preview StudentIDs if needed
+                if self.generate_ids and self.academic_year_id:
+                    with get_db_connection() as (conn, c):
+                        c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (self.academic_year_id,))
+                        year_result = c.fetchone()
+                        if year_result:
+                            year_name = year_result[0]
+                            
+                            # Get starting sequence
+                            existing_max = self.get_existing_sequence(self.academic_year_id)
+                            user_start = self.start_sequence_spin.value()
+                            actual_start = max(existing_max + 1, user_start)
+                            
+                            # Generate IDs for preview
+                            generated_ids = []
+                            for i in range(len(self.data)):
+                                student_id = f"{year_name}-{(actual_start + i):04d}"
+                                generated_ids.append(student_id)
+                            
+                            # Add to DataFrame for display
+                            self.data['StudentID'] = generated_ids
+                            # Move StudentID to first column
+                            cols = ['StudentID'] + [col for col in self.data.columns if col != 'StudentID']
+                            self.data = self.data[cols]
+                
+                # If not generating IDs and StudentID column exists, clean it
+                elif 'StudentID' in self.data.columns:
+                    # Ensure it's string type first
+                    self.data['StudentID'] = self.data['StudentID'].astype(str)
+                    # Then use .str methods
+                    self.data['StudentID'] = self.data['StudentID'].str.strip()
+                    # Replace 'nan' with empty string
+                    self.data.loc[self.data['StudentID'] == 'nan', 'StudentID'] = ''
+                    # Move StudentID to first column
+                    cols = ['StudentID'] + [col for col in self.data.columns if col != 'StudentID']
+                    self.data = self.data[cols]
+            
             elif self.mode == 2:  # Enrollment only
                 if 'StudentID' not in self.data.columns:
                     raise ValueError("Missing 'StudentID' column for enrollment only.")
+                
+                # === FIX 3: Clean StudentID column safely ===
+                # Convert to string first
+                self.data['StudentID'] = self.data['StudentID'].astype(str)
+                # Then strip
+                self.data['StudentID'] = self.data['StudentID'].str.strip()
+                # Replace 'nan' with empty
+                self.data.loc[self.data['StudentID'] == 'nan', 'StudentID'] = ''
+            
             else:
                 raise ValueError("No mode selected.")
             
             # Display in table
             model = QStandardItemModel()
             model.setHorizontalHeaderLabels(self.data.columns)
-            for _, row in self.data.iterrows():
-                items = [QStandardItem(str(row.get(col, ''))) for col in self.data.columns]
+            
+            # Color code rows based on validation
+            for idx, row in self.data.iterrows():
+                items = []
+                for col in self.data.columns:
+                    value = row.get(col, '')
+                    
+                    # Handle NaN values
+                    if pd.isna(value):
+                        value = ''
+                    
+                    item = QStandardItem(str(value))
+                    
+                    # Highlight issues
+                    if self.mode == 1:
+                        if col == 'Student_Name' and not str(value).strip():
+                            item.setBackground(QColor(255, 243, 205))  # Warning yellow
+                        elif col == 'Parent_Contact' and not str(value).strip():
+                            item.setBackground(QColor(255, 243, 205))
+                        elif col == 'FeePayer' and not str(value).strip():
+                            item.setBackground(QColor(255, 243, 205))
+                        elif col == 'PayRate':
+                            try:
+                                pay_rate = float(value) if value else 0
+                                if pay_rate < 0:
+                                    item.setBackground(QColor(255, 220, 220))  # Light red for negative
+                            except ValueError:
+                                item.setBackground(QColor(255, 220, 220))
+                    
+                    items.append(item)
+                
                 model.appendRow(items)
+            
             self.table_view.setModel(model)
+            
+            # Update summary
+            row_count = len(self.data)
+            issues = []
+            
+            if self.mode == 1:
+                # Count missing required fields - use direct string comparison
+                missing_names = (self.data['Student_Name'].astype(str).str.strip() == '').sum()
+                missing_contacts = (self.data['Parent_Contact'].astype(str).str.strip() == '').sum()
+                
+                if missing_names > 0:
+                    issues.append(f"{missing_names} missing student names")
+                if missing_contacts > 0:
+                    issues.append(f"{missing_contacts} missing parent contacts")
+            
+            summary = f"Previewing {row_count} records"
+            if issues:
+                summary += f" - Issues: {', '.join(issues)}"
+            
+            self.summary_label.setText(summary)
             
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load data: {str(e)}")
+            import traceback
+            traceback.print_exc()  # Print full error to console
             self.data = None
+            self.summary_label.setText("Error loading data")
+
+    def update_finish_summary(self):
+        """Update the summary on the finish page"""
+        if self.data is None or self.data.empty:
+            self.import_summary_label.setText("No data to import. Please go back and load valid data.")
+            return
+        
+        mode_text = "New Students with Enrollment" if self.mode == 1 else "Enrollment Only"
+        year_text = self.academic_combo.currentText() if self.academic_combo.currentText() else "Not selected"
+        term_text = self.term_combo.currentText() if self.term_combo.currentText() else "Not selected"
+        class_text = self.class_combo.currentText() if self.class_combo.currentText() else "Not selected"
+        
+        summary = f"""
+        <b>Import Summary:</b><br><br>
+        <b>Mode:</b> {mode_text}<br>
+        <b>Records to import:</b> {len(self.data)}<br>
+        <b>Academic Year:</b> {year_text}<br>
+        <b>Term:</b> {term_text}<br>
+        <b>Class:</b> {class_text}<br><br>
+        """
+        
+        if self.mode == 1 and self.generate_ids:
+            summary += f"<b>Student IDs:</b> Will be generated automatically ({year_text.split('-')[0]}-####)<br>"
+        elif self.mode == 1:
+            summary += "<b>Student IDs:</b> Will be taken from Excel file (if present)<br>"
+        
+        self.import_summary_label.setText(summary)
 
     def accept(self):
+        """Handle the import when Finish is clicked"""
         if self.data is None or self.data.empty:
             QMessageBox.warning(self, "Error", "No data to import.")
             return
@@ -1675,102 +2243,184 @@ class ImportWizard(QWizard):
             QMessageBox.warning(self, "Error", "Term and Class must be selected.")
             return
         
+        # Confirm import
+        reply = QMessageBox.question(
+            self,
+            "Confirm Import",
+            f"Are you sure you want to import {len(self.data)} record(s)?\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
         success_count = 0
         error_count = 0
         error_messages = []
         
         try:
             with get_db_connection() as (conn, c):
+                # Get academic year name for ID generation
+                year_name = None
+                if self.mode == 1:
+                    c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (self.academic_year_id,))
+                    year_result = c.fetchone()
+                    if year_result:
+                        year_name = year_result[0]
+                
+                # Get starting sequence for ID generation
+                starting_sequence = self.start_sequence_spin.value()
+                if self.mode == 1 and year_name:
+                    # Get highest existing sequence
+                    existing_max = self.get_existing_sequence(self.academic_year_id)
+                    actual_start = max(existing_max + 1, starting_sequence)
+                else:
+                    actual_start = starting_sequence
+                
                 for index, row in self.data.iterrows():
+                    excel_row = index + 2  # Excel row number (header is row 1)
                     try:
-                        sid = str(row.get('StudentID', '')).strip()
-                        if not sid:
-                            raise ValueError("Invalid or missing StudentID.")
-                        
                         if self.mode == 1:  # New students with enrollment
-                            # Validation: Check required fields not null/empty
-                            required_cols_new = ['StudentID', 'Student_Name', 'FeePayer', 'PayRate', 'Parent_Name', 'Parent_Contact']
-                            if any(pd.isnull(row.get(col)) or not str(row.get(col)).strip() for col in required_cols_new):
-                                raise ValueError("Missing or empty required field.")
+                            # Generate or get StudentID
+                            if self.generate_ids and year_name:
+                                # Generate new ID
+                                student_id = f"{year_name}-{actual_start:04d}"
+                                actual_start += 1
+                            else:
+                                # Use ID from Excel or generate if missing
+                                student_id = str(row.get('StudentID', '')).strip()
+                                if not student_id and year_name:
+                                    # Fallback generation
+                                    student_id = f"{year_name}-{actual_start:04d}"
+                                    actual_start += 1
+                            
+                            if not student_id:
+                                raise ValueError("Could not generate StudentID")
                             
                             # Check if StudentID already exists
-                            c.execute("SELECT StudentID FROM Students WHERE StudentID = ?", (sid,))
+                            c.execute("SELECT StudentID FROM Students WHERE StudentID = ?", (student_id,))
                             if c.fetchone():
-                                raise ValueError("StudentID already exists.")
+                                raise ValueError(f"StudentID '{student_id}' already exists")
                             
-                            # Insert into Students
-                            values = (
-                                sid,
-                                str(row['Student_Name']).strip(),
-                                str(row['FeePayer']).strip(),
-                                str(row['PayRate']).strip(),
-                                str(row['Parent_Name']).strip(),
-                                str(row['Parent_Contact']).strip(),
-                                str(row.get('Parent_Contact2', '')).strip() or None
-                            )
+                            # Get and validate required fields
+                            student_name = str(row.get('Student_Name', '')).strip()
+                            fee_payer = str(row.get('FeePayer', '')).strip()
+                            pay_rate = row.get('PayRate', 0)
+                            parent_name = str(row.get('Parent_Name', '')).strip()
+                            parent_contact = str(row.get('Parent_Contact', '')).strip()
+                            parent_contact2 = str(row.get('Parent_Contact2', '')).strip()
+                            
+                            # Validate required fields
+                            if not student_name:
+                                raise ValueError("Student Name is required")
+                            if not parent_name:
+                                raise ValueError("Parent Name is required")
+                            if not parent_contact:
+                                raise ValueError("Parent Contact is required")
+                            
+                            # Handle FeePayer - if empty, use default
+                            if not fee_payer:
+                                fee_payer = "parents"
+                            
+                            # Handle PayRate - convert to float, allow 0
+                            try:
+                                pay_rate_float = float(pay_rate) if pay_rate else 0.0
+                                if pay_rate_float < 0:
+                                    raise ValueError("PayRate cannot be negative")
+                            except ValueError:
+                                raise ValueError("PayRate must be a valid number")
+                            
+                            # Insert into Students table
                             c.execute("""
-                                INSERT INTO Students (StudentID, Student_Name, FeePayer, PayRate, Parent_Name, Parent_Contact, Parent_Contact2)
+                                INSERT INTO Students (StudentID, Student_Name, FeePayer, PayRate, 
+                                                     Parent_Name, Parent_Contact, Parent_Contact2)
                                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """, values)
+                            """, (
+                                student_id,
+                                student_name,
+                                fee_payer,
+                                pay_rate_float,
+                                parent_name,
+                                parent_contact,
+                                parent_contact2 if parent_contact2 else None
+                            ))
                             
                             # Insert into StudentTerm
                             c.execute("""
-                                INSERT INTO StudentTerm (StudentID, ClassID, TermID)
-                                VALUES (?, ?, ?)
-                            """, (sid, self.class_id, self.term_id))
-                        
-                        elif self.mode == 2:  # Enrollment only
-                            # Check if StudentID exists
-                            c.execute("SELECT StudentID FROM Students WHERE StudentID = ?", (sid,))
-                            if not c.fetchone():
-                                raise ValueError("StudentID does not exist.")
+                                INSERT INTO StudentTerm (StudentID, ClassID, TermID, PayRate)
+                                VALUES (?, ?, ?, ?)
+                            """, (student_id, self.class_id, self.term_id, pay_rate_float))
                             
-                            # Check if already enrolled in this term/class
+                            success_count += 1
+                            
+                        elif self.mode == 2:  # Enrollment only
+                            student_id = str(row.get('StudentID', '')).strip()
+                            if not student_id:
+                                raise ValueError("StudentID is required")
+                            
+                            # Check if StudentID exists
+                            c.execute("SELECT StudentID, Student_Name FROM Students WHERE StudentID = ?", (student_id,))
+                            student_data = c.fetchone()
+                            if not student_data:
+                                raise ValueError(f"StudentID '{student_id}' does not exist")
+                            
+                            # Check if already enrolled
                             c.execute("""
                                 SELECT StudentTermID FROM StudentTerm 
                                 WHERE StudentID = ? AND ClassID = ? AND TermID = ?
-                            """, (sid, self.class_id, self.term_id))
+                            """, (student_id, self.class_id, self.term_id))
                             if c.fetchone():
-                                raise ValueError("Already enrolled in this term/class.")
+                                raise ValueError(f"Already enrolled in this term/class")
                             
-                            # Insert into StudentTerm
+                            # Insert enrollment
                             c.execute("""
                                 INSERT INTO StudentTerm (StudentID, ClassID, TermID)
                                 VALUES (?, ?, ?)
-                            """, (sid, self.class_id, self.term_id))
-                        
-                        success_count += 1
+                            """, (student_id, self.class_id, self.term_id))
+                            
+                            success_count += 1
                         
                     except Exception as e:
                         error_count += 1
-                        error_messages.append(f"Row {index + 2}: {str(e)}")  # +2 because Excel rows start at 1 + header
+                        error_messages.append(f"Row {excel_row}: {str(e)}")
                 
-                # Commit only if there were successful operations
+                # Commit if there were successful operations
                 if success_count > 0:
                     conn.commit()
                 else:
                     conn.rollback()
                     
         except sqlite3.Error as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to connect to database: {str(e)}")
+            QMessageBox.critical(self, "Database Error", f"Failed to import data: {str(e)}")
             return
         
         # Show results
-        if error_messages and error_count > 0:
-            error_details = "\n".join(error_messages[:10])  # Show first 10 errors
+        if error_count > 0:
+            error_details = "\n".join(error_messages[:10])
             if error_count > 10:
                 error_details += f"\n... and {error_count - 10} more errors"
             
-            QMessageBox.warning(self, "Import Completed with Errors", 
-                               f"Successfully imported {success_count} records.\n"
-                               f"Failed to import {error_count} records.\n\n"
-                               f"Errors:\n{error_details}")
+            result_text = f"""
+            Import completed with errors:
+            
+            ✅ Successfully imported: {success_count} record(s)
+            ❌ Failed to import: {error_count} record(s)
+            
+            First few errors:
+            {error_details}
+            """
+            
+            QMessageBox.warning(self, "Import Completed with Errors", result_text)
         else:
-            QMessageBox.information(self, "Import Complete", 
-                                   f"Successfully imported {success_count} records.")
+            QMessageBox.information(
+                self, 
+                "Import Successful", 
+                f"✅ Successfully imported {success_count} record(s)"
+            )
         
         super().accept()
-
 ### Student Management End ###
 
 class Window(QMainWindow):
@@ -1794,12 +2444,14 @@ class Window(QMainWindow):
         self.sidebar_layout.setSpacing(10)
         
         # Toggle button
-        self.toggle_btn = QPushButton(QIcon("Icons/menu-icon.png"), "")
+        self.toggle_btn = QPushButton(
+            QIcon(resource_path("Icons/menu-icon.png")), ""
+        )
         self.toggle_btn.setCursor(Qt.SizeHorCursor)
         self.toggle_btn.setIconSize(QSize(24, 24))
         self.toggle_btn.clicked.connect(self.toggle_sidebar)
         self.sidebar_layout.addWidget(self.toggle_btn)
-        
+
         # Sidebar menu items
         self.menu_items = [
             ("Dashboard", "Icons/dashboard-icon.png"),
@@ -1809,31 +2461,36 @@ class Window(QMainWindow):
             ("Expenditure", "Icons/expenses-icon.png"),
             ("Classes", "Icons/classes-icon.png"),
             ("Academic Calendar", "Icons/Calendar.png"),
-            ("Categorization","Icons/category_64px.png"),
-            ("Reports", "Icons/report-icon.png")
+            ("Categorization", "Icons/category_64px.png"),
+            ("Reports", "Icons/report-icon.png"),
         ]
-        
+
         self.menu_buttons = []
+
         for name, icon_path in self.menu_items:
-            btn = QPushButton(QIcon(icon_path), name)
+            btn = QPushButton(
+                QIcon(resource_path(icon_path)), name
+            )
             btn.setFixedHeight(40)
             btn.setIconSize(QSize(24, 24))
             btn.original_text = name
             btn.icon_path = icon_path
-            btn.setCheckable(True)  # Make button checkable for active state
-            btn.setAutoExclusive(True)  # Only one button can be checked at a time
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
             self.menu_buttons.append(btn)
             self.sidebar_layout.addWidget(btn)
-        
+
         self.sidebar_layout.addStretch()
-        
-        # Combine both menu lists for easier management
+
+        # Bottom menu items
         all_menu_items = [
             ("About", "Icons/about-icon.png")
         ]
-        
+
         for name2, icon_path2 in all_menu_items:
-            buttons = QPushButton(QIcon(icon_path2), name2)
+            buttons = QPushButton(
+                QIcon(resource_path(icon_path2)), name2
+            )
             buttons.setFixedHeight(40)
             buttons.setIconSize(QSize(24, 24))
             buttons.original_text = name2
@@ -1842,6 +2499,7 @@ class Window(QMainWindow):
             buttons.setAutoExclusive(True)
             self.menu_buttons.append(buttons)
             self.sidebar_layout.addWidget(buttons)
+
 
         # Main content
         self.content = QWidget()
@@ -2626,12 +3284,12 @@ class AcademicYearTerm(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         save_btn = QPushButton("Save")
+        # save_btn.clicked.connect(lambda :self.save_year(dialog,year_input))
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setObjectName("cancel")
         btn_layout.addWidget(save_btn)
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
-        dialog.exec_()
 
         def save_year():
             year_name = year_input.text().strip()
@@ -2650,14 +3308,15 @@ class AcademicYearTerm(QWidget):
                     conn.commit()
                     dialog.accept()
                     QMessageBox.information(self, "Success", f"Academic Year '{year_name}' added successfully.")
-                    self.Load_Data()
+                    self.load_academic_years()
                     
             except sqlite3.Error as e:
                 error_label.setText(f"Error saving year: {str(e)}")
 
-            save_btn.clicked.connect(save_year)
-            cancel_btn.clicked.connect(dialog.reject)
-            
+        save_btn.clicked.connect(save_year)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec_()
+                
     def addTerm(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Term")
@@ -2793,7 +3452,7 @@ class AcademicYearTerm(QWidget):
                     conn.commit()
                     dialog.accept()
                     QMessageBox.information(self, "Success", f"{term} added successfully.")
-                    self.Load_Data()
+                    self.load_terms_for_year
                     
             except sqlite3.Error as e:
                 error_label.setText(f"Error saving term: {str(e)}")
@@ -2962,7 +3621,7 @@ class AcademicYearTerm(QWidget):
                         conn.commit()
                         dialog.accept()
                         QMessageBox.information(self, "Success", f"{new_term} updated successfully.")
-                        self.Load_Data()
+                        self.load_terms_for_year()
                         
                 except sqlite3.Error as e:
                     error_label.setText(f"Error updating term: {str(e)}")
@@ -3013,14 +3672,14 @@ class AcademicYearTerm(QWidget):
             try:
                 with get_db_connection() as (conn, c):
                     # Check for Fees relation
-                    c.execute("SELECT 1 FROM Fees WHERE TermID = ?", (term_id,))
+                    c.execute("SELECT 1 FROM Fees WHERE Term = ?", (term_id,))
                     if c.fetchone():
                         QMessageBox.critical(self, "Restricted", 
                             "This term cannot be deleted because it is linked to one or more fees records.")
                         return
 
                     # Set Student.TermID to NULL for students assigned to this term
-                    c.execute("UPDATE Student SET TermID = NULL WHERE TermID = ?", (term_id,))
+                    c.execute("UPDATE StudentTerm SET TermID = NULL WHERE TermID = ?", (term_id,))
                     
                     # Delete the term
                     c.execute("DELETE FROM Term WHERE TermID = ?", (term_id,))
@@ -3031,7 +3690,7 @@ class AcademicYearTerm(QWidget):
                         "Any students previously assigned to this term now have no term assigned.")
                     
                     # Refresh the table
-                    self.Load_Data()
+                    self.load_terms_for_year()
                     
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Error", f"An error occurred while deleting the term: {str(e)}")
@@ -3156,7 +3815,7 @@ class Class(QWidget):
     def addClass(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Class")
-        dialog.setFixedSize(350, 220)
+        dialog.setFixedSize(350, 250)
         dialog.setStyleSheet("""
             QDialog {
             background-color: #FFFFFF;
@@ -3260,86 +3919,131 @@ class Class(QWidget):
         dialog.exec_()
 
     def editClass(self, class_id):
-        with get_db_connection() as (conn, c):
-            c.execute("SELECT ClassName, AcademicYear FROM Class WHERE ClassID=?", (class_id,))
-            result = c.fetchone()
-        if not result:
-            QMessageBox.warning(self, "Error", "Could not find the selected class in the database.")
+        try:
+            with get_db_connection() as (conn, c):
+                # Get current class details
+                c.execute("SELECT ClassName, AcademicYear FROM Class WHERE ClassID=?", (class_id,))
+                result = c.fetchone()
+                
+                if not result:
+                    QMessageBox.warning(self, "Error", "Could not find the selected class in the database.")
+                    return
+                
+                class_name, current_year_id = result
+                
+                # Check if class has students enrolled
+                c.execute("SELECT COUNT(*) FROM StudentTerm WHERE ClassID = ?", (class_id,))
+                student_count = c.fetchone()[0]
+                has_students = student_count > 0
+                
+                # Get all academic years for dropdown
+                c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
+                years = c.fetchall()
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load class data: {str(e)}")
             return
-        class_name, year_id = result
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit Class")
-        dialog.setFixedSize(350, 220)
+        dialog.setFixedSize(400, 300)
         dialog.setStyleSheet("""
             QDialog {
-            background-color: #FFFFFF;
-            border-radius: 10px;
+                background-color: #FFFFFF;
+                border-radius: 10px;
             }
             QLabel {
-            font-size: 16px;
-            color: #2D3748;
+                font-size: 14px;
+                color: #2D3748;
             }
             QComboBox, QLineEdit {
-            background-color: #F7FAFC;
-            border: 1px solid #E0E3E7;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 15px;
+                background-color: #F7FAFC;
+                border: 1px solid #E0E3E7;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
             }
             QPushButton {
-            background-color: #4299E1;
-            color: white;
-            border: none;
-            padding: 8px 18px;
-            border-radius: 5px;
-            font-size: 15px;
+                background-color: #4299E1;
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                border-radius: 5px;
+                font-size: 14px;
             }
             QPushButton#cancel {
-            background-color: #EDF2F7;
-            color: #2D3748;
-            border: 1px solid #E0E3E7;
+                background-color: #EDF2F7;
+                color: #2D3748;
+                border: 1px solid #E0E3E7;
             }
             QPushButton:hover {
-            background-color: #3182CE;
+                background-color: #3182CE;
             }
             QPushButton#cancel:hover {
-            background-color: #E2E8F0;
+                background-color: #E2E8F0;
             }
             QLabel#error {
-            color: #E53E3E;
-            font-size: 13px;
+                color: #E53E3E;
+                font-size: 13px;
+            }
+            QLabel#warning {
+                color: #D69E2E;
+                font-size: 12px;
             }
         """)
+        
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(8)
 
-        # Academic Year
-        year_label = QLabel("Academic Year")
-        layout.addWidget(year_label)
-        year_combo = QComboBox()
-        with get_db_connection() as (conn, c):
-            c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
-            years = c.fetchall()
-        for y in years:
-            year_combo.addItem(y[1], y[0])
-        idx = [y[0] for y in years].index(year_id) if year_id in [y[0] for y in years] else 0
-        year_combo.setCurrentIndex(idx)
-        layout.addWidget(year_combo)
-
-        # Class Name
+        # Class Name (ALWAYS editable)
         class_label = QLabel("Class Name")
         layout.addWidget(class_label)
+        
         class_input = QLineEdit(class_name)
         layout.addWidget(class_input)
+
+        # Academic Year 
+        year_label = QLabel("Academic Year")
+        layout.addWidget(year_label)
+        
+        year_combo = QComboBox()
+        
+        # Populate academic years
+        for year_id, year_name in years:
+            year_combo.addItem(year_name, year_id)
+        
+        # Set current year
+        for i in range(year_combo.count()):
+            if year_combo.itemData(i) == current_year_id:
+                year_combo.setCurrentIndex(i)
+                break
+        
+        # Disable year combo if class has students
+        if has_students:
+            year_combo.setEnabled(False)
+            year_combo.setStyleSheet("""
+                QComboBox {
+                    background-color: #EDF2F7;
+                    color: #718096;
+                }
+            """)
+            
+            # Add warning message
+            warning_label = QLabel(f"⚠️ Academic year cannot be changed ({student_count} student(s) enrolled)")
+            warning_label.setObjectName("warning")
+            layout.addWidget(warning_label)
+        
+        layout.addWidget(year_combo)
 
         error_label = QLabel("")
         error_label.setObjectName("error")
         layout.addWidget(error_label)
 
+        # Button layout
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        save_btn = QPushButton("Save")
+        save_btn = QPushButton("Save Changes")
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setObjectName("cancel")
         btn_layout.addWidget(save_btn)
@@ -3347,34 +4051,67 @@ class Class(QWidget):
         layout.addLayout(btn_layout)
 
         def save_edit():
-            new_year_id = year_combo.currentData()
+            # Get values from form
             new_class_name = class_input.text().strip()
-            if not new_year_id or not new_class_name:
-                error_label.setText("Year and Class Name are required.")
+            new_year_id = year_combo.currentData()
+            
+            # Clear previous errors
+            error_label.setText("")
+            
+            # Validate inputs
+            if not new_class_name:
+                error_label.setText("Class name is required.")
                 return
-            with get_db_connection() as (conn, c):
-                c.execute(
-                    "SELECT 1 FROM Class WHERE ClassName=? AND AcademicYear=? AND ClassID<>?",
-                    (new_class_name, new_year_id, class_id)
-                )
-                if c.fetchone():
-                    error_label.setText("This class already exists for the selected year.")
-                    return
-                try:
-                    c.execute(
-                        "UPDATE Class SET ClassName=?, AcademicYear=? WHERE ClassID=?",
-                        (new_class_name, new_year_id, class_id)
-                    )
+            
+            if not new_year_id:
+                error_label.setText("Academic year is required.")
+                return
+            
+            # Check year change restriction
+            if has_students and new_year_id != current_year_id:
+                error_label.setText("Cannot change academic year because students are enrolled in this class.")
+                return
+            
+            # Check for duplicate class name in the SAME academic year
+            try:
+                with get_db_connection() as (conn, c):
+                    # Query: Check if another class with same name exists in the same year
+                    c.execute("""
+                        SELECT COUNT(*) FROM Class 
+                        WHERE ClassName = ? 
+                        AND AcademicYear = ? 
+                        AND ClassID != ?
+                    """, (new_class_name, new_year_id, class_id))
+                    
+                    duplicate_count = c.fetchone()[0]
+                    
+                    if duplicate_count > 0:
+                        error_label.setText(f"A class named '{new_class_name}' already exists in this academic year.")
+                        return
+                    
+                    # Update the class
+                    c.execute("""
+                        UPDATE Class 
+                        SET ClassName = ?, AcademicYear = ? 
+                        WHERE ClassID = ?
+                    """, (new_class_name, new_year_id, class_id))
+                    
                     conn.commit()
+                    
+                    # Success
                     dialog.accept()
-                    QMessageBox.information(self, "Success", f"Class updated successfully.")
+                    QMessageBox.information(self, "Success", "Class updated successfully.")
                     self.Load_Data()
-                except Exception as e:
-                    error_label.setText("Error updating class.")
+                    
+            except sqlite3.Error as e:
+                error_label.setText(f"Database error: {str(e)}")
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
 
         save_btn.clicked.connect(save_edit)
         cancel_btn.clicked.connect(dialog.reject)
-        dialog.exec_()
+        
+        dialog.exec_() 
 
     def deleteClass(self, class_id):
         # Check for child relations (e.g., students assigned to this class)
@@ -3462,10 +4199,10 @@ class FeesManagementPage(QWidget):
         filter_layout.addStretch()
         add_btn = QPushButton("Add Fee Structure")
         add_btn.clicked.connect(self.show_add_fee_dialog)
-        import_btn = QPushButton("Import Fees")
+        # import_btn = QPushButton("Import Fees")
         # import_btn.clicked.connect(self.show_import_wizard)
         filter_layout.addWidget(add_btn)
-        filter_layout.addWidget(import_btn)
+        # filter_layout.addWidget(import_btn)
         layout.addLayout(filter_layout)
 
         # Table
@@ -3600,7 +4337,7 @@ class FeesManagementPage(QWidget):
                 # Get current fee data
                 c.execute("""
                     SELECT f.FeesID, f.Class, f.Term, f.Amount, 
-                        c.ClassName, t.TermName, ay.Year,ay.AcademicYearID
+                        c.ClassName, t.TermName, ay.Year, ay.AcademicYearID
                     FROM Fees f
                     JOIN Class c ON f.Class = c.ClassID
                     JOIN Term t ON f.Term = t.TermID
@@ -3609,82 +4346,125 @@ class FeesManagementPage(QWidget):
                 """, (fees_id,))
                 fee_data = c.fetchone()
             
-            if fee_data:
-                dialog = QDialog(self)
-                dialog.setWindowTitle("Edit Fee")
-                dialog.setModal(True)
-                dialog.setMinimumWidth(500)
+            if not fee_data:
+                QMessageBox.warning(self, "Error", "Fee record not found")
+                return
                 
-                layout = QVBoxLayout(dialog)
-                form_layout = QFormLayout()
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Fee")
+            dialog.setModal(True)
+            dialog.setMinimumWidth(500)
+            
+            layout = QVBoxLayout(dialog)
+            form_layout = QFormLayout()
+            
+            # Academic Year (read-only since it's determined by Class)
+            year_label = QLabel(fee_data[6])  # Year from AcademicYear
+            form_layout.addRow("Academic Year:", year_label)
+            
+            # Class selection
+            class_combo = QComboBox()
+            class_combo.addItem("Select Class", None)
+            
+            # Term selection
+            term_combo = QComboBox()
+            term_combo.addItem("Select Term", None)
+            
+            # Amount input
+            amount_edit = QLineEdit(str(fee_data[3]))
+            amount_edit.setValidator(QDoubleValidator(0, 1000000, 2))  # Allow decimal values
+            
+            # Load classes and terms
+            with get_db_connection() as (conn, c):
+                # Load classes
+                c.execute(f"SELECT ClassID, ClassName FROM Class WHERE AcademicYear ={fee_data[7]} ORDER BY ClassName")
+                classes = c.fetchall()
+                for class_id, class_name in classes:
+                    class_combo.addItem(class_name, class_id)
                 
-                # Academic Year (read-only since it's determined by Class)
-                year_label = QLabel(fee_data[6])  # Year from AcademicYear
-                form_layout.addRow("Academic Year:", year_label)
+                # Load terms
+                c.execute(f"SELECT TermID, TermName FROM Term WHERE AcademicYear ={fee_data[7]} ORDER BY TermName")
+                terms = c.fetchall()
+                for term_id, term_name in terms:
+                    term_combo.addItem(term_name, term_id)
+            
+            # Set current values
+            current_class_index = class_combo.findData(fee_data[1])
+            current_term_index = term_combo.findData(fee_data[2])
+            
+            if current_class_index >= 0:
+                class_combo.setCurrentIndex(current_class_index)
+            if current_term_index >= 0:
+                term_combo.setCurrentIndex(current_term_index)
+            
+            form_layout.addRow("Class:", class_combo)
+            form_layout.addRow("Term:", term_combo)
+            form_layout.addRow("Amount:", amount_edit)
+            
+            layout.addLayout(form_layout)
+            
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+            
+            if dialog.exec_() == QDialog.Accepted:
+                # Validation (similar to save_fee)
+                class_id = class_combo.currentData()
+                term_id = term_combo.currentData()
+                amount_str = amount_edit.text().strip()
                 
-                # Class selection
-                class_combo = QComboBox()
-                class_combo.addItem("Select Class", None)
+                # Check required fields
+                if not all([class_id, term_id, amount_str]):
+                    QMessageBox.warning(dialog, "Error", "All fields are required")
+                    return
                 
-                # Term selection
-                term_combo = QComboBox()
-                term_combo.addItem("Select Term", None)
+                # Validate amount is a valid number
+                try:
+                    amount = float(amount_str)
+                    if amount <= 0:
+                        QMessageBox.warning(dialog, "Error", "Amount must be greater than 0")
+                        return
+                except ValueError:
+                    QMessageBox.warning(dialog, "Error", "Amount must be a valid number")
+                    return
                 
-                # Amount input
-                amount_edit = QLineEdit(str(fee_data[3]))
-                amount_edit.setValidator(QDoubleValidator(0, 1000000, 2))  # Allow decimal values
-                
-                # Load classes and terms
-                with get_db_connection() as (conn, c):
-                    # Load classes
-                    c.execute(f"SELECT ClassID, ClassName FROM Class  WHERE AcademicYear ={fee_data[7]} ORDER BY ClassName")
-                    classes = c.fetchall()
-                    for class_id, class_name in classes:
-                        class_combo.addItem(class_name, class_id)
-                    
-                    # Load terms
-                    c.execute(f"SELECT TermID, TermName FROM Term  WHERE AcademicYear ={fee_data[7]} ORDER BY TermName")
-                    terms = c.fetchall()
-                    for term_id, term_name in terms:
-                        term_combo.addItem(term_name, term_id)
-                
-                # Set current values
-                class_combo.setCurrentIndex(class_combo.findData(fee_data[1]))
-                term_combo.setCurrentIndex(term_combo.findData(fee_data[2]))
-                
-                form_layout.addRow("Class:", class_combo)
-                form_layout.addRow("Term:", term_combo)
-                form_layout.addRow("Amount:", amount_edit)
-                
-                layout.addLayout(form_layout)
-                
-                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                button_box.accepted.connect(dialog.accept)
-                button_box.rejected.connect(dialog.reject)
-                layout.addWidget(button_box)
-                
-                if dialog.exec_() == QDialog.Accepted:
-                    try:
-                        with get_db_connection() as (conn, c):
-                            c.execute("""
-                                UPDATE Fees 
-                                SET Class = ?, Term = ?, Amount = ?
-                                WHERE FeesID = ?
-                            """, (
-                                class_combo.currentData(),
-                                term_combo.currentData(),
-                                float(amount_edit.text()),
-                                fees_id
-                            ))
-                            conn.commit()
-                            QMessageBox.information(self, "Success", "Fee updated successfully")
-                            self.load_data()
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Failed to update fee: {str(e)}")
+                # Check for duplicate fee structure (excluding current record)
+                try:
+                    with get_db_connection() as (conn, c):
+                        c.execute("""
+                            SELECT COUNT(*) FROM Fees 
+                            WHERE Class = ? AND Term = ? AND FeesID != ?
+                        """, (str(class_id), str(term_id), fees_id))
+                        
+                        if c.fetchone()[0] > 0:
+                            QMessageBox.warning(dialog, "Error", 
+                                            "Duplicate fee structure for this class and term")
+                            return
+                        
+                        # Update the fee record
+                        c.execute("""
+                            UPDATE Fees 
+                            SET Class = ?, Term = ?, Amount = ?
+                            WHERE FeesID = ?
+                        """, (
+                            str(class_id),
+                            str(term_id),
+                            amount,
+                            fees_id
+                        ))
+                        conn.commit()
+                        QMessageBox.information(dialog, "Success", "Fee updated successfully")
+                        self.load_data()
+                        
+                except sqlite3.Error as e:
+                    QMessageBox.critical(dialog, "Database Error", f"Failed to update fee: {str(e)}")
+                except Exception as e:
+                    QMessageBox.critical(dialog, "Error", f"An error occurred: {str(e)}")
                         
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Database Error", f"Failed to load fee data: {str(e)}")
-
+    
     def delete_fee(self, fees_id):
         """Delete fee record with confirmation"""
         reply = QMessageBox.question(
@@ -9254,7 +10034,7 @@ class Reports(QWidget):
     def __init__(self):
         super().__init__()
         self.finance_service = FinanceService()
-        self.report_generator = ReportGenerator()
+        self.report_generator = ReportGeneratorEngine()
         self.current_term_data = {}
         self.init_ui()
         self.load_terms()
@@ -9483,7 +10263,7 @@ class FinancialReportDialog(QDialog):
         self.setWindowTitle("Term Financial Summary Report")
         self.setFixedSize(600, 500)
         self.finance_service = FinanceService()
-        self.report_generator = ReportGenerator()
+        self.report_generator = ReportGeneratorEngine()
         self.current_term_data = {}
         self.init_ui()
         self.load_terms()
@@ -9769,8 +10549,6 @@ class About(QWidget):
 
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
-
-             
 
 def button(text, button_type="primary", size="md", icon_path=None, icon_toolTip = None, icon_size=24 ):
     """
@@ -10060,19 +10838,450 @@ def FormStyles():
     """
     return form_css
 
+class FinanceService:
+    def get_term_dates(self, term_id):
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT StartDate, EndDate FROM Term WHERE TermID = ?", (term_id,))
+            return c.fetchone()
+
+    def get_term_fees_summary(self, term_id):
+        """
+        Returns a dictionary with:
+        - expected: Total fees expected for the term
+        - collected: Total fees collected for the term
+        - outstanding: expected - collected
+        """
+        with get_db_connection() as (conn, c):
+            # Total Fees Expected
+            c.execute("""
+                SELECT SUM(
+                    (f.Amount * (st.PayRate / 100.0))
+                ) as TotalExpected
+                FROM StudentTerm st
+                JOIN Fees f ON st.ClassID = f.Class AND st.TermID = f.Term
+                WHERE st.TermID = ?
+            """, (term_id,))
+            total_expected = c.fetchone()['TotalExpected'] or 0.0
+
+            # Total Fees Collected
+            c.execute("""
+                SELECT SUM(AmountPaid) 
+                FROM FeesPayment fp
+                JOIN StudentTerm st ON fp.StudentTermID = st.StudentTermID
+                WHERE st.TermID = ?
+            """, (term_id,))
+            total_collected = c.fetchone()[0] or 0.0
+            
+            outstanding = max(0, total_expected - total_collected)
+            
+            return {
+                "expected": total_expected,
+                "collected": total_collected,
+                "outstanding": outstanding
+            }
+
+    def get_term_expenses(self, start_date, end_date):
+        """Returns total expenses between start and end date."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT SUM(ExpAmount) 
+                FROM Expenses 
+                WHERE ExpDate BETWEEN ? AND ?
+            """, (start_date, end_date))
+            return c.fetchone()[0] or 0.0
+
+    def get_term_supplies(self, start_date, end_date):
+        """Returns total supplies cost (Type='In') between start and end date."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT SUM(Price) 
+                FROM SuppliesInventory 
+                WHERE Type = 'In' AND Date BETWEEN ? AND ?
+            """, (start_date, end_date))
+            return c.fetchone()[0] or 0.0
+
+    def get_expenses_by_category(self, start_date, end_date, limit=5):
+        """Returns list of (CategoryName, Amount) tuples."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT c.CatName, SUM(e.ExpAmount)
+                FROM Expenses e
+                JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE e.ExpDate BETWEEN ? AND ?
+                GROUP BY c.CatName
+                ORDER BY SUM(e.ExpAmount) DESC
+                LIMIT ?
+            """, (start_date, end_date, limit))
+            data = c.fetchall()
+            return [(row[0], row[1]) for row in data]
+
+    def get_expenses_by_category_with_percentage(self, start_date, end_date):
+        """Returns list of (CategoryName, Amount, Percentage) tuples."""
+        with get_db_connection() as (conn, c):
+            # First get total for percentage calculation
+            c.execute("""
+                SELECT SUM(ExpAmount) 
+                FROM Expenses 
+                WHERE ExpDate BETWEEN ? AND ?
+            """, (start_date, end_date))
+            total_expenses = c.fetchone()[0] or 0.0
+
+            if total_expenses == 0:
+                return []
+
+            c.execute("""
+                SELECT c.CatName, SUM(e.ExpAmount) as Amount
+                FROM Expenses e
+                JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE e.ExpDate BETWEEN ? AND ?
+                GROUP BY c.CatName
+                ORDER BY Amount DESC
+            """, (start_date, end_date))
+            data = c.fetchall()
+            return [(row['CatName'], row['Amount'], (row['Amount']/total_expenses)*100) for row in data]
+
+    def get_outstanding_fees_by_class(self, term_id, limit=10):
+        """Returns list of dictionaries with class_name, expected, collected, balance, percentage."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT cl.ClassName, 
+                       SUM(f.Amount * (st.PayRate / 100.0)) as Expected,
+                       (SELECT SUM(AmountPaid) 
+                        FROM FeesPayment fp 
+                        WHERE fp.StudentTermID IN (
+                            SELECT StudentTermID FROM StudentTerm WHERE ClassID = cl.ClassID AND TermID = ?
+                        )
+                       ) as Collected
+                FROM StudentTerm st
+                JOIN Class cl ON st.ClassID = cl.ClassID
+                JOIN Fees f ON st.ClassID = f.Class AND st.TermID = f.Term
+                WHERE st.TermID = ?
+                GROUP BY cl.ClassName
+                ORDER BY (Expected - COALESCE(Collected, 0)) DESC
+                LIMIT ?
+            """, (term_id, term_id, limit))
+            
+            rows = c.fetchall()
+            result = []
+            for row in rows:
+                expected = row['Expected'] or 0
+                collected = row['Collected'] or 0
+                balance = expected - collected
+                if balance > 0:
+                    percent = (balance / expected * 100) if expected > 0 else 0
+                    result.append({
+                        "class_name": row['ClassName'],
+                        "expected": expected,
+                        "collected": collected,
+                        "balance": balance,
+                        "percentage": percent
+                    })
+            return result
+
+    def get_term_fees_breakdown_by_class(self, term_id):
+        """Returns list of dictionaries with class_name, expected, collected, balance, percentage."""
+        return self.get_outstanding_fees_by_class(term_id, limit=-1)
+
+    def get_top_supplies(self, start_date, end_date, limit=5):
+        """Returns list of (Name, Quantity, Cost) tuples."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT s.Name, SUM(si.Quantity), SUM(si.Price)
+                FROM SuppliesInventory si
+                JOIN Supplies s ON si.Supplies_ID = s.SuppliesID
+                WHERE si.Type = 'In' AND si.Date BETWEEN ? AND ?
+                GROUP BY s.Name
+                ORDER BY SUM(si.Price) DESC
+                LIMIT ?
+            """, (start_date, end_date, limit))
+            
+            data = c.fetchall()
+            return [(row[0], row[1], row[2]) for row in data]
+
+    def get_supplies_by_category(self, start_date, end_date):
+        """Returns list of (CategoryName, Amount, Percentage) tuples."""
+        with get_db_connection() as (conn, c):
+            # First get total for percentage calculation
+            c.execute("""
+                SELECT SUM(si.Price)
+                FROM SuppliesInventory si
+                WHERE si.Type = 'In' AND si.Date BETWEEN ? AND ?
+            """, (start_date, end_date))
+            total_supplies = c.fetchone()[0] or 0.0
+
+            if total_supplies == 0:
+                return []
+
+            c.execute("""
+                SELECT c.CatName, SUM(si.Price) as Amount
+                FROM SuppliesInventory si
+                JOIN Supplies s ON si.Supplies_ID = s.SuppliesID
+                JOIN SubCategory sc ON s.Subcategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE si.Type = 'In' AND si.Date BETWEEN ? AND ?
+                GROUP BY c.CatName
+                ORDER BY Amount DESC
+            """, (start_date, end_date))
+            
+            data = c.fetchall()
+            return [(row['CatName'], row['Amount'], (row['Amount']/total_supplies)*100) for row in data]
+
+    def get_supplies_details(self, start_date, end_date):
+        """Returns list of dictionaries for detailed supplies report."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT si.Date, c.CatName, s.Name, si.Quantity, si.Price
+                FROM SuppliesInventory si
+                JOIN Supplies s ON si.Supplies_ID = s.SuppliesID
+                JOIN SubCategory sc ON s.Subcategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE si.Type = 'In' AND si.Date BETWEEN ? AND ?
+                ORDER BY si.Date DESC
+            """, (start_date, end_date))
+            
+            rows = c.fetchall()
+            return [{
+                'date': row['Date'],
+                'category': row['CatName'],
+                'item': row['Name'],
+                'quantity': row['Quantity'],
+                'cost': row['Price']
+            } for row in rows]
+
+    def get_expenses_details(self, start_date, end_date):
+        """Returns list of dictionaries for detailed expenses report."""
+        with get_db_connection() as (conn, c):
+            c.execute("""
+                SELECT e.ExpDate, c.CatName, e.ExpDescription, e.ExpAmount
+                FROM Expenses e
+                JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
+                JOIN Category c ON sc.CategoryID = c.CatID
+                WHERE e.ExpDate BETWEEN ? AND ?
+                ORDER BY e.ExpDate DESC
+            """, (start_date, end_date))
+            
+            rows = c.fetchall()
+            return [{
+                'date': row['ExpDate'],
+                'category': row['CatName'],
+                'description': row['ExpDescription'],
+                'amount': row['ExpAmount']
+            } for row in rows]
+
+    def get_all_terms(self):
+        """Returns list of all terms ordered by ID desc."""
+        with get_db_connection() as (conn, c):
+            c.execute("""SELECT TermID, TermName,Year FROM Term JOIN
+                        AcademicYear WHERE 
+                        Term.AcademicYear= AcademicYear.AcademicYearID ORDER BY TermID DESC """)
+            return c.fetchall()
+
+class ReportGeneratorEngine:
+    def __init__(self, school_name="Pinnacle School"):
+        self.school_name = school_name
+
+    def generate_pdf(self, filepath, term_name, start_date, end_date, fees_summary, fees_breakdown, supplies_total, supplies_breakdown, supplies_details, expenses_total, expenses_breakdown, expenses_details):
+        doc = SimpleDocTemplate(filepath, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # Styles
+        title_style = styles['Title']
+        heading_style = styles['Heading2']
+        normal_style = styles['Normal']
+        
+        # --- Title Page / Header ---
+        story.append(Paragraph(f"{self.school_name} - Financial Report", title_style))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph(f"<b>Term:</b> {term_name}", normal_style))
+        story.append(Paragraph(f"<b>Period:</b> {start_date} to {end_date}", normal_style))
+        story.append(Spacer(1, 24))
+
+        # --- 1. FEES SECTION ---
+        story.append(Paragraph("1. Fees Overview", heading_style))
+        
+        # Explanation
+        collected_pct = (fees_summary['collected'] / fees_summary['expected'] * 100) if fees_summary['expected'] > 0 else 0
+        outstanding_pct = (fees_summary['outstanding'] / fees_summary['expected'] * 100) if fees_summary['expected'] > 0 else 0
+        
+        explanation = f"Out of the expected fees of <b>{fees_summary['expected']:,.2f}</b> for this term, " \
+                      f"<b>{fees_summary['collected']:,.2f} ({collected_pct:.1f}%)</b> has been collected, " \
+                      f"leaving <b>{fees_summary['outstanding']:,.2f} ({outstanding_pct:.1f}%)</b> outstanding."
+        story.append(Paragraph(explanation, normal_style))
+        story.append(Spacer(1, 12))
+
+        # Fees Breakdown Table
+        if fees_breakdown:
+            data = [['Class', 'Expected', 'Collected', 'Outstanding', '% Out']]
+            for item in fees_breakdown:
+                data.append([
+                    item['class_name'],
+                    f"{item['expected']:,.2f}", 
+                    f"{item['collected']:,.2f}",
+                    f"{item['balance']:,.2f}",
+                    f"{item['percentage']:.1f}%"
+                ])
+            
+            t = Table(data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch, 1*inch])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(t)
+        story.append(Spacer(1, 24))
+
+        # --- 2. SUPPLIES SECTION ---
+        story.append(Paragraph("2. Supplies Spending", heading_style))
+        
+        # Summary & Explanation
+        story.append(Paragraph(f"<b>Total Spent on Supplies:</b> {supplies_total:,.2f}", normal_style))
+        
+        if supplies_breakdown:
+            top_cat = supplies_breakdown[0]
+            explanation = f"Most supply spending this term was on <b>{top_cat[0]} ({top_cat[2]:.1f}%)</b>."
+            if len(supplies_breakdown) > 1:
+                second_cat = supplies_breakdown[1]
+                explanation += f" Followed by <b>{second_cat[0]} ({second_cat[2]:.1f}%)</b>."
+            story.append(Paragraph(explanation, normal_style))
+        story.append(Spacer(1, 12))
+
+        # Supplies Breakdown Table
+        if supplies_breakdown:
+            data = [['Category', 'Amount', '% of Total']]
+            for item in supplies_breakdown:
+                data.append([
+                    item[0],
+                    f"{item[1]:,.2f}",
+                    f"{item[2]:.1f}%"
+                ])
+            
+            t = Table(data, colWidths=[3*inch, 2*inch, 1.5*inch])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(t)
+        story.append(Spacer(1, 24))
+
+        # --- 3. EXPENSES SECTION ---
+        story.append(Paragraph("3. Operational Expenses", heading_style))
+        
+        # Summary & Explanation
+        story.append(Paragraph(f"<b>Total Expenses:</b> {expenses_total:,.2f}", normal_style))
+        
+        if expenses_breakdown:
+            top_cat = expenses_breakdown[0]
+            explanation = f"Operational expenses were mainly driven by <b>{top_cat[0]}</b>, which accounted for <b>{top_cat[2]:.1f}%</b> of total expenses."
+            story.append(Paragraph(explanation, normal_style))
+        story.append(Spacer(1, 12))
+
+        # Expenses Breakdown Table
+        if expenses_breakdown:
+            data = [['Category', 'Amount', '% of Total']]
+            for item in expenses_breakdown:
+                data.append([
+                    item[0],
+                    f"{item[1]:,.2f}",
+                    f"{item[2]:.1f}%"
+                ])
+            
+            t = Table(data, colWidths=[3*inch, 2*inch, 1.5*inch])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(t)
+        
+        # Disclaimer Footer
+        story.append(Spacer(1, 36))
+        disclaimer_style = ParagraphStyle('Disclaimer', parent=styles['Normal'], textColor=colors.red, fontSize=9)
+        story.append(Paragraph("Note: This report reflects only system-recorded data.", disclaimer_style))
+
+        doc.build(story)
+
+    def generate_excel(self, filepath, term_name, start_date, end_date, fees_summary, fees_breakdown, supplies_total, supplies_breakdown, supplies_details, expenses_total, expenses_breakdown, expenses_details):
+        with pd.ExcelWriter(filepath, engine='xlsxwriter') as writer:
+            workbook = writer.book
+            money_fmt = workbook.add_format({'num_format': '#,##0.00'})
+            
+            # --- 1. Fees Summary Sheet ---
+            fees_data = {
+                'Metric': ['Expected Fees', 'Collected Fees', 'Outstanding Fees', 'Collection Rate'],
+                'Value': [
+                    fees_summary['expected'],
+                    fees_summary['collected'],
+                    fees_summary['outstanding'],
+                    f"{(fees_summary['collected']/fees_summary['expected']*100) if fees_summary['expected'] > 0 else 0:.1f}%"
+                ]
+            }
+            pd.DataFrame(fees_data).to_excel(writer, sheet_name='Fees Summary', index=False)
+            
+            if fees_breakdown:
+                df_fees = pd.DataFrame(fees_breakdown)
+                # Ensure columns exist before selecting
+                cols = ['class_name', 'expected', 'collected', 'balance', 'percentage']
+                # Map to nice names
+                df_fees = df_fees[cols].rename(columns={
+                    'class_name': 'Class',
+                    'expected': 'Expected',
+                    'collected': 'Collected',
+                    'balance': 'Outstanding',
+                    'percentage': '% Outstanding'
+                })
+                df_fees.to_excel(writer, sheet_name='Fees Summary', startrow=6, index=False)
+                
+            worksheet = writer.sheets['Fees Summary']
+            worksheet.set_column('B:B', 20, money_fmt)
+
+            # --- 2. Supplies Sheet ---
+            if supplies_breakdown:
+                df_sup_cat = pd.DataFrame(supplies_breakdown, columns=['Category', 'Amount', 'Percentage'])
+                df_sup_cat.to_excel(writer, sheet_name='Supplies', startrow=0, index=False)
+            
+            if supplies_details:
+                df_sup_det = pd.DataFrame(supplies_details)
+                df_sup_det.to_excel(writer, sheet_name='Supplies', startrow=len(supplies_breakdown) + 5, index=False)
+                
+            worksheet = writer.sheets['Supplies']
+            worksheet.set_column('B:B', 15, money_fmt)
+
+            # --- 3. Expenses Sheet ---
+            if expenses_breakdown:
+                df_exp_cat = pd.DataFrame(expenses_breakdown, columns=['Category', 'Amount', 'Percentage'])
+                df_exp_cat.to_excel(writer, sheet_name='Expenses', startrow=0, index=False)
+            
+            if expenses_details:
+                df_exp_det = pd.DataFrame(expenses_details)
+                df_exp_det.to_excel(writer, sheet_name='Expenses', startrow=len(expenses_breakdown) + 5, index=False)
+                
+            worksheet = writer.sheets['Expenses']
+            worksheet.set_column('B:B', 15, money_fmt)
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     initialize_database()
+    # add window icon
+    app.setWindowIcon(QIcon(resource_path("icons/app-icon.ico")))
     # Load global stylesheet
     try:
-        with open("theme.qss", "r") as f:
+        with open(resource_path("theme.qss"), "r") as f:
             stylesheet = f.read()
             app.setStyleSheet(stylesheet)
     except FileNotFoundError:
         QMessageBox.warning("Warning: theme.qss not found. Running without global stylesheet.")
 
     window = Window()
-    print("Application opened.")
     window.show()
     sys.exit(app.exec_())
     
