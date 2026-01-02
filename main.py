@@ -1516,14 +1516,12 @@ class Student_ImportWizard(QWizard):
         self.setStyleSheet(light_style)
         
         # Initialize variables
-        self.mode = None
+        self.mode = 1
         self.excel_file = None
         self.term_id = None
         self.class_id = None
         self.academic_year_id = None
         self.data = None
-        self.generate_ids = True  # Default to True
-        self.starting_sequence = 1
         
         # Add pages
         self.intro_page_id = self.addPage(self.create_intro_page())
@@ -1548,8 +1546,6 @@ class Student_ImportWizard(QWizard):
         desc_label.setWordWrap(True)
         layout.addWidget(desc_label)
         
-        # Mode selection
-        self.mode_group = QButtonGroup()
         
         # Mode 1: New students with enrollment
         mode1_frame = QFrame()
@@ -1572,32 +1568,9 @@ class Student_ImportWizard(QWizard):
         mode1_layout.addWidget(self.radio_new_students)
         mode1_layout.addWidget(mode1_desc)
         
-        # Mode 2: Enrollment only
-        mode2_frame = QFrame()
-        mode2_frame.setFrameStyle(QFrame.Box | QFrame.Raised)
-        mode2_frame.setStyleSheet("""
-            QFrame {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 5px;
-                padding: 10px;
-                margin: 5px;
-            }
-        """)
-        mode2_layout = QVBoxLayout(mode2_frame)
-        self.radio_enrollment_only = QRadioButton("Enrollment only (existing students)")
-        mode2_desc = QLabel("Use this for enrolling existing students in a new term/class.")
-        mode2_desc.setWordWrap(True)
-        mode2_desc.setStyleSheet("color: #666; font-size: 12px; margin-left: 20px;")
-        mode2_layout.addWidget(self.radio_enrollment_only)
-        mode2_layout.addWidget(mode2_desc)
         
-        self.mode_group.addButton(self.radio_new_students, 1)
-        self.mode_group.addButton(self.radio_enrollment_only, 2)
-        
+        self.mode = 1
         layout.addWidget(mode1_frame)
-        layout.addWidget(mode2_frame)
-        layout.addStretch()
         
         page.setLayout(layout)
         return page
@@ -1782,25 +1755,11 @@ class Student_ImportWizard(QWizard):
         """)
         options_layout = QVBoxLayout(options_frame)
         
-        # Checkbox for ID generation
-        self.generate_ids_checkbox = QCheckBox("Generate Student IDs automatically")
-        self.generate_ids_checkbox.setChecked(True)
-        self.generate_ids_checkbox.stateChanged.connect(self.on_generate_ids_changed)
-        
         # Format explanation
         format_label = QLabel("Format: AcademicYear-0001 (e.g., 2024-0001)")
         format_label.setStyleSheet("color: #666; font-size: 12px; margin-left: 20px;")
         
-        # Starting sequence
-        seq_layout = QHBoxLayout()
-        seq_label = QLabel("Starting sequence number:")
-        self.start_sequence_spin = QSpinBox()
-        self.start_sequence_spin.setRange(1, 9999)
-        self.start_sequence_spin.setValue(1)
-        self.start_sequence_spin.valueChanged.connect(self.update_id_preview)
-        seq_layout.addWidget(seq_label)
-        seq_layout.addWidget(self.start_sequence_spin)
-        seq_layout.addStretch()
+       
         
         # Last ID preview
         self.last_id_label = QLabel("Select an academic year to see ID preview")
@@ -1815,9 +1774,7 @@ class Student_ImportWizard(QWizard):
             }
         """)
         
-        options_layout.addWidget(self.generate_ids_checkbox)
         options_layout.addWidget(format_label)
-        options_layout.addLayout(seq_layout)
         options_layout.addWidget(self.last_id_label)
         
         layout.addWidget(options_frame)
@@ -1902,13 +1859,6 @@ class Student_ImportWizard(QWizard):
         """Update the ID preview based on current settings"""
         self.id_preview_table.clearContents()
         
-        if not self.generate_ids:
-            self.last_id_label.setText("ID generation is disabled")
-            self.id_preview_table.setRowCount(1)
-            self.id_preview_table.setItem(0, 0, QTableWidgetItem("1"))
-            self.id_preview_table.setItem(0, 1, QTableWidgetItem("Will use StudentID from Excel"))
-            return
-        
         if not self.academic_year_id:
             self.last_id_label.setText("Please select an academic year first")
             self.id_preview_table.setRowCount(1)
@@ -1929,10 +1879,8 @@ class Student_ImportWizard(QWizard):
                 # Get existing highest sequence
                 existing_max = self.get_existing_sequence(self.academic_year_id)
                 
-                # Get starting sequence (use higher of existing+1 or user specified)
-                user_start = self.start_sequence_spin.value()
-                actual_start = max(existing_max + 1, user_start)
-                
+                actual_start = existing_max + 1
+
                 # Update preview
                 self.id_preview_table.setRowCount(5)
                 
@@ -2025,6 +1973,9 @@ class Student_ImportWizard(QWizard):
         elif page_id == self.id_generation_page_id:
             self.update_id_preview()
 
+    def normalize_column(self, col):
+        return col.lower().replace(" ", "").replace("_", "")
+    
     def load_data(self):
         if not self.excel_file:
                 QMessageBox.warning(self, "Error", "No Excel file selected.")
@@ -2034,8 +1985,25 @@ class Student_ImportWizard(QWizard):
             self.data = pd.read_excel(self.excel_file)
             
             # Fix column names - replace spaces with underscores
-            self.data.columns = [col.strip().replace(' ', '_') for col in self.data.columns]
-            
+            normalized_map = {}
+            for col in self.data.columns:
+                key = self.normalize_column(col)
+                normalized_map[key] = col
+
+            COLUMN_ALIASES = {
+                "studentname": "Student_Name",
+                "names": "Student_Name",
+                "feepayer": "FeePayer",
+                "feepayername": "FeePayer",
+                "payrate": "PayRate",
+                "parentname": "Parent_Name",
+                "parentcontact": "Parent_Contact",
+            }
+
+            for norm, target in COLUMN_ALIASES.items():
+                if norm in normalized_map:
+                    self.data.rename(columns={normalized_map[norm]: target}, inplace=True)
+
             # Handle "Parent Contact2" -> "Parent_Contact2"
             if 'Parent_Contact2' in self.data.columns:
                 # Already correct
@@ -2043,8 +2011,6 @@ class Student_ImportWizard(QWizard):
             elif 'Parent_Contact_2' in self.data.columns:
                 self.data.rename(columns={'Parent_Contact_2': 'Parent_Contact2'}, inplace=True)
             
-            # Check mode
-            self.mode = self.mode_group.checkedId()
             
             # For new students mode
             if self.mode == 1:
@@ -2095,58 +2061,6 @@ class Student_ImportWizard(QWizard):
                     self.data[col] = self.data[col].str.strip()
                     # Replace 'nan' string with empty string
                     self.data.loc[self.data[col] == 'nan', col] = ''
-                
-                # Generate preview StudentIDs if needed
-                if self.generate_ids and self.academic_year_id:
-                    with get_db_connection() as (conn, c):
-                        c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (self.academic_year_id,))
-                        year_result = c.fetchone()
-                        if year_result:
-                            year_name = year_result[0]
-                            
-                            # Get starting sequence
-                            existing_max = self.get_existing_sequence(self.academic_year_id)
-                            user_start = self.start_sequence_spin.value()
-                            actual_start = max(existing_max + 1, user_start)
-                            
-                            # Generate IDs for preview
-                            generated_ids = []
-                            for i in range(len(self.data)):
-                                student_id = f"{year_name}-{(actual_start + i):04d}"
-                                generated_ids.append(student_id)
-                            
-                            # Add to DataFrame for display
-                            self.data['StudentID'] = generated_ids
-                            # Move StudentID to first column
-                            cols = ['StudentID'] + [col for col in self.data.columns if col != 'StudentID']
-                            self.data = self.data[cols]
-                
-                # If not generating IDs and StudentID column exists, clean it
-                elif 'StudentID' in self.data.columns:
-                    # Ensure it's string type first
-                    self.data['StudentID'] = self.data['StudentID'].astype(str)
-                    # Then use .str methods
-                    self.data['StudentID'] = self.data['StudentID'].str.strip()
-                    # Replace 'nan' with empty string
-                    self.data.loc[self.data['StudentID'] == 'nan', 'StudentID'] = ''
-                    # Move StudentID to first column
-                    cols = ['StudentID'] + [col for col in self.data.columns if col != 'StudentID']
-                    self.data = self.data[cols]
-            
-            elif self.mode == 2:  # Enrollment only
-                if 'StudentID' not in self.data.columns:
-                    raise ValueError("Missing 'StudentID' column for enrollment only.")
-                
-                # === FIX 3: Clean StudentID column safely ===
-                # Convert to string first
-                self.data['StudentID'] = self.data['StudentID'].astype(str)
-                # Then strip
-                self.data['StudentID'] = self.data['StudentID'].str.strip()
-                # Replace 'nan' with empty
-                self.data.loc[self.data['StudentID'] == 'nan', 'StudentID'] = ''
-            
-            else:
-                raise ValueError("No mode selected.")
             
             # Display in table
             model = QStandardItemModel()
@@ -2233,10 +2147,6 @@ class Student_ImportWizard(QWizard):
         <b>Class:</b> {class_text}<br><br>
         """
         
-        if self.mode == 1 and self.generate_ids:
-            summary += f"<b>Student IDs:</b> Will be generated automatically ({year_text.split('-')[0]}-####)<br>"
-        elif self.mode == 1:
-            summary += "<b>Student IDs:</b> Will be taken from Excel file (if present)<br>"
         
         self.import_summary_label.setText(summary)
 
@@ -2280,32 +2190,18 @@ class Student_ImportWizard(QWizard):
                     if year_result:
                         year_name = year_result[0]
                 
-                # Get starting sequence for ID generation
-                starting_sequence = self.start_sequence_spin.value()
-                if self.mode == 1 and year_name:
-                    # Get highest existing sequence
-                    existing_max = self.get_existing_sequence(self.academic_year_id)
-                    actual_start = max(existing_max + 1, starting_sequence)
-                else:
-                    actual_start = starting_sequence
+                
+                existing_max = self.get_existing_sequence(self.academic_year_id)
+                actual_start = existing_max + 1
                 
                 for index, row in self.data.iterrows():
                     excel_row = index + 2  # Excel row number (header is row 1)
                     try:
                         if self.mode == 1:  # New students with enrollment
                             # Generate or get StudentID
-                            if self.generate_ids and year_name:
-                                # Generate new ID
-                                student_id = f"{year_name}-{actual_start:04d}"
-                                actual_start += 1
-                            else:
-                                # Use ID from Excel or generate if missing
-                                student_id = str(row.get('StudentID', '')).strip()
-                                if not student_id and year_name:
-                                    # Fallback generation
-                                    student_id = f"{year_name}-{actual_start:04d}"
-                                    actual_start += 1
-                            
+                            student_id = f"{year_name}-{actual_start:04d}"
+                            actual_start += 1
+
                             if not student_id:
                                 raise ValueError("Could not generate StudentID")
                             
@@ -2365,33 +2261,6 @@ class Student_ImportWizard(QWizard):
                             
                             success_count += 1
                             
-                        elif self.mode == 2:  # Enrollment only
-                            student_id = str(row.get('StudentID', '')).strip()
-                            if not student_id:
-                                raise ValueError("StudentID is required")
-                            
-                            # Check if StudentID exists
-                            c.execute("SELECT StudentID, Student_Name FROM Students WHERE StudentID = ?", (student_id,))
-                            student_data = c.fetchone()
-                            if not student_data:
-                                raise ValueError(f"StudentID '{student_id}' does not exist")
-                            
-                            # Check if already enrolled
-                            c.execute("""
-                                SELECT StudentTermID FROM StudentTerm 
-                                WHERE StudentID = ? AND ClassID = ? AND TermID = ?
-                            """, (student_id, self.class_id, self.term_id))
-                            if c.fetchone():
-                                raise ValueError(f"Already enrolled in this term/class")
-                            
-                            # Insert enrollment
-                            c.execute("""
-                                INSERT INTO StudentTerm (StudentID, ClassID, TermID)
-                                VALUES (?, ?, ?)
-                            """, (student_id, self.class_id, self.term_id))
-                            
-                            success_count += 1
-                        
                     except Exception as e:
                         error_count += 1
                         error_messages.append(f"Row {excel_row}: {str(e)}")
@@ -2431,6 +2300,9 @@ class Student_ImportWizard(QWizard):
             )
         
         super().accept()
+        if self.parent() and hasattr(self.parent(), "load_data"):
+            self.parent().load_data()
+
 ### Student Management End ###
 
 class Window(QMainWindow):
