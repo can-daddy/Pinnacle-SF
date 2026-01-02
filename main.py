@@ -5,8 +5,7 @@ from PyQt5.QtGui import *
 import sqlite3
 import pandas as pd
 import openpyxl
-from openpyxl import Workbook
-from openpyxl.workbook import Workbook as WB
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from xlsxwriter import *
 from contextlib import contextmanager
@@ -573,9 +572,11 @@ class StudentsTab(QWidget):
         add_student_btn = QPushButton("Add Student")
         add_student_btn.clicked.connect(self.show_add_student_dialog)
         Import_btn = QPushButton("Import")
-        Import_btn.clicked.connect(show_import_wizard)
+        export_btn = QPushButton("Export")
+        Import_btn.clicked.connect(show_import_wizard_student)
         filter_layout.addWidget(add_student_btn)
         filter_layout.addWidget(Import_btn)
+        filter_layout.addWidget(export_btn)
         layout.addLayout(filter_layout)
 
         # Table
@@ -591,6 +592,7 @@ class StudentsTab(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
+        export_btn.clicked.connect(lambda: export_table_to_file(table_widget=self.table,title="Student",has_id_column=True))
         layout.addWidget(self.table)
 
         self.results_label = QLabel("0 results")
@@ -746,6 +748,7 @@ class StudentsTab(QWidget):
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action", "Edit", "Delete"])
                     action_combo.setProperty("role", "actions")
+                    action_combo.setProperty("row_id", student_id)
 
 
                     # Connect directly with lambda
@@ -907,9 +910,11 @@ class EnrollmentsTab(QWidget):
         add_enrollment_btn = QPushButton("Add Enrollment")
         add_enrollment_btn.clicked.connect(self.show_add_enrollment_dialog)
         import_btn = QPushButton("Import")
-        import_btn.clicked.connect(show_import_wizard)
+        export_btn = QPushButton("Export")
+        import_btn.clicked.connect(show_import_wizard_student)
         filter_layout.addWidget(add_enrollment_btn)
         filter_layout.addWidget(import_btn)
+        filter_layout.addWidget(export_btn)
         layout.addLayout(filter_layout)
 
         # Table
@@ -925,6 +930,7 @@ class EnrollmentsTab(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
+        export_btn.clicked.connect(lambda: export_table_to_file(table_widget=self.table,title="Enrollments",has_id_column=True))
         layout.addWidget(self.table)
 
         self.results_label = QLabel("0 results")
@@ -1087,6 +1093,7 @@ class EnrollmentsTab(QWidget):
                     # Create action ComboBox with 3 actions
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action","Pay Fee", "Edit", "Delete"])
+                    action_combo.setProperty("row_id", student_term_id)
                     # Connect directly with lambda
                     action_combo.currentIndexChanged.connect(
                         lambda index, stid=student_term_id, sid=student_id, cname=class_name, tname=term_name, cb=action_combo: self.on_enrollment_action_selected(index, stid, sid, cname, tname, cb)
@@ -1456,11 +1463,11 @@ class EnrollmentsTab(QWidget):
         except sqlite3.Error as e:
             QMessageBox.critical(dialog, "Database Error", f"Failed to record payment: {str(e)}")
 
-def show_import_wizard(self):
-    wizard = ImportWizard()
+def show_import_wizard_student(self):
+    wizard = Student_ImportWizard()
     wizard.exec_()
 
-class ImportWizard(QWizard):
+class Student_ImportWizard(QWizard):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Student Import Wizard")
@@ -3733,8 +3740,7 @@ class Class(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
-        export_btn.clicked.connect(lambda: export_table_to_excel(table_widget=self.table, file_path=f"Class_List_{datetime.now().strftime('%Y-%m-%d')}.xlsx"))
-
+        export_btn.clicked.connect(lambda :export_table_to_file(table_widget=self.table,title="Class List",has_id_column=False))
         layout.addWidget(self.table)
 
         self.Load_Data()
@@ -3746,7 +3752,7 @@ class Class(QWidget):
         query = """
             SELECT Class.ClassID, Class.ClassName, AcademicYear.Year
             FROM Class
-            JOIN AcademicYear ON Class.AcademicYear = AcademicYear.AcademicYearID ORDER BY AcademicYear.Year DESC
+            JOIN AcademicYear ON Class.AcademicYear = AcademicYear.AcademicYearID 
         """
         params = ()
         search_text = self.Search_Input.text().strip()
@@ -3759,6 +3765,7 @@ class Class(QWidget):
             params += (f"%{search_text}%",)
         if filters:
             query += " WHERE " + " AND ".join(filters)
+        query += " ORDER BY AcademicYear.Year DESC, Class.ClassName ASC"
         with get_db_connection() as (conn, c):
             c.execute(query, params)
             results = c.fetchall()
@@ -3774,6 +3781,7 @@ class Class(QWidget):
             class_id = row_data[0]
             action_combo = QComboBox()
             action_combo.addItems(["Select Action","Edit","Delete"])
+            action_combo.setProperty("row_id", class_id)
             action_combo.currentIndexChanged.connect(lambda index, r=row, cid=class_id: self.handle_class_action(index, r, cid))
             
             self.table.setCellWidget(row, 2, action_combo)
@@ -4185,10 +4193,10 @@ class FeesManagementPage(QWidget):
         filter_layout.addStretch()
         add_btn = QPushButton("Add Fee Structure")
         add_btn.clicked.connect(self.show_add_fee_dialog)
-        # import_btn = QPushButton("Import Fees")
-        # import_btn.clicked.connect(self.show_import_wizard)
+        import_btn = QPushButton("Import Fees")
+        import_btn.clicked.connect(show_feesImportWizard)
         filter_layout.addWidget(add_btn)
-        # filter_layout.addWidget(import_btn)
+        filter_layout.addWidget(import_btn)
         layout.addLayout(filter_layout)
 
         # Table
@@ -4299,6 +4307,7 @@ class FeesManagementPage(QWidget):
         """Add action ComboBox to table row for fees"""
         action_combo = QComboBox()
         action_combo.addItems(["Select Action","Edit","Delete"])
+        action_combo.setProperty("row_id", fees_id)
         action_combo.currentIndexChanged.connect(lambda index, fid=fees_id: self.handle_fee_action(index, fid, row))
         
         # Set the widget in the Actions column (column 4)
@@ -5967,6 +5976,225 @@ class PaymentHistoryPage(QWidget):
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load payment details: {str(e)}")
+# wizard File
+class PageSelectContext(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Fees Import - Step 1")
+
+        layout = QVBoxLayout(self)
+
+        self.year_combo = QComboBox()
+        self.term_combo = QComboBox()
+
+        layout.addWidget(QLabel("Select Academic Year"))
+        layout.addWidget(self.year_combo)
+
+        layout.addWidget(QLabel("Select Term"))
+        layout.addWidget(self.term_combo)
+
+        self.load_academic_years()
+        self.year_combo.currentIndexChanged.connect(self.load_terms)
+
+    def load_academic_years(self):
+        self.year_combo.clear()
+        with get_db_connection() as (_, c):
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear")
+            for row in c.fetchall():
+                self.year_combo.addItem(row["Year"], row["AcademicYearID"])
+
+        self.load_terms()
+
+    def load_terms(self):
+        self.term_combo.clear()
+        year_id = self.year_combo.currentData()
+        if not year_id:
+            return
+
+        with get_db_connection() as (_, c):
+            c.execute("""
+                SELECT TermID, TermName
+                FROM Term
+                WHERE AcademicYear = ?
+            """, (year_id,))
+            for row in c.fetchall():
+                self.term_combo.addItem(row["TermName"], row["TermID"])
+
+    def validatePage(self):
+        if self.year_combo.currentIndex() < 0 or self.term_combo.currentIndex() < 0:
+            QMessageBox.warning(self, "Missing Data", "Please select Academic Year and Term.")
+            return False
+
+        self.wizard().academic_year_id = self.year_combo.currentData()
+        self.wizard().academic_year_text = self.year_combo.currentText()
+        self.wizard().term_id = self.term_combo.currentData()
+        self.wizard().term_text = self.term_combo.currentText()
+        return True
+
+class PageSelectFile(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Fees Import - Step 2")
+
+        layout = QVBoxLayout(self)
+
+        self.file_label = QLabel("No file selected")
+        self.btn_browse = QPushButton("Browse Excel File")
+
+        layout.addWidget(self.file_label)
+        layout.addWidget(self.btn_browse)
+
+        self.btn_browse.clicked.connect(self.browse_file)
+
+    def browse_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Excel File", "", "Excel Files (*.xlsx)")
+        if path:
+            self.file_label.setText(path)
+            self.file_path = path
+
+    def validatePage(self):
+        if not hasattr(self, "file_path"):
+            QMessageBox.warning(self, "File Missing", "Please select an Excel file.")
+            return False
+
+        valid_rows = []
+        skipped_rows = []
+
+        wb = load_workbook(self.file_path)
+        ws = wb.active
+
+        headers = [cell.value for cell in ws[1]]
+        if "ID" not in headers or "Amount" not in headers:
+            QMessageBox.warning(self, "Invalid File", "Excel must contain ID and Amount columns.")
+            return False
+
+        id_col = headers.index("ID")
+        amt_col = headers.index("Amount")
+
+        with get_db_connection() as (_, c):
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                class_id = row[id_col]
+                amount = row[amt_col]
+
+                if not class_id or not amount or amount <= 0:
+                    skipped_rows.append((row, "Invalid ID or Amount ≤ 0"))
+                    continue
+
+                c.execute("""
+                    SELECT ClassName FROM Class
+                    WHERE ClassID = ? AND AcademicYear = ?
+                """, (class_id, self.wizard().academic_year_id))
+
+                class_row = c.fetchone()
+                if not class_row:
+                    skipped_rows.append((row, "Class not found in selected Academic Year"))
+                    continue
+
+                c.execute("""
+                    SELECT 1 FROM Fees
+                    WHERE Class = ? AND Term = ?
+                """, (class_id, self.wizard().term_id))
+
+                if c.fetchone():
+                    skipped_rows.append((row, "Duplicate fee record"))
+                    continue
+
+                valid_rows.append({
+                    "class_id": class_id,
+                    "class_name": class_row["ClassName"],
+                    "amount": amount
+                })
+
+        if not valid_rows:
+            QMessageBox.warning(self, "No Valid Data", "No valid rows found.")
+            return False
+
+        self.wizard().valid_rows = valid_rows
+        self.wizard().skipped_rows = skipped_rows
+        return True
+
+class PagePreview(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Fees Import - Preview")
+
+        layout = QVBoxLayout(self)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Year", "Term", "Class", "Amount"])
+
+        layout.addWidget(self.table)
+
+    def initializePage(self):
+        data = self.wizard().valid_rows
+        self.table.setRowCount(len(data))
+
+        for row, item in enumerate(data):
+            self.table.setItem(row, 0, QTableWidgetItem(self.wizard().academic_year_text))
+            self.table.setItem(row, 1, QTableWidgetItem(self.wizard().term_text))
+            self.table.setItem(row, 2, QTableWidgetItem(item["class_name"]))
+            self.table.setItem(row, 3, QTableWidgetItem(str(item["amount"])))
+
+class PageFinish(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Fees Import - Result")
+
+        self.label = QLabel()
+        self.label.setWordWrap(True)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.label)
+
+    def initializePage(self):
+        imported = 0
+        skipped = self.wizard().skipped_rows
+        valid_rows = self.wizard().valid_rows
+
+        # Insert valid records
+        with get_db_connection() as (conn, c):
+            for item in valid_rows:
+                c.execute("""
+                    INSERT INTO Fees (Class, Term, Amount)
+                    VALUES (?, ?, ?)
+                """, (
+                    item["class_id"],
+                    self.wizard().term_id,
+                    item["amount"]
+                ))
+                imported += 1
+            conn.commit()
+
+        # Build skipped reasons message
+        skipped_text = ""
+        if skipped:
+            skipped_text += "\nSkipped records details:\n"
+            for row_data, reason in skipped:
+                class_id = row_data[0]  # ID column from Excel
+                skipped_text += f"• Class ID {class_id}: {reason}\n"
+
+        # Final message
+        self.label.setText(
+            f"Import process completed successfully.\n\n"
+            f"Inserted records: {imported}\n"
+            f"Skipped records: {len(skipped)}"
+            f"{skipped_text}"
+        )
+        
+class FeesImportWizard(QWizard):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Fees Structure Import Wizard")
+
+        self.addPage(PageSelectContext())
+        self.addPage(PageSelectFile())
+        self.addPage(PagePreview())
+        self.addPage(PageFinish())
+
+def show_feesImportWizard(self):
+    wizard = FeesImportWizard()
+    wizard.exec_()
 
 #### End Of Fees Management ######
 #### Start Of Uniforms #####
@@ -6514,6 +6742,7 @@ class InventoryManagement(QWidget):
         self.to_date.setDate(QDate.currentDate())
         self.type_combo = QComboBox()
         self.type_combo.addItems(["All Types", "In", "Out"])
+        self.exportBtn = QPushButton("Export")
         filter_layout.addWidget(self.search_input)
         filter_layout.addWidget(QLabel("From Date:"))
         filter_layout.addWidget(self.from_date)
@@ -6532,8 +6761,6 @@ class InventoryManagement(QWidget):
         self.high_in_label.setStyleSheet("font-size: 14px; color: #00C000;")
         self.high_out_label = QLabel("High Qty Out: 0")
         self.high_out_label.setStyleSheet("font-size: 14px; color: #C00000;")
-        print_btn = QPushButton("Print")
-        print_btn.clicked.connect(self.print_table)
         new_inv_btn = QPushButton("New Inventory")
         new_inv_btn.clicked.connect(self.show_add_inventory_dialog)
         metrics_layout.addWidget(self.results_label)
@@ -6541,6 +6768,7 @@ class InventoryManagement(QWidget):
         metrics_layout.addWidget(self.high_out_label)
         metrics_layout.addStretch()
         metrics_layout.addWidget(new_inv_btn)
+        metrics_layout.addWidget(self.exportBtn)
         layout.addLayout(metrics_layout)
 
         # Third row: Table
@@ -6552,6 +6780,7 @@ class InventoryManagement(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
+        self.exportBtn.clicked.connect(lambda: export_table_to_file(table_widget=self.table, title="Uniform_Inventory", has_id_column=True))
         layout.addWidget(self.table)
 
         # Connect filters to load data
@@ -6627,6 +6856,7 @@ class InventoryManagement(QWidget):
         """Add comboBox for actions instead of buttons"""
         action_combo = QComboBox()
         action_combo.addItems(["Select Action", "Edit", "Delete"])
+        action_combo.setProperty("row_id", inv_id)
         
         # Style the comboBox to match your existing design
         action_combo.setFixedWidth(100)
@@ -8143,6 +8373,7 @@ class Supplies(QWidget):
         self.searchbar.textChanged.connect(self.load_data)
         self.addbtn = QPushButton("Add Supply")
         self.addbtn.clicked.connect(self.show_add_supply_dialog)
+        self.exportbtn = QPushButton("Export")
         
         self.header.addWidget(self.Heading)
         self.header.addStretch()
@@ -8162,6 +8393,7 @@ class Supplies(QWidget):
         layout.addWidget(self.table)
         
         self.load_data()
+        self.exportbtn.clicked.connect(lambda:export_table_to_file(table_widget=self.table, parent=self, title=f"Supplies On{datetime.now().strftime('&d/&m/%Y')} ",has_id_column=True))
 
     def load_data(self):
         try:
@@ -8193,6 +8425,7 @@ class Supplies(QWidget):
                     supply_name = row_data[1]
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action", "Manage", "Edit", "Delete"])
+                    action_combo.setProperty("row_id", supply_id)
                     
                     # Direct lambda with handler
                     action_combo.currentIndexChanged.connect(
@@ -8448,9 +8681,11 @@ class SuppliesInventory(QWidget):
         self.searchbar = QLineEdit()
         self.searchbar.setPlaceholderText("Search Supplies Inventory...")
         self.searchbar.textChanged.connect(self.load_data)
+        self.exportBtn = QPushButton("Export")
         self.header.addWidget(self.Heading)
         self.header.addStretch()
         self.header.addWidget(self.searchbar)
+        self.header.addWidget(self.exportBtn)
         layout.addLayout(self.header)
         
         self.table = QTableWidget()
@@ -8463,6 +8698,7 @@ class SuppliesInventory(QWidget):
         self.table.setColumnWidth(7, 180)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.exportBtn.clicked.connect(lambda:export_table_to_file(table_widget=self.table, parent=self, title=f"Supplies Inventory On {datetime.now().strftime('%d/%m/%Y')} ",has_id_column=True))
         layout.addWidget(self.table)
         
         self.load_data()
@@ -8500,6 +8736,7 @@ class SuppliesInventory(QWidget):
                     action_layout.setContentsMargins(5, 2, 5, 2)
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action", "Edit", "Delete"])
+                    action_combo.setProperty("row_id", row_data[0])
                     action_combo.currentIndexChanged.connect(lambda idx, inv_id=row_data[0], supply_id=row_data[1], cb=action_combo: 
                                                      self.on_inventory_action_selected(idx, inv_id, supply_id, cb))
                     action_layout.addWidget(action_combo)
@@ -11254,21 +11491,8 @@ class ReportGeneratorEngine:
             worksheet = writer.sheets['Expenses']
             worksheet.set_column('B:B', 15, money_fmt)
 
-def export_table_to_file(table_widget, parent=None, title="Exported Table", id_column_pattern=None):
-    """
-    Export the given QTableWidget to PDF or Excel, with a file dialog for user choice.
-    
-    New behavior:
-    - If ID column exists (matches pattern): Remove Actions column (old behavior)
-    - If NO ID column exists: Replace Actions column with IDs
-    
-    :param table_widget: QTableWidget to export
-    :param parent: parent widget for dialogs
-    :param title: Title for PDF export
-    :param id_column_pattern: Pattern to identify ID columns (e.g., "*ID", "StudentID", "FeesID")
-                             Default: Looks for columns ending with "ID", "No", "Code", "Number"
-    """
-    # Ask user for export type and file path
+
+def export_table_to_file(table_widget, parent=None, title="Exported Table", has_id_column=True):
     options = QFileDialog.Options()
     file_types = "PDF Files (*.pdf);;Excel Files (*.xlsx)"
     file_path, selected_filter = QFileDialog.getSaveFileName(
@@ -11277,359 +11501,142 @@ def export_table_to_file(table_widget, parent=None, title="Exported Table", id_c
     if not file_path:
         return
 
-    # Determine export type
-    if selected_filter.startswith("PDF"):
-        if not file_path.lower().endswith(".pdf"):
-            file_path += ".pdf"
-        try:
-            export_table_to_pdf(table_widget, file_path, title=title, id_column_pattern=id_column_pattern)
-            QMessageBox.information(parent, "Export Successful", f"Table exported to {file_path}")
-        except Exception as e:
-            QMessageBox.warning(parent, "Export Failed", f"PDF export failed:\n{e}")
-    elif selected_filter.startswith("Excel"):
-        if not file_path.lower().endswith(".xlsx"):
-            file_path += ".xlsx"
-        try:
-            export_table_to_excel(table_widget, file_path, id_column_pattern=id_column_pattern)
-            QMessageBox.information(parent, "Export Successful", f"Table exported to {file_path}")
-        except Exception as e:
-            QMessageBox.warning(parent, "Export Failed", f"Excel export failed:\n{e}")
-
-
-def export_table_to_excel(table_widget, file_path, id_column_pattern=None):
-    """
-    Simpler version of Excel export function.
-    """
-    from openpyxl import Workbook
-    
-    wb = Workbook()
-    # Different ways to get the active sheet depending on openpyxl version
     try:
-        ws = wb.active  # For newer versions
-    except AttributeError:
-        ws = wb.get_active_sheet()  # For older versions
-    
-    # Get all headers
+        if selected_filter.startswith("PDF"):
+            if not file_path.lower().endswith(".pdf"):
+                file_path += ".pdf"
+            export_table_to_pdf(
+                table_widget, file_path, title, has_id_column
+            )
+        else:
+            if not file_path.lower().endswith(".xlsx"):
+                file_path += ".xlsx"
+            export_table_to_excel(
+                table_widget, file_path, has_id_column
+            )
+
+        QMessageBox.information(
+            parent, "Export Successful",
+            f"Table exported to {file_path}"
+        )
+
+    except Exception as e:
+        QMessageBox.warning(
+            parent, "Export Failed",
+            str(e)
+        )
+
+def export_table_to_excel(table_widget, file_path, has_id_column):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+
     headers = []
+    action_col = -1
+
+    # Detect action column
     for col in range(table_widget.columnCount()):
+        if table_widget.cellWidget(0, col):
+            widget = table_widget.cellWidget(0, col)
+            if widget.property("row_id") is not None:
+                action_col = col
+                break
+
+    for col in range(table_widget.columnCount()):
+        if col == action_col and has_id_column:
+            continue
+        if col == action_col and not has_id_column:
+            headers.append("ID")
+            continue
+
         header = table_widget.horizontalHeaderItem(col)
         headers.append(header.text() if header else f"Column {col+1}")
-    
-    # Simple detection for Actions column (assume last column is Actions if it has widgets)
-    has_actions = False
-    last_col = table_widget.columnCount() - 1
-    if last_col >= 0:
-        for row in range(table_widget.rowCount()):
-            if table_widget.cellWidget(row, last_col):
-                has_actions = True
-                break
-    
-    # Check for ID columns
-    has_id = False
-    id_patterns = ["ID$", "No$", "Code$", "Number$", "Num$", "id$", "no$", "code$"]
-    for header in headers:
-        for pattern in id_patterns:
-            if re.search(pattern, header, re.IGNORECASE):
-                has_id = True
-                break
-        if has_id:
-            break
-    
-    # Prepare headers for export
-    if has_id:
-        # Has ID column → remove Actions
-        if has_actions:
-            export_headers = headers[:-1]  # Exclude last column (Actions)
-        else:
-            export_headers = headers
-    else:
-        # No ID column → replace Actions with ID
-        if has_actions:
-            export_headers = headers.copy()
-            export_headers[-1] = "ID"  # Replace Actions with ID
-        else:
-            export_headers = headers + ["ID"]  # Add ID column
-    
-    # Write headers
-    ws.append(export_headers)
-    
-    # Write data
+
+    ws.append(headers)
+
+    # Data
     for row in range(table_widget.rowCount()):
         row_data = []
-        
-        # Determine which columns to export
-        if has_id:
-            # Has ID → exclude Actions
-            if has_actions:
-                col_range = range(table_widget.columnCount() - 1)
+        for col in range(table_widget.columnCount()):
+            if col == action_col:
+                widget = table_widget.cellWidget(row, col)
+                if has_id_column:
+                    continue
+                row_data.append(
+                    widget.property("row_id") if widget else ""
+                )
             else:
-                col_range = range(table_widget.columnCount())
-        else:
-            # No ID → include all columns or add ID
-            if has_actions:
-                col_range = range(table_widget.columnCount())
-            else:
-                col_range = range(table_widget.columnCount())
-        
-        # Add data from cells
-        for col in col_range:
-            if col < table_widget.columnCount():
                 item = table_widget.item(row, col)
-                if item:
-                    row_data.append(item.text())
-                else:
-                    # Check if this is Actions column with no ID
-                    if not has_id and has_actions and col == last_col:
-                        # Try to find ID in other cells
-                        found_id = None
-                        for check_col in range(table_widget.columnCount()):
-                            check_item = table_widget.item(row, check_col)
-                            if check_item:
-                                text = check_item.text()
-                                # Simple ID detection
-                                if re.match(r'^[A-Za-z0-9\-_]+$', text) and len(text) > 3:
-                                    found_id = text
-                                    break
-                        
-                        row_data.append(found_id if found_id else f"Row-{row+1}")
-                    else:
-                        row_data.append("")
-            else:
-                # Added ID column
-                row_data.append(f"Row-{row+1}")
-        
-        # Add ID if needed (no Actions, no ID)
-        if not has_id and not has_actions:
-            row_data.append(f"Row-{row+1}")
-        
+                row_data.append(item.text() if item else "")
         ws.append(row_data)
-    
-    # Save the workbook
+
     wb.save(file_path)
 
-
-def export_table_to_pdf(table_widget, file_path, title="Exported Table", id_column_pattern=None):
-    """
-    Export QTableWidget to PDF file.
-    
-    Logic:
-    1. Detect ID columns based on pattern
-    2. If ID column exists: Remove Actions column
-    3. If NO ID column: Replace Actions column with row IDs/numbers
-    """
-    # Get all headers
+def export_table_to_pdf(
+    table_widget, file_path, title, has_id_column
+):
+    data = []
     headers = []
+    action_col = -1
+
     for col in range(table_widget.columnCount()):
+        widget = table_widget.cellWidget(0, col)
+        if widget and widget.property("row_id") is not None:
+            action_col = col
+            break
+
+    for col in range(table_widget.columnCount()):
+        if col == action_col and has_id_column:
+            continue
+        if col == action_col and not has_id_column:
+            headers.append("ID")
+            continue
+
         header = table_widget.horizontalHeaderItem(col)
         headers.append(header.text() if header else f"Column {col+1}")
-    
-    # Detect ID columns
-    id_columns = []
-    if id_column_pattern:
-        # Use provided pattern
-        for idx, header in enumerate(headers):
-            if id_column_pattern == "*ID" and header.endswith("ID"):
-                id_columns.append(idx)
-            elif header == id_column_pattern:
-                id_columns.append(idx)
-            elif id_column_pattern in header:
-                id_columns.append(idx)
-    else:
-        # Auto-detect ID columns (ends with ID, No, Code, Number)
-        id_patterns = ["ID$", "No$", "Code$", "Number$", "Num$"]
-        for idx, header in enumerate(headers):
-            for pattern in id_patterns:
-                if re.search(pattern, header, re.IGNORECASE):
-                    id_columns.append(idx)
-                    break
-    
-    # Check if Actions column exists (last column with widgets)
-    has_actions = False
-    actions_col = table_widget.columnCount() - 1
-    if actions_col >= 0:
-        for row in range(table_widget.rowCount()):
-            if table_widget.cellWidget(row, actions_col):
-                has_actions = True
-                break
-    
-    # Prepare data for PDF
-    data = []
-    
-    # Determine which columns to include and headers
-    if id_columns:
-        # ID column exists → Remove Actions column
-        if has_actions:
-            col_count = table_widget.columnCount() - 1  # Exclude Actions
-            pdf_headers = [headers[i] for i in range(col_count)]
-        else:
-            col_count = table_widget.columnCount()
-            pdf_headers = headers
-    else:
-        # NO ID column → Replace Actions with ID
-        if has_actions:
-            col_count = table_widget.columnCount()
-            pdf_headers = headers.copy()
-            pdf_headers[-1] = "ID"  # Replace Actions header
-        else:
-            col_count = table_widget.columnCount()
-            pdf_headers = headers + ["ID"]  # Add ID column
-    
-    # Add headers to data
-    data.append(pdf_headers)
-    
-    # Add data rows
+
+    data.append(headers)
+
     for row in range(table_widget.rowCount()):
         row_data = []
-        
-        # Add data from visible columns
-        for col in range(col_count):
-            if col < table_widget.columnCount():  # Regular column
-                if col < table_widget.columnCount() - 1 or not has_actions:
-                    # Regular cell
-                    item = table_widget.item(row, col)
-                    if item:
-                        row_data.append(item.text())
-                    else:
-                        cell_widget = table_widget.cellWidget(row, col)
-                        if cell_widget and not id_columns and col == actions_col and has_actions:
-                            # This is Actions column with no ID columns
-                            # Try to find ID from row data
-                            found_id = None
-                            for check_col in range(table_widget.columnCount()):
-                                check_item = table_widget.item(row, check_col)
-                                if check_item:
-                                    text = check_item.text()
-                                    if (re.match(r'^\d+$', text) or
-                                        re.match(r'^[A-Za-z]+-\d+$', text) or
-                                        re.match(r'^\d{4}-\d{4}$', text) or
-                                        re.match(r'^[A-Za-z]+\d+$', text)):
-                                        found_id = text
-                                        break
-                            
-                            if found_id:
-                                row_data.append(found_id)
-                            else:
-                                row_data.append(f"Row-{row+1}")
-                        else:
-                            row_data.append("")
-                else:
-                    # Actions column when no ID columns exist
-                    if not id_columns and has_actions:
-                        # Try to extract ID
-                        found_id = None
-                        for check_col in range(table_widget.columnCount() - 1):  # Exclude Actions column
-                            check_item = table_widget.item(row, check_col)
-                            if check_item:
-                                text = check_item.text()
-                                if (re.match(r'^\d+$', text) or
-                                    re.match(r'^[A-Za-z]+-\d+$', text) or
-                                    re.match(r'^\d{4}-\d{4}$', text) or
-                                    re.match(r'^[A-Za-z]+\d+$', text)):
-                                    found_id = text
-                                    break
-                        
-                        if found_id:
-                            row_data.append(found_id)
-                        else:
-                            row_data.append(f"Row-{row+1}")
-                    else:
-                        row_data.append("")
+        for col in range(table_widget.columnCount()):
+            if col == action_col:
+                widget = table_widget.cellWidget(row, col)
+                if has_id_column:
+                    continue
+                row_data.append(
+                    widget.property("row_id") if widget else ""
+                )
             else:
-                # Added ID column (when no Actions existed)
-                row_data.append(f"Row-{row+1}")
-        
-        # If we need to add ID column (no Actions, no ID columns)
-        if not has_actions and not id_columns:
-            row_data.append(f"Row-{row+1}")
-        
+                item = table_widget.item(row, col)
+                row_data.append(item.text() if item else "")
         data.append(row_data)
-    
-    # Create PDF
+
     pdf = SimpleDocTemplate(file_path, pagesize=landscape(A4))
-    
-    # Create table
     table = Table(data, repeatRows=1)
-    
-    # Table style
-    style = TableStyle([
+
+    table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#007bff")),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
-    ])
-    
-    # Add zebra striping
-    for i in range(1, len(data)):
-        if i % 2 == 0:
-            bg_color = colors.white
-        else:
-            bg_color = colors.whitesmoke
-        style.add('BACKGROUND', (0, i), (-1, i), bg_color)
-    
-    table.setStyle(style)
-    
-    # Title paragraph
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+    ]))
+
     styles = getSampleStyleSheet()
-    title_paragraph = Paragraph(f"<b>{title}</b>", styles['Title'])
-    spacer = Spacer(1, 0.2 * inch)
-    
-    # Footer callback
+    elems = [
+        Paragraph(f"<b>{title}</b>", styles['Title']),
+        Spacer(1, 0.2 * inch),
+        table
+    ]
+
     def footer(canvas, doc):
-        canvas.saveState()
-        footer_text = f"Printed by Pinnacle Ledger    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        canvas.setFont("Helvetica", 9)
-        canvas.drawRightString(doc.pagesize[0] - 30, 20, footer_text)
-        canvas.restoreState()
-    
-    elems = [title_paragraph, spacer, table]
+        canvas.drawRightString(
+            doc.pagesize[0] - 30, 20,
+            f"Printed by Pinnacle Ledger — {datetime.now():%Y-%m-%d %H:%M}"
+        )
+
     pdf.build(elems, onFirstPage=footer, onLaterPages=footer)
 
-
-# Helper function to check if a table has ID columns
-def has_id_columns(table_widget, id_column_pattern=None):
-    """
-    Check if table has ID columns.
-    
-    :return: Tuple (has_id, id_columns_list, has_actions)
-    """
-    headers = []
-    for col in range(table_widget.columnCount()):
-        header = table_widget.horizontalHeaderItem(col)
-        headers.append(header.text() if header else "")
-    
-    # Detect ID columns
-    id_columns = []
-    if id_column_pattern:
-        for idx, header in enumerate(headers):
-            if id_column_pattern == "*ID" and header.endswith("ID"):
-                id_columns.append(idx)
-            elif header == id_column_pattern:
-                id_columns.append(idx)
-            elif id_column_pattern in header:
-                id_columns.append(idx)
-    else:
-        id_patterns = ["ID$", "No$", "Code$", "Number$"]
-        for idx, header in enumerate(headers):
-            for pattern in id_patterns:
-                if re.search(pattern, header, re.IGNORECASE):
-                    id_columns.append(idx)
-                    break
-    
-    # Check for Actions column
-    has_actions = False
-    actions_col = table_widget.columnCount() - 1
-    if actions_col >= 0:
-        for row in range(table_widget.rowCount()):
-            if table_widget.cellWidget(row, actions_col):
-                has_actions = True
-                break
-    
-    return len(id_columns) > 0, id_columns, has_actions
 
 
 if __name__ == "__main__":
