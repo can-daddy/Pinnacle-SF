@@ -753,6 +753,311 @@ class StudentsTab(QWidget):
         except Exception as e:
             QMessageBox.warning(dialog, "Error", f"Failed to add student: {e}")
 
+    def show_add_enrollment_dialog(self, studentID):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Enrollment")
+        dialog.setMinimumWidth(400)
+        
+        layout = QVBoxLayout(dialog)
+        form_layout = QFormLayout()
+        
+        # Student ID (read-only since passed as parameter)
+        student_id_edit = QLineEdit()
+        student_id_edit.setText(studentID)
+        student_id_edit.setReadOnly(True)
+        
+        # Academic Year selection (for filtering classes and terms)
+        academic_year_label = QLabel("Academic Year:")
+        self.academic_year_combo = QComboBox()
+        self.academic_year_combo.addItem("Select Academic Year", None)
+        
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
+            for year_id, year_name in c.fetchall():
+                self.academic_year_combo.addItem(year_name, year_id)
+        
+        # Class selection (will be filtered by academic year)
+        class_label = QLabel("Class:")
+        self.class_combo = QComboBox()
+        self.class_combo.addItem("Select Class", None)
+        
+        # Term selection (will be filtered by academic year)
+        term_label = QLabel("Term:")
+        self.term_combo = QComboBox()
+        self.term_combo.addItem("Select Term", None)
+        
+        # Connect academic year change to update class and term combos
+        self.academic_year_combo.currentIndexChanged.connect(
+            lambda: self.update_class_term_combos(self.academic_year_combo, self.class_combo, self.term_combo)
+        )
+        
+        form_layout.addRow("Student ID:", student_id_edit)
+        form_layout.addRow(academic_year_label, self.academic_year_combo)
+        form_layout.addRow(class_label, self.class_combo)
+        form_layout.addRow(term_label, self.term_combo)
+        
+        layout.addLayout(form_layout)
+        
+        # Error label for validation feedback
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #E53E3E; font-size: 12px;")
+        error_label.setWordWrap(True)
+        layout.addWidget(error_label)
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        
+        def save_and_close():
+            # Clear previous error
+            error_label.setText("")
+            
+            # Get values
+            student_id = student_id_edit.text().strip()
+            academic_year_id = self.academic_year_combo.currentData()
+            class_id = self.class_combo.currentData()
+            term_id = self.term_combo.currentData()
+            
+            # Validation
+            if not student_id:
+                error_label.setText("Student ID is required")
+                return
+            
+            if not academic_year_id:
+                error_label.setText("Please select an Academic Year")
+                return
+            
+            if not class_id:
+                error_label.setText("Please select a Class")
+                return
+            
+            if not term_id:
+                error_label.setText("Please select a Term")
+                return
+            
+            # Call the enhanced save_enrollment method
+            self.save_enrollment(dialog, student_id_edit, self.class_combo, self.term_combo)
+        
+        button_box.accepted.connect(save_and_close)
+        button_box.rejected.connect(dialog.reject)
+        
+        layout.addWidget(button_box)
+        
+        # Execute dialog - the save logic is now inside the button click handler
+        dialog.exec_()
+
+    def update_class_term_combos(self, academic_year_combo, class_combo, term_combo):
+        """Update class and term combos based on selected academic year"""
+        academic_year_id = academic_year_combo.currentData()
+        
+        # Clear existing items (keep first "Select..." item)
+        while class_combo.count() > 1:
+            class_combo.removeItem(class_combo.count() - 1)
+        while term_combo.count() > 1:
+            term_combo.removeItem(term_combo.count() - 1)
+        
+        if academic_year_id:
+            try:
+                with get_db_connection() as (conn, c):
+                    # Load classes for selected academic year
+                    c.execute("""
+                        SELECT ClassID, ClassName 
+                        FROM Class 
+                        WHERE AcademicYear = ? 
+                        ORDER BY ClassName
+                    """, (academic_year_id,))
+                    
+                    for class_id, class_name in c.fetchall():
+                        class_combo.addItem(class_name, class_id)
+                    
+                    # Load terms for selected academic year
+                    c.execute("""
+                        SELECT TermID, TermName 
+                        FROM Term 
+                        WHERE AcademicYear = ? 
+                        ORDER BY TermName
+                    """, (academic_year_id,))
+                    
+                    for term_id, term_name in c.fetchall():
+                        term_combo.addItem(term_name, term_id)
+                        
+            except sqlite3.Error as e:
+                QMessageBox.warning(self, "Database Error", f"Failed to load classes/terms: {str(e)}")
+
+    def save_enrollment(self, dialog, student_id_edit, class_combo, term_combo):
+        student_id = student_id_edit.text().strip()
+        class_id = class_combo.currentData()
+        term_id = term_combo.currentData()
+
+        # Basic validation
+        if not all([student_id, class_id, term_id]):
+            QMessageBox.warning(dialog, "Error", "Required fields are missing")
+            return
+        
+        try:
+            with get_db_connection() as (conn, c):
+                # 1. Check if student exists
+                c.execute("SELECT StudentID, Student_Name, PayRate FROM Students WHERE StudentID = ?", (student_id,))
+                student_data = c.fetchone()
+                
+                if not student_data:
+                    QMessageBox.warning(dialog, "Error", "Student ID does not exist")
+                    return
+                
+                student_name = student_data[1]
+                payrate = student_data[2] if student_data[2] is not None else 100  # Default to 100% if null
+                
+                # 2. Check if already enrolled in target class/term (UNIQUE constraint)
+                c.execute("""
+                    SELECT COUNT(*) FROM StudentTerm 
+                    WHERE StudentID = ? AND ClassID = ? AND TermID = ?
+                """, (student_id, class_id, term_id))
+                
+                if c.fetchone()[0] > 0:
+                    QMessageBox.warning(dialog, "Error", 
+                                    f"Student '{student_name}' is already enrolled in this class and term.")
+                    return
+                
+                # 3. Check if student is already in another class in the same term
+                c.execute("""
+                    SELECT c.ClassName, t.TermName
+                    FROM StudentTerm st
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Term t ON st.TermID = t.TermID
+                    WHERE st.StudentID = ? AND st.TermID = ?
+                """, (student_id, term_id))
+                
+                existing_enrollment = c.fetchone()
+                if existing_enrollment:
+                    QMessageBox.warning(dialog, "Error", 
+                                    f"Student '{student_name}' is already enrolled in class '{existing_enrollment[0]}' "
+                                    f"for term '{existing_enrollment[1]}'. A student cannot be in multiple classes in the same term.")
+                    return
+                
+                # 4. Get academic year for validation
+                c.execute("""
+                    SELECT ay.AcademicYearID, ay.Year 
+                    FROM Term t
+                    JOIN AcademicYear ay ON t.AcademicYear = ay.AcademicYearID
+                    WHERE t.TermID = ?
+                """, (term_id,))
+                
+                term_year_data = c.fetchone()
+                if not term_year_data:
+                    QMessageBox.warning(dialog, "Error", "Invalid term selected")
+                    return
+                
+                term_year_id, term_year_name = term_year_data
+                
+                # 5. Check if class belongs to the same academic year as the term
+                c.execute("""
+                    SELECT c.ClassName, ay.Year 
+                    FROM Class c
+                    JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                    WHERE c.ClassID = ?
+                """, (class_id,))
+                
+                class_year_data = c.fetchone()
+                if not class_year_data:
+                    QMessageBox.warning(dialog, "Error", "Invalid class selected")
+                    return
+                
+                class_year_name = class_year_data[1]
+                
+                # 6. Verify term and class belong to the same academic year
+                c.execute("""
+                    SELECT AcademicYear FROM Class WHERE ClassID = ?
+                """, (class_id,))
+                
+                class_year_id_result = c.fetchone()
+                if not class_year_id_result:
+                    QMessageBox.warning(dialog, "Error", "Class academic year not found")
+                    return
+                
+                class_year_id = class_year_id_result[0]
+                
+                if term_year_id != class_year_id:
+                    # Get class year name for better error message
+                    c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (class_year_id,))
+                    class_year_name_full = c.fetchone()
+                    class_year_display = class_year_name_full[0] if class_year_name_full else f"Year {class_year_id}"
+                    
+                    QMessageBox.warning(dialog, "Error", 
+                                    f"Term '{self.get_combo_text(term_combo)}' belongs to academic year '{term_year_name}'\n"
+                                    f"Class '{self.get_combo_text(class_combo)}' belongs to academic year '{class_year_display}'\n\n"
+                                    f"Term and Class must belong to the same academic year.")
+                    return
+                
+                # 7. Get class and term names for confirmation message
+                class_name = self.get_combo_text(class_combo)
+                term_name = self.get_combo_text(term_combo)
+                
+                # Optional: Ask for confirmation
+                confirm_msg = f"Enroll student:\n\n"
+                confirm_msg += f"Student: {student_name} ({student_id})\n"
+                confirm_msg += f"Class: {class_name}\n"
+                confirm_msg += f"Term: {term_name}\n"
+                confirm_msg += f"Academic Year: {term_year_name}\n"
+                confirm_msg += f"PayRate: {payrate}%\n\n"
+                confirm_msg += f"Proceed with enrollment?"
+                
+                reply = QMessageBox.question(
+                    dialog, "Confirm Enrollment", 
+                    confirm_msg,
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply != QMessageBox.Yes:
+                    return
+                
+                # 8. Insert the enrollment with transaction
+                c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID, PayRate)
+                            VALUES (?, ?, ?, ?)""", 
+                        (student_id, class_id, term_id, payrate))
+                
+                conn.commit()
+                
+                # Success message with details
+                success_msg = f"✅ Enrollment added successfully!\n\n"
+                success_msg += f"Student: {student_name} ({student_id})\n"
+                success_msg += f"Class: {class_name}\n"
+                success_msg += f"Term: {term_name}\n"
+                success_msg += f"Academic Year: {term_year_name}"
+                
+                QMessageBox.information(dialog, "Success", success_msg)
+                
+                # Clear form
+                student_id_edit.clear()
+                class_combo.setCurrentIndex(0)
+                term_combo.setCurrentIndex(0)
+                
+                # Refresh table
+                self.load_data()
+                
+        except sqlite3.IntegrityError as e:
+            # Handle any database constraint violations
+            if "UNIQUE" in str(e):
+                QMessageBox.warning(dialog, "Database Error", 
+                                "Duplicate enrollment detected. This student is already enrolled in this class and term.")
+            elif "FOREIGN KEY" in str(e):
+                QMessageBox.warning(dialog, "Database Error", 
+                                "Invalid reference. Please check that StudentID, ClassID, and TermID exist.")
+            else:
+                QMessageBox.warning(dialog, "Database Error", 
+                                f"Database constraint violation: {str(e)}")
+        
+        except sqlite3.Error as e:
+            QMessageBox.critical(dialog, "Database Error", 
+                            f"Failed to add enrollment: {str(e)}")
+        
+        except Exception as e:
+            QMessageBox.warning(dialog, "Error", 
+                            f"An unexpected error occurred: {str(e)}")
+
+    def get_combo_text(self, combo_box):
+        """Helper method to get the display text from a combo box"""
+        return combo_box.currentText() if combo_box.currentIndex() >= 0 else "Not selected"
+
     def load_data(self):
         try:
             with get_db_connection() as (conn, c):
@@ -828,7 +1133,7 @@ class StudentsTab(QWidget):
                     student_id = row_data[0]
 
                     action_combo = QComboBox()
-                    action_combo.addItems(["Select Action", "Edit", "Delete"])
+                    action_combo.addItems(["Select Action", "Edit", "Enroll","Delete"])
                     action_combo.setProperty("role", "actions")
                     action_combo.setProperty("row_id", student_id)
 
@@ -862,6 +1167,8 @@ class StudentsTab(QWidget):
             self.edit_student(student_id)
         elif action == "Delete":
             self.delete_student(student_id)
+        elif action == "Enroll":
+            self.show_add_enrollment_dialog(student_id)
 
     def edit_student(self, student_id):
         try:
@@ -965,8 +1272,6 @@ class EnrollmentsTab(QWidget):
                 self.AcademicYear_filter.addItem("No years",None)
         self.AcademicYear_filter.currentIndexChanged.connect(self.load_data)
 
-
-
         self.class_filter = QComboBox()
         self.class_filter.addItem("All Classes", None)
         with get_db_connection() as (conn, c):
@@ -989,60 +1294,518 @@ class EnrollmentsTab(QWidget):
         filter_layout.addWidget(self.class_filter)
         filter_layout.addWidget(self.term_filter)
         filter_layout.addStretch()
-        add_enrollment_btn = QPushButton("Add Enrollment")
-        add_enrollment_btn.clicked.connect(self.show_add_enrollment_dialog)
+        
+        # Action buttons
+        bulk_enroll_btn = QPushButton("Enroll Selected")
+        bulk_enroll_btn.clicked.connect(self.show_bulk_enroll_dialog)
+        
         import_btn = QPushButton("Import")
         export_btn = QPushButton("Export")
         import_btn.clicked.connect(show_import_wizard_student)
-        filter_layout.addWidget(add_enrollment_btn)
+        
+        filter_layout.addWidget(bulk_enroll_btn) 
         filter_layout.addWidget(import_btn)
         filter_layout.addWidget(export_btn)
         layout.addLayout(filter_layout)
 
         # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(6)  # StudentID, Name, Class, Term, Actions
-        self.table.setHorizontalHeaderLabels(["StudentID", "Name", "Class", "Term", "PayRate", "Actions"])
+        self.table.setColumnCount(7)  # StudentID, Name, Class, Term, Fee Payer, PayRate, Actions
+        self.table.setHorizontalHeaderLabels(["Student ID", "Student Name", "Class", "Term", "Fee Payer", "PayRate", "Actions"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         header = self.table.horizontalHeader()
-        for col in range(4):
+        for col in range(6):
             header.setSectionResizeMode(col, QHeaderView.Stretch)
-        header.setSectionResizeMode(4, QHeaderView.Fixed)
-        header.resizeSection(4, 120)
+        header.setSectionResizeMode(6, QHeaderView.Fixed)
+        header.resizeSection(6, 220)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.MultiSelection)  # Allow multiple row selection
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
-        export_btn.clicked.connect(lambda: export_table_to_file(table_widget=self.table,title="Enrollments",has_id_column=True))
+        export_btn.clicked.connect(lambda: export_table_to_file(table_widget=self.table, title="Enrollments", has_id_column=True))
         layout.addWidget(self.table)
 
         self.results_label = QLabel("0 results")
         self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
-        filter_layout.addWidget(self.results_label)
+        
+        # NEW: Selected rows counter
+        self.selected_count_label = QLabel("0 selected")
+        self.selected_count_label.setStyleSheet("font-size: 14px; color: #4299E1; font-weight: bold;")
+        
+        # Update selection count when selection changes
+        self.table.itemSelectionChanged.connect(self.update_selected_count)
+        
+        label_layout = QHBoxLayout()
+        label_layout.addWidget(self.results_label)
+        label_layout.addStretch()
+        label_layout.addWidget(self.selected_count_label)
+        layout.addLayout(label_layout)
 
         self.load_data()
     
+    def update_selected_count(self):
+        """Update the selected rows counter"""
+        selected_count = len(self.table.selectedItems()) // self.table.columnCount() if self.table.columnCount() > 0 else 0
+        self.selected_count_label.setText(f"{selected_count} selected")
+    
+    def get_selected_student_ids(self):
+        """
+        Get StudentIDs from selected rows.
+        Returns list of tuples: [(student_id, student_name, current_payrate), ...]
+        """
+        selected_students = []
+        selected_rows = set()
+        
+        # Get unique selected rows
+        for item in self.table.selectedItems():
+            selected_rows.add(item.row())
+        
+        # Extract data from each selected row
+        for row in selected_rows:
+            student_id_item = self.table.item(row, 0)  # Student ID column
+            student_name_item = self.table.item(row, 1)  # Student Name column
+            payrate_item = self.table.item(row, 5)  # PayRate column
+            
+            if student_id_item:
+                student_id = student_id_item.text().strip()
+                student_name = student_name_item.text().strip() if student_name_item else ""
+                
+                # Get PayRate
+                payrate = 100  # Default
+                if payrate_item:
+                    try:
+                        payrate_text = payrate_item.text().strip()
+                        if payrate_text and payrate_text != "0":
+                            payrate = float(payrate_text)
+                    except ValueError:
+                        payrate = 100  # Default if parsing fails
+                
+                selected_students.append((student_id, student_name, payrate))
+        
+        return selected_students
+    
+    def show_bulk_enroll_dialog(self):
+        """Show dialog for bulk enrollment"""
+        # Get selected students
+        selected_students = self.get_selected_student_ids()
+        
+        if not selected_students:
+            QMessageBox.warning(self, "No Selection", 
+                              "Please select one or more students from the table.")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Bulk Enroll ({len(selected_students)} students)")
+        dialog.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Selected students summary
+        summary_label = QLabel(f"Selected: {len(selected_students)} student(s)")
+        summary_label.setStyleSheet("font-weight: bold; color: #2D3748;")
+        layout.addWidget(summary_label)
+        
+        # Preview of selected students (limited to first 10)
+        preview_text = "\n".join([f"• {name} ({id})" for id, name, _ in selected_students[:10]])
+        if len(selected_students) > 10:
+            preview_text += f"\n• ... and {len(selected_students) - 10} more"
+        
+        preview_label = QLabel(preview_text)
+        preview_label.setStyleSheet("color: #718096; font-size: 12px; background-color: #F7FAFC; padding: 8px; border-radius: 4px;")
+        preview_label.setWordWrap(True)
+        layout.addWidget(preview_label)
+        
+        # Target enrollment configuration
+        config_group = QGroupBox("Enrollment Configuration")
+        config_layout = QFormLayout(config_group)
+        
+        # Academic Year
+        self.target_year_combo = QComboBox()
+        with get_db_connection() as (conn, c):
+            c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
+            for year_id, year_name in c.fetchall():
+                self.target_year_combo.addItem(year_name, year_id)
+        
+        self.target_year_combo.currentIndexChanged.connect(
+            lambda: self.update_target_filters(self.target_year_combo, self.target_term_combo, self.target_class_combo)
+        )
+        
+        # Term (will be populated based on selected year)
+        self.target_term_combo = QComboBox()
+        self.target_term_combo.addItem("Select Term", None)
+        
+        # Class (will be populated based on selected year)
+        self.target_class_combo = QComboBox()
+        self.target_class_combo.addItem("Select Class", None)
+        
+        config_layout.addRow("Academic Year:", self.target_year_combo)
+        config_layout.addRow("Term:", self.target_term_combo)
+        config_layout.addRow("Class:", self.target_class_combo)
+        
+        layout.addWidget(config_group)
+        
+        # PayRate option (optional)
+        payrate_group = QGroupBox("PayRate Configuration (Optional)")
+        payrate_layout = QVBoxLayout(payrate_group)
+        
+        payrate_option_label = QLabel("PayRate for all selected students:")
+        payrate_option_label.setStyleSheet("font-weight: bold;")
+        payrate_layout.addWidget(payrate_option_label)
+        
+        payrate_option_combo = QComboBox()
+        payrate_option_combo.addItem("Use existing PayRate from each student", "existing")
+        payrate_option_combo.addItem("Apply uniform PayRate for all", "uniform")
+        payrate_layout.addWidget(payrate_option_combo)
+        
+        uniform_payrate_combo = QComboBox()
+        uniform_payrate_combo.addItem("Full Scholarship (0%)", 0)
+        uniform_payrate_combo.addItem("20% Scholarship", 80)
+        uniform_payrate_combo.addItem("No Scholarship (100%)", 100)
+        uniform_payrate_combo.addItem("Custom PayRate", "custom")
+        payrate_layout.addWidget(uniform_payrate_combo)
+        
+        custom_payrate_input = QLineEdit()
+        custom_payrate_input.setPlaceholderText("Enter custom PayRate percentage (0-100)")
+        custom_payrate_input.setValidator(QIntValidator(0, 100))
+        custom_payrate_input.setVisible(False)
+        payrate_layout.addWidget(custom_payrate_input)
+        
+        # Show/hide custom input
+        def toggle_custom_payrate(index):
+            is_custom = uniform_payrate_combo.itemData(index) == "custom"
+            custom_payrate_input.setVisible(is_custom)
+            if is_custom:
+                custom_payrate_input.setFocus()
+        
+        uniform_payrate_combo.currentIndexChanged.connect(toggle_custom_payrate)
+        
+        # Hide uniform options initially
+        uniform_payrate_combo.setVisible(False)
+        
+        def toggle_uniform_options(index):
+            use_uniform = payrate_option_combo.currentData() == "uniform"
+            uniform_payrate_combo.setVisible(use_uniform)
+            custom_payrate_input.setVisible(use_uniform and uniform_payrate_combo.currentData() == "custom")
+        
+        payrate_option_combo.currentIndexChanged.connect(toggle_uniform_options)
+        
+        layout.addWidget(payrate_group)
+        
+        # Error label
+        self.bulk_error_label = QLabel("")
+        self.bulk_error_label.setStyleSheet("color: #E53E3E;")
+        self.bulk_error_label.setWordWrap(True)
+        layout.addWidget(self.bulk_error_label)
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(lambda: self.validate_and_process_bulk_enrollment(
+            dialog, selected_students, 
+            self.target_year_combo.currentData(),
+            self.target_term_combo.currentData(),
+            self.target_class_combo.currentData(),
+            payrate_option_combo.currentData(),
+            uniform_payrate_combo.currentData(),
+            custom_payrate_input.text()
+        ))
+        button_box.rejected.connect(dialog.reject)
+        
+        layout.addWidget(button_box)
+        
+        # Initially disable OK button until all fields are selected
+        ok_button = button_box.button(QDialogButtonBox.Ok)
+        ok_button.setEnabled(False)
+        
+        def check_fields():
+            has_year = self.target_year_combo.currentData() is not None
+            has_term = self.target_term_combo.currentData() is not None
+            has_class = self.target_class_combo.currentData() is not None
+            
+            ok_button.setEnabled(has_year and has_term and has_class)
+        
+        self.target_year_combo.currentIndexChanged.connect(check_fields)
+        self.target_term_combo.currentIndexChanged.connect(check_fields)
+        self.target_class_combo.currentIndexChanged.connect(check_fields)
+        
+        dialog.exec_()
+    
+    def update_target_filters(self, year_combo, term_combo, class_combo):
+        """Update term and class dropdowns based on selected academic year"""
+        year_id = year_combo.currentData()
+        
+        # Clear existing items (keep first "Select..." item)
+        while term_combo.count() > 1:
+            term_combo.removeItem(term_combo.count() - 1)
+        while class_combo.count() > 1:
+            class_combo.removeItem(class_combo.count() - 1)
+        
+        if year_id:
+            try:
+                with get_db_connection() as (conn, c):
+                    # Load terms for selected year
+                    c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ? ORDER BY TermName", (year_id,))
+                    for term_id, term_name in c.fetchall():
+                        term_combo.addItem(term_name, term_id)
+                    
+                    # Load classes for selected year
+                    c.execute("SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ? ORDER BY ClassName", (year_id,))
+                    for class_id, class_name in c.fetchall():
+                        class_combo.addItem(class_name, class_id)
+            except sqlite3.Error as e:
+                QMessageBox.warning(self, "Database Error", f"Failed to load data: {str(e)}")
+    
+    def validate_and_process_bulk_enrollment(self, dialog, selected_students, 
+                                           target_year_id, target_term_id, target_class_id,
+                                           payrate_option, uniform_payrate_data, custom_payrate_text):
+        """Validate and process bulk enrollment"""
+        # Clear previous errors
+        self.bulk_error_label.setText("")
+        
+        # Validation
+        if not target_year_id or not target_term_id or not target_class_id:
+            self.bulk_error_label.setText("Please select Academic Year, Term, and Class.")
+            return
+        
+        # Get uniform PayRate if selected
+        uniform_payrate = None
+        if payrate_option == "uniform":
+            if uniform_payrate_data == "custom":
+                try:
+                    uniform_payrate = float(custom_payrate_text)
+                    if not 0 <= uniform_payrate <= 100:
+                        self.bulk_error_label.setText("Custom PayRate must be between 0 and 100.")
+                        return
+                except ValueError:
+                    self.bulk_error_label.setText("Please enter a valid number for custom PayRate.")
+                    return
+            else:
+                uniform_payrate = float(uniform_payrate_data)
+        
+        # Validate each student
+        validation_results = self.validate_bulk_enrollments(
+            selected_students, target_year_id, target_term_id, target_class_id
+        )
+        
+        valid_students = [r for r in validation_results if r['valid']]
+        invalid_students = [r for r in validation_results if not r['valid']]
+        
+        if not valid_students:
+            error_msg = "No valid students to enroll. Reasons:\n"
+            for invalid in invalid_students:
+                error_msg += f"• {invalid['student_name']} ({invalid['student_id']}): {invalid['error']}\n"
+            self.bulk_error_label.setText(error_msg)
+            return
+        
+        # Show confirmation dialog with summary
+        confirm_msg = f"Enroll {len(valid_students)} student(s) to:\n"
+        confirm_msg += f"• Year: {self.target_year_combo.currentText()}\n"
+        confirm_msg += f"• Term: {self.target_term_combo.currentText()}\n"
+        confirm_msg += f"• Class: {self.target_class_combo.currentText()}\n\n"
+        
+        if invalid_students:
+            confirm_msg += f"Note: {len(invalid_students)} student(s) will be skipped:\n"
+            for invalid in invalid_students[:5]:  # Show first 5
+                confirm_msg += f"• {invalid['student_name']}: {invalid['error']}\n"
+            if len(invalid_students) > 5:
+                confirm_msg += f"• ... and {len(invalid_students) - 5} more\n"
+        
+        reply = QMessageBox.question(
+            dialog, "Confirm Bulk Enrollment", 
+            confirm_msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            success_count, error_details = self.process_bulk_enrollment(
+                valid_students, target_year_id, target_term_id, target_class_id,
+                payrate_option, uniform_payrate
+            )
+            
+            # Show results
+            result_msg = f"✅ Successfully enrolled {success_count} student(s).\n"
+            if error_details:
+                result_msg += f"\n❌ Failed to enroll {len(error_details)} student(s):\n"
+                for error in error_details[:5]:  # Show first 5 errors
+                    result_msg += f"• {error['student_name']}: {error['error']}\n"
+                if len(error_details) > 5:
+                    result_msg += f"• ... and {len(error_details) - 5} more\n"
+            
+            if invalid_students:
+                result_msg += f"\n⚠️ Skipped {len(invalid_students)} student(s) due to validation errors."
+            
+            QMessageBox.information(dialog, "Bulk Enrollment Results", result_msg)
+            
+            if success_count > 0:
+                dialog.accept()
+                self.load_data()  # Refresh table
+                self.update_selected_count()  # Reset selection count
+    
+    def validate_bulk_enrollments(self, selected_students, target_year_id, target_term_id, target_class_id):
+        """Validate each student for bulk enrollment"""
+        results = []
+        
+        try:
+            with get_db_connection() as (conn, c):
+                for student_id, student_name, current_payrate in selected_students:
+                    result = {
+                        'student_id': student_id,
+                        'student_name': student_name,
+                        'current_payrate': current_payrate,
+                        'valid': True,
+                        'error': None
+                    }
+                    
+                    # 1. Check if student exists
+                    c.execute("SELECT StudentID FROM Students WHERE StudentID = ?", (student_id,))
+                    if not c.fetchone():
+                        result['valid'] = False
+                        result['error'] = "Student does not exist"
+                        results.append(result)
+                        continue
+                    
+                    # 2. Check if already enrolled in target class/term (UNIQUE constraint)
+                    c.execute("""
+                        SELECT COUNT(*) FROM StudentTerm 
+                        WHERE StudentID = ? AND ClassID = ? AND TermID = ?
+                    """, (student_id, target_class_id, target_term_id))
+                    
+                    if c.fetchone()[0] > 0:
+                        result['valid'] = False
+                        result['error'] = "Already enrolled in this class/term"
+                        results.append(result)
+                        continue
+                    
+                    # 3. Check if student is already in another class in the same term
+                    c.execute("""
+                        SELECT c.ClassName 
+                        FROM StudentTerm st
+                        JOIN Class c ON st.ClassID = c.ClassID
+                        WHERE st.StudentID = ? AND st.TermID = ?
+                    """, (student_id, target_term_id))
+                    
+                    existing_enrollment = c.fetchone()
+                    if existing_enrollment:
+                        result['valid'] = False
+                        result['error'] = f"Already in class '{existing_enrollment[0]}' for this term"
+                        results.append(result)
+                        continue
+                    
+                    # 4. Check term belongs to selected academic year
+                    c.execute("SELECT AcademicYear FROM Term WHERE TermID = ?", (target_term_id,))
+                    term_year = c.fetchone()
+                    if not term_year or term_year[0] != target_year_id:
+                        result['valid'] = False
+                        result['error'] = "Term does not belong to selected academic year"
+                        results.append(result)
+                        continue
+                    
+                    # 5. Check class belongs to selected academic year
+                    c.execute("SELECT AcademicYear FROM Class WHERE ClassID = ?", (target_class_id,))
+                    class_year = c.fetchone()
+                    if not class_year or class_year[0] != target_year_id:
+                        result['valid'] = False
+                        result['error'] = "Class does not belong to selected academic year"
+                        results.append(result)
+                        continue
+                    
+                    results.append(result)
+                    
+        except sqlite3.Error as e:
+            # If database error, mark all as invalid
+            for student_id, student_name, _ in selected_students:
+                results.append({
+                    'student_id': student_id,
+                    'student_name': student_name,
+                    'valid': False,
+                    'error': f"Database error: {str(e)}"
+                })
+        
+        return results
+    
+    def process_bulk_enrollment(self, valid_students, target_year_id, target_term_id, target_class_id,
+                              payrate_option, uniform_payrate=None):
+        """Process the bulk enrollment transaction"""
+        success_count = 0
+        error_details = []
+        
+        try:
+            with get_db_connection() as (conn, c):
+                for student in valid_students:
+                    try:
+                        # Determine PayRate
+                        if payrate_option == "uniform" and uniform_payrate is not None:
+                            payrate = uniform_payrate
+                        else:
+                            payrate = student['current_payrate']
+                        
+                        # Insert enrollment
+                        c.execute("""
+                            INSERT INTO StudentTerm (StudentID, ClassID, TermID, PayRate)
+                            VALUES (?, ?, ?, ?)
+                        """, (student['student_id'], target_class_id, target_term_id, payrate))
+                        
+                        success_count += 1
+                        
+                    except sqlite3.IntegrityError as e:
+                        # Handle unique constraint violation
+                        if "UNIQUE" in str(e):
+                            error_details.append({
+                                'student_id': student['student_id'],
+                                'student_name': student['student_name'],
+                                'error': "Duplicate enrollment (violates UNIQUE constraint)"
+                            })
+                        else:
+                            error_details.append({
+                                'student_id': student['student_id'],
+                                'student_name': student['student_name'],
+                                'error': f"Database error: {str(e)}"
+                            })
+                    except Exception as e:
+                        error_details.append({
+                            'student_id': student['student_id'],
+                            'student_name': student['student_name'],
+                            'error': f"Error: {str(e)}"
+                        })
+                
+                # Commit only if there were successful operations
+                if success_count > 0:
+                    conn.commit()
+                else:
+                    conn.rollback()
+                    
+        except sqlite3.Error as e:
+            # Transaction failed
+            error_details.append({
+                'student_id': "All",
+                'student_name': "Transaction",
+                'error': f"Transaction failed: {str(e)}"
+            })
+        
+        return success_count, error_details
+        
     def update_filters(self):
         """Update class and term filters when academic year changes"""
         year_id = self.AcademicYear_filter.currentData()
         
-        # Update TERM dropdown (your exact requirement)
+        # Update TERM dropdown
         self.term_filter.clear()
         self.term_filter.addItem("All Terms", None)
         
         if year_id:
             with get_db_connection() as (conn, c):
-                # Simple query: get terms for selected academic year
+                # Get terms for selected academic year
                 c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ?", (year_id,))
                 for term_id, term_name in c.fetchall():
                     self.term_filter.addItem(term_name, term_id)
         
-        # Update CLASS dropdown (optional - if you want it too)
+        # Update CLASS dropdown
         self.class_filter.clear()
         self.class_filter.addItem("All Classes", None)
         
         if year_id:
             with get_db_connection() as (conn, c):
-                # Get classes that have students in this academic year
+                # Get classes for this academic year that have enrollments
                 c.execute("""
                     SELECT DISTINCT c.ClassID, c.ClassName 
                     FROM Class c
@@ -1056,61 +1819,6 @@ class EnrollmentsTab(QWidget):
                 
                 for class_id, class_name in c.fetchall():
                     self.class_filter.addItem(class_name, class_id)
-
-    def show_add_enrollment_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add Enrollment")
-        layout = QVBoxLayout()
-        form_layout = QFormLayout()
-        student_id_edit = QLineEdit()
-        class_combo = QComboBox()
-        term_combo = QComboBox()
-        self.populate_combos(class_combo, term_combo)
-        form_layout.addRow("Student ID:", student_id_edit)
-        form_layout.addRow("Class:", class_combo)
-        form_layout.addRow("Term:", term_combo)
-        layout.addLayout(form_layout)
-        buttons = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self.save_enrollment(dialog, student_id_edit, class_combo, term_combo))
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
-        buttons.addWidget(save_btn)
-        buttons.addWidget(close_btn)
-        layout.addLayout(buttons)
-        dialog.setLayout(layout)
-        dialog.exec_()
-
-    def save_enrollment(self, dialog, student_id_edit, class_combo, term_combo):
-        student_id = student_id_edit.text().strip()
-        class_id = class_combo.currentData()
-        term_id = term_combo.currentData()
-
-        if not all([student_id, class_id, term_id]):
-            QMessageBox.warning(dialog, "Error", "Required fields are missing")
-            return
-        try:
-            with get_db_connection() as (conn, c):
-                c.execute("SELECT COUNT(*) FROM Students WHERE StudentID = ?", (student_id,))
-                if c.fetchone()[0] == 0:
-                    QMessageBox.warning(dialog, "Error", "Student ID does not exist")
-                    return
-                c.execute("SELECT PayRate FROM Students WHERE StudentID = ?",(student_id,))
-                Payrate = c.fetchone()[0]
-                c.execute("SELECT COUNT(*) FROM StudentTerm WHERE StudentID = ? AND ClassID = ? AND TermID = ?", (student_id, class_id, term_id))
-                if c.fetchone()[0] > 0:
-                    QMessageBox.warning(dialog, "Error", "Duplicate enrollment for this class and term")
-                    return
-                c.execute("""INSERT INTO StudentTerm (StudentID, ClassID, TermID, PayRate)
-                             VALUES (?, ?, ?, ?)""", (student_id, class_id, term_id,Payrate))
-                conn.commit()
-                QMessageBox.information(dialog, "Success", "Enrollment added successfully")
-                student_id_edit.clear()
-                class_combo.setCurrentIndex(0)
-                term_combo.setCurrentIndex(0)
-                self.load_data()
-        except Exception as e:
-            QMessageBox.warning(dialog, "Error", f"Failed to add enrollment: {str(e)}")
 
     def load_data(self):
         try:
@@ -1307,7 +2015,6 @@ class EnrollmentsTab(QWidget):
             for t in terms:
                 term_combo.addItem(t[1], t[0])
     
-
     def pay_fee(self, student_term_id):
         """Open fee payment dialog for a specific student term enrollment"""
         try:
@@ -4420,6 +5127,14 @@ class FeesPaymentPage(QWidget):
         self.class_combo.addItem("All Classes", None)
         self.class_combo.currentIndexChanged.connect(self.load_data)
         
+        # Status Filter
+        self.Status_filter = QComboBox()
+        self.Status_filter.addItem("All Statuses", None)
+        self.Status_filter.addItem("Paid", "Paid")
+        self.Status_filter.addItem("Partial", "Partial")
+        self.Status_filter.addItem("Unpaid", "Unpaid")
+        self.Status_filter.currentIndexChanged.connect(self.load_data)
+
         # Load filter options
         self.load_filter_options()
         
@@ -4431,6 +5146,8 @@ class FeesPaymentPage(QWidget):
         filter_layout.addWidget(self.term_combo)
         filter_layout.addWidget(QLabel("Class:"))
         filter_layout.addWidget(self.class_combo)
+        filter_layout.addWidget(QLabel("Status:"))
+        filter_layout.addWidget(self.Status_filter)
         filter_layout.addStretch()
         
         layout.addLayout(filter_layout)
@@ -4442,10 +5159,13 @@ class FeesPaymentPage(QWidget):
         generate_btn.clicked.connect(self.generate_payment_template_dialog)
         import_btn = QPushButton("Import Payments")
         import_btn.clicked.connect(self.import_payments_dialog)
+        self.results_label = QLabel("0 results")
+        self.results_label.setStyleSheet("font-size: 14px; color: #718096;")
         action_layout.addWidget(generate_btn)
         action_layout.addWidget(import_btn)
+        action_layout.addWidget(self.results_label)
         action_layout.addStretch()
-        layout.addLayout(action_layout)
+        filter_layout.addLayout(action_layout)
 
         # Table
         self.table = QTableWidget()
@@ -4492,28 +5212,37 @@ class FeesPaymentPage(QWidget):
         """Load payment data with filters"""
         try:
             with get_db_connection() as (conn, c):
+                # Use a subquery to calculate PaymentStatus and then filter it
                 query = """
-                SELECT 
-                    s.Student_Name,
-                    t.TermName || ' (' || ay.Year || ')' as TermWithYear,
-                    c.ClassName,
-                    ROUND(f.Amount * (st.PayRate / 100.0), 2) as FeeAfterDiscount,
-                    COALESCE(SUM(fp.AmountPaid), 0) as AmountPaid,
-                    ROUND(MAX(f.Amount * (st.PayRate / 100.0)) - COALESCE(SUM(fp.AmountPaid), 0), 2) as UnpaidAmount,
-                    CASE 
-                        WHEN COALESCE(SUM(fp.AmountPaid), 0) >= (f.Amount * (st.PayRate / 100.0)) THEN 'Paid'
-                        WHEN COALESCE(SUM(fp.AmountPaid), 0) > 0 THEN 'Partial'
-                        ELSE 'Unpaid'
-                    END as PaymentStatus,
-                    st.StudentTermID,
-                    f.FeesID
-                FROM StudentTerm st
-                JOIN Students s ON st.StudentID = s.StudentID
-                JOIN Class c ON st.ClassID = c.ClassID
-                JOIN Term t ON st.TermID = t.TermID
-                JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
-                JOIN Fees f ON f.Class = c.ClassID AND f.Term = t.TermID
-                LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
+                SELECT * FROM (
+                    SELECT 
+                        s.Student_Name,
+                        s.StudentID,
+                        t.TermName || ' (' || ay.Year || ')' as TermWithYear,
+                        c.ClassName,
+                        ROUND(f.Amount * (st.PayRate / 100.0), 2) as FeeAfterDiscount,
+                        COALESCE(SUM(fp.AmountPaid), 0) as AmountPaid,
+                        ROUND(MAX(f.Amount * (st.PayRate / 100.0)) - COALESCE(SUM(fp.AmountPaid), 0), 2) as UnpaidAmount,
+                        CASE 
+                            WHEN COALESCE(SUM(fp.AmountPaid), 0) >= (f.Amount * (st.PayRate / 100.0)) THEN 'Paid'
+                            WHEN COALESCE(SUM(fp.AmountPaid), 0) > 0 THEN 'Partial'
+                            ELSE 'Unpaid'
+                        END as PaymentStatus,
+                        st.StudentTermID,
+                        f.FeesID,
+                        ay.Year as AcademicYear,
+                        t.TermName,
+                        c.ClassName as ClassNameRaw
+                    FROM StudentTerm st
+                    JOIN Students s ON st.StudentID = s.StudentID
+                    JOIN Class c ON st.ClassID = c.ClassID
+                    JOIN Term t ON st.TermID = t.TermID
+                    JOIN AcademicYear ay ON c.AcademicYear = ay.AcademicYearID
+                    JOIN Fees f ON f.Class = c.ClassID AND f.Term = t.TermID
+                    LEFT JOIN FeesPayment fp ON st.StudentTermID = fp.StudentTermID
+                    GROUP BY st.StudentTermID
+                ) as subquery
+                WHERE 1=1
                 """
                 
                 filters = []
@@ -4522,59 +5251,106 @@ class FeesPaymentPage(QWidget):
                 # Apply filters
                 search_text = self.search_input.text().strip()
                 if search_text:
-                    filters.append("(s.Student_Name LIKE ? OR s.StudentID LIKE ?)")
+                    filters.append("(Student_Name LIKE ? OR StudentID LIKE ?)")
                     params.extend([f"%{search_text}%", f"%{search_text}%"])
                 
                 selected_year = self.year_combo.currentData()
                 if selected_year:
-                    filters.append("ay.Year = ?")
+                    filters.append("AcademicYear = ?")
                     params.append(selected_year)
                 
                 selected_term = self.term_combo.currentData()
                 if selected_term:
-                    filters.append("t.TermName = ?")
+                    filters.append("TermName = ?")
                     params.append(selected_term)
                 
                 selected_class = self.class_combo.currentData()
                 if selected_class:
-                    filters.append("c.ClassName = ?")
+                    filters.append("ClassNameRaw = ?")
                     params.append(selected_class)
                 
-                if filters:
-                    query += " WHERE " + " AND ".join(filters)
+                selected_status = self.Status_filter.currentData()
+                if selected_status and selected_status != "All":
+                    filters.append("PaymentStatus = ?")
+                    params.append(selected_status)
                 
-                query += """
-                GROUP BY st.StudentTermID
-                ORDER BY s.Student_Name, ay.Year, t.TermName
-                """
+                if filters:
+                    query += " AND " + " AND ".join(filters)
+                
+                query += " ORDER BY Student_Name, AcademicYear, TermName"
                 
                 c.execute(query, params)
                 rows = c.fetchall()
                 
+                # Set column headers
+                headers = ["Student Name", "Student ID", "Term (Year)", "Class", "Fee After Discount", 
+                        "Amount Paid", "Unpaid Amount", "Status", "Actions"]
+                self.table.setColumnCount(len(headers))
+                self.table.setHorizontalHeaderLabels(headers)
+                
+                # Configure columns
+                header = self.table.horizontalHeader()
+                for col in range(8):  # First 8 columns stretch
+                    header.setSectionResizeMode(col, QHeaderView.Stretch)
+                header.setSectionResizeMode(8, QHeaderView.Fixed)  # Actions column fixed
+                header.resizeSection(8, 120)
+                
                 self.table.setRowCount(0)
+                
                 for row_data in rows:
                     row = self.table.rowCount()
                     self.table.insertRow(row)
                     
+                    # Map row_data to columns (skip StudentTermID and FeesID at the end)
+                    display_data = [
+                        row_data[0],  # Student_Name
+                        row_data[1],  # StudentID
+                        row_data[2],  # TermWithYear
+                        row_data[3],  # ClassName
+                        f"{row_data[4]:,.2f}" if row_data[4] else "0.00",  # FeeAfterDiscount
+                        f"{row_data[5]:,.2f}" if row_data[5] else "0.00",  # AmountPaid
+                        f"{row_data[6]:,.2f}" if row_data[6] else "0.00",  # UnpaidAmount
+                        row_data[7]   # PaymentStatus
+                    ]
+                    
                     # Add data columns
-                    for col, data in enumerate(row_data[:7]):  # First 7 columns are data
+                    for col, data in enumerate(display_data):
                         item = QTableWidgetItem(str(data))
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                         
                         # Color code status
-                        if col == 6:  # Status column
-                            if data == 'Paid':
-                                item.setBackground(QColor(200, 255, 200))
-                            elif data == 'Partial':
-                                item.setBackground(QColor(255, 255, 200))
+                        if col == 7:  # Status column (index 7)
+                            status = str(data)
+                            if status == 'Paid':
+                                item.setBackground(QColor(200, 255, 200))  # Light green
+                                item.setForeground(QColor(0, 100, 0))  # Dark green text
+                            elif status == 'Partial':
+                                item.setBackground(QColor(255, 255, 200))  # Light yellow
+                                item.setForeground(QColor(153, 102, 0))  # Brown text
+                            else:  # Unpaid
+                                item.setBackground(QColor(255, 200, 200))  # Light red
+                                item.setForeground(QColor(139, 0, 0))  # Dark red text
+                        
+                        # Color code amount columns
+                        elif col == 4:  # FeeAfterDiscount
+                            item.setForeground(QColor(0, 0, 139))  # Dark blue
+                            item.setFont(QFont("Arial", 9, QFont.Bold))
+                        elif col == 5:  # AmountPaid
+                            item.setForeground(QColor(0, 100, 0))  # Dark green
+                            item.setFont(QFont("Arial", 9, QFont.Bold))
+                        elif col == 6:  # UnpaidAmount
+                            unpaid = float(data.replace(',', '')) if data else 0
+                            if unpaid > 0:
+                                item.setForeground(QColor(139, 0, 0))  # Dark red
+                                item.setFont(QFont("Arial", 9, QFont.Bold))
                             else:
-                                item.setBackground(QColor(255, 200, 200))
+                                item.setForeground(QColor(0, 100, 0))  # Dark green
                         
                         self.table.setItem(row, col, item)
                     
                     # Add Payment History button
-                    student_term_id = row_data[7]  # StudentTermID
-                    fees_id = row_data[8]  # FeesID
+                    student_term_id = row_data[8]  # StudentTermID
+                    fees_id = row_data[9]  # FeesID
                     
                     history_btn = QPushButton("View History")
                     history_btn.setStyleSheet("""
@@ -4582,12 +5358,16 @@ class FeesPaymentPage(QWidget):
                             background-color: #4299E1;
                             color: white;
                             border: none;
-                            padding: 5px;
+                            padding: 5px 10px;
                             border-radius: 3px;
                             font-size: 11px;
+                            font-weight: bold;
                         }
                         QPushButton:hover {
                             background-color: #3182CE;
+                        }
+                        QPushButton:pressed {
+                            background-color: #2B6CB0;
                         }
                     """)
                     history_btn.clicked.connect(
@@ -4595,13 +5375,19 @@ class FeesPaymentPage(QWidget):
                         self.show_payment_history(stid, fid)
                     )
                     
-                    self.table.setCellWidget(row, 7, history_btn)
-                    self.table.setRowHeight(row,40)
-                    
-
+                    self.table.setCellWidget(row, 8, history_btn)
+                    self.table.setRowHeight(row, 40)
                 
+                # Update results label
+                count = len(rows)
+                status_text = ""
+                if selected_status and selected_status != "All":
+                    status_text = f" with status '{selected_status}'"
+                
+                self.results_label.setText(f"{count} Results")
+                    
         except Exception as e:
-            QMessageBox.warning(f"Error loading data: {e}")
+            QMessageBox.warning(self, "Error", f"Error loading data: {str(e)}")
 
     def show_payment_history(self, student_term_id, fees_id):
         """Show payment history dialog for a student"""
