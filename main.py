@@ -846,42 +846,34 @@ class StudentsTab(QWidget):
         dialog.exec_()
 
     def update_class_term_combos(self, academic_year_combo, class_combo, term_combo):
-        """Update class and term combos based on selected academic year"""
         academic_year_id = academic_year_combo.currentData()
-        
-        # Clear existing items (keep first "Select..." item)
+
         while class_combo.count() > 1:
             class_combo.removeItem(class_combo.count() - 1)
         while term_combo.count() > 1:
             term_combo.removeItem(term_combo.count() - 1)
-        
+
         if academic_year_id:
-            try:
-                with get_db_connection() as (conn, c):
-                    # Load classes for selected academic year
-                    c.execute("""
-                        SELECT ClassID, ClassName 
-                        FROM Class 
-                        WHERE AcademicYear = ? 
-                        ORDER BY ClassName
-                    """, (academic_year_id,))
-                    
-                    for class_id, class_name in c.fetchall():
-                        class_combo.addItem(class_name, class_id)
-                    
-                    # Load terms for selected academic year
-                    c.execute("""
-                        SELECT TermID, TermName 
-                        FROM Term 
-                        WHERE AcademicYear = ? 
-                        ORDER BY TermName
-                    """, (academic_year_id,))
-                    
-                    for term_id, term_name in c.fetchall():
-                        term_combo.addItem(term_name, term_id)
-                        
-            except sqlite3.Error as e:
-                QMessageBox.warning(self, "Database Error", f"Failed to load classes/terms: {str(e)}")
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT ClassID, ClassName 
+                    FROM Class 
+                    WHERE AcademicYear = ?
+                """, (academic_year_id,))
+                for cid, cname in c.fetchall():
+                    class_combo.addItem(cname, cid)
+
+                c.execute("""
+                    SELECT TermID, TermName 
+                    FROM Term 
+                    WHERE AcademicYear = ?
+                """, (academic_year_id,))
+                for tid, tname in c.fetchall():
+                    term_combo.addItem(tname, tid)
+
+        # 🔥 CRITICAL FIX
+        class_combo.setCurrentIndex(0)
+        term_combo.setCurrentIndex(0)
 
     def save_enrollment(self, dialog, student_id_edit, class_combo, term_combo):
         student_id = student_id_edit.text().strip()
@@ -975,16 +967,13 @@ class StudentsTab(QWidget):
                 
                 class_year_id = class_year_id_result[0]
                 
-                if term_year_id != class_year_id:
-                    # Get class year name for better error message
-                    c.execute("SELECT Year FROM AcademicYear WHERE AcademicYearID = ?", (class_year_id,))
-                    class_year_name_full = c.fetchone()
-                    class_year_display = class_year_name_full[0] if class_year_name_full else f"Year {class_year_id}"
-                    
-                    QMessageBox.warning(dialog, "Error", 
-                                    f"Term '{self.get_combo_text(term_combo)}' belongs to academic year '{term_year_name}'\n"
-                                    f"Class '{self.get_combo_text(class_combo)}' belongs to academic year '{class_year_display}'\n\n"
-                                    f"Term and Class must belong to the same academic year.")
+                selected_year = self.academic_year_combo.currentData()
+                if selected_year not in (term_year_id, class_year_id):
+                    QMessageBox.warning(
+                        dialog,
+                        "Error",
+                        "Selected class or term does not match the selected academic year."
+                    )
                     return
                 
                 # 7. Get class and term names for confirmation message
@@ -1026,13 +1015,10 @@ class StudentsTab(QWidget):
                 
                 QMessageBox.information(dialog, "Success", success_msg)
                 
-                # Clear form
-                student_id_edit.clear()
-                class_combo.setCurrentIndex(0)
-                term_combo.setCurrentIndex(0)
-                
                 # Refresh table
                 self.load_data()
+                dialog.accept()
+                return
                 
         except sqlite3.IntegrityError as e:
             # Handle any database constraint violations
@@ -1264,6 +1250,7 @@ class EnrollmentsTab(QWidget):
         self.search_input.textChanged.connect(self.load_data)
 
         self.AcademicYear_filter = QComboBox()
+        self.AcademicYear_filter.addItem("All Years", None)
         with get_db_connection() as (conn,c):
             c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY YEAR DESC")
             for years in c.fetchall():
@@ -1421,6 +1408,7 @@ class EnrollmentsTab(QWidget):
         
         # Academic Year
         self.target_year_combo = QComboBox()
+        self.target_year_combo.addItem("Select Academic Year", None)
         with get_db_connection() as (conn, c):
             c.execute("SELECT AcademicYearID, Year FROM AcademicYear ORDER BY Year DESC")
             for year_id, year_name in c.fetchall():
@@ -1528,32 +1516,35 @@ class EnrollmentsTab(QWidget):
         self.target_class_combo.currentIndexChanged.connect(check_fields)
         
         dialog.exec_()
-    
+
     def update_target_filters(self, year_combo, term_combo, class_combo):
-        """Update term and class dropdowns based on selected academic year"""
         year_id = year_combo.currentData()
-        
-        # Clear existing items (keep first "Select..." item)
+
         while term_combo.count() > 1:
             term_combo.removeItem(term_combo.count() - 1)
         while class_combo.count() > 1:
             class_combo.removeItem(class_combo.count() - 1)
-        
+
         if year_id:
-            try:
-                with get_db_connection() as (conn, c):
-                    # Load terms for selected year
-                    c.execute("SELECT TermID, TermName FROM Term WHERE AcademicYear = ? ORDER BY TermName", (year_id,))
-                    for term_id, term_name in c.fetchall():
-                        term_combo.addItem(term_name, term_id)
-                    
-                    # Load classes for selected year
-                    c.execute("SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ? ORDER BY ClassName", (year_id,))
-                    for class_id, class_name in c.fetchall():
-                        class_combo.addItem(class_name, class_id)
-            except sqlite3.Error as e:
-                QMessageBox.warning(self, "Database Error", f"Failed to load data: {str(e)}")
-    
+            with get_db_connection() as (conn, c):
+                c.execute(
+                    "SELECT TermID, TermName FROM Term WHERE AcademicYear = ?",
+                    (year_id,)
+                )
+                for tid, tname in c.fetchall():
+                    term_combo.addItem(tname, tid)
+
+                c.execute(
+                    "SELECT ClassID, ClassName FROM Class WHERE AcademicYear = ?",
+                    (year_id,)
+                )
+                for cid, cname in c.fetchall():
+                    class_combo.addItem(cname, cid)
+
+        
+        term_combo.setCurrentIndex(0)
+        class_combo.setCurrentIndex(0)
+  
     def validate_and_process_bulk_enrollment(self, dialog, selected_students, 
                                            target_year_id, target_term_id, target_class_id,
                                            payrate_option, uniform_payrate_data, custom_payrate_text):
@@ -1583,18 +1574,19 @@ class EnrollmentsTab(QWidget):
         
         # Validate each student
         validation_results = self.validate_bulk_enrollments(
-            selected_students, target_year_id, target_term_id, target_class_id
+            selected_students, target_term_id, target_class_id
         )
         
         valid_students = [r for r in validation_results if r['valid']]
         invalid_students = [r for r in validation_results if not r['valid']]
         
         if not valid_students:
-            error_msg = "No valid students to enroll. Reasons:\n"
-            for invalid in invalid_students:
-                error_msg += f"• {invalid['student_name']} ({invalid['student_id']}): {invalid['error']}\n"
-            self.bulk_error_label.setText(error_msg)
+            self.bulk_error_label.setText(
+                f"No students eligible for enrollment.\n"
+                f"Reason: all selected students are already enrolled in this term."
+            )
             return
+
         
         # Show confirmation dialog with summary
         confirm_msg = f"Enroll {len(valid_students)} student(s) to:\n"
@@ -1618,9 +1610,13 @@ class EnrollmentsTab(QWidget):
         
         if reply == QMessageBox.Yes:
             success_count, error_details = self.process_bulk_enrollment(
-                valid_students, target_year_id, target_term_id, target_class_id,
-                payrate_option, uniform_payrate
+                valid_students,
+                target_term_id,
+                target_class_id,
+                payrate_option,
+                uniform_payrate
             )
+
             
             # Show results
             result_msg = f"✅ Successfully enrolled {success_count} student(s).\n"
@@ -1641,149 +1637,84 @@ class EnrollmentsTab(QWidget):
                 self.load_data()  # Refresh table
                 self.update_selected_count()  # Reset selection count
     
-    def validate_bulk_enrollments(self, selected_students, target_year_id, target_term_id, target_class_id):
-        """Validate each student for bulk enrollment"""
+    def validate_bulk_enrollments(self, selected_students, target_term_id, target_class_id):
+        """
+        Validates students for enrollment into a NEW term.
+        A student may exist in StudentTerm, but NOT for the target term.
+        """
         results = []
-        
-        try:
-            with get_db_connection() as (conn, c):
-                for student_id, student_name, current_payrate in selected_students:
-                    result = {
-                        'student_id': student_id,
-                        'student_name': student_name,
-                        'current_payrate': current_payrate,
-                        'valid': True,
-                        'error': None
-                    }
-                    
-                    # 1. Check if student exists
-                    c.execute("SELECT StudentID FROM Students WHERE StudentID = ?", (student_id,))
-                    if not c.fetchone():
-                        result['valid'] = False
-                        result['error'] = "Student does not exist"
-                        results.append(result)
-                        continue
-                    
-                    # 2. Check if already enrolled in target class/term (UNIQUE constraint)
-                    c.execute("""
-                        SELECT COUNT(*) FROM StudentTerm 
-                        WHERE StudentID = ? AND ClassID = ? AND TermID = ?
-                    """, (student_id, target_class_id, target_term_id))
-                    
-                    if c.fetchone()[0] > 0:
-                        result['valid'] = False
-                        result['error'] = "Already enrolled in this class/term"
-                        results.append(result)
-                        continue
-                    
-                    # 3. Check if student is already in another class in the same term
-                    c.execute("""
-                        SELECT c.ClassName 
-                        FROM StudentTerm st
-                        JOIN Class c ON st.ClassID = c.ClassID
-                        WHERE st.StudentID = ? AND st.TermID = ?
-                    """, (student_id, target_term_id))
-                    
-                    existing_enrollment = c.fetchone()
-                    if existing_enrollment:
-                        result['valid'] = False
-                        result['error'] = f"Already in class '{existing_enrollment[0]}' for this term"
-                        results.append(result)
-                        continue
-                    
-                    # 4. Check term belongs to selected academic year
-                    c.execute("SELECT AcademicYear FROM Term WHERE TermID = ?", (target_term_id,))
-                    term_year = c.fetchone()
-                    if not term_year or term_year[0] != target_year_id:
-                        result['valid'] = False
-                        result['error'] = "Term does not belong to selected academic year"
-                        results.append(result)
-                        continue
-                    
-                    # 5. Check class belongs to selected academic year
-                    c.execute("SELECT AcademicYear FROM Class WHERE ClassID = ?", (target_class_id,))
-                    class_year = c.fetchone()
-                    if not class_year or class_year[0] != target_year_id:
-                        result['valid'] = False
-                        result['error'] = "Class does not belong to selected academic year"
-                        results.append(result)
-                        continue
-                    
+
+        with get_db_connection() as (conn, c):
+            for student_id, student_name, current_payrate in selected_students:
+                result = {
+                    "student_id": student_id,
+                    "student_name": student_name,
+                    "current_payrate": current_payrate,
+                    "valid": True,
+                    "error": None
+                }
+
+                # 1️⃣ Student must exist
+                c.execute(
+                    "SELECT 1 FROM Students WHERE StudentID = ?",
+                    (student_id,)
+                )
+                if not c.fetchone():
+                    result["valid"] = False
+                    result["error"] = "Student does not exist"
                     results.append(result)
-                    
-        except sqlite3.Error as e:
-            # If database error, mark all as invalid
-            for student_id, student_name, _ in selected_students:
-                results.append({
-                    'student_id': student_id,
-                    'student_name': student_name,
-                    'valid': False,
-                    'error': f"Database error: {str(e)}"
-                })
-        
+                    continue
+
+                # 2️⃣ Student must NOT already be enrolled in target term
+                c.execute("""
+                    SELECT 1
+                    FROM StudentTerm
+                    WHERE StudentID = ? AND TermID = ?
+                """, (student_id, target_term_id))
+
+                if c.fetchone():
+                    result["valid"] = False
+                    result["error"] = "Already enrolled in this term"
+                    results.append(result)
+                    continue
+
+                # 3️⃣ Passed all checks
+                results.append(result)
+
         return results
-    
-    def process_bulk_enrollment(self, valid_students, target_year_id, target_term_id, target_class_id,
-                              payrate_option, uniform_payrate=None):
-        """Process the bulk enrollment transaction"""
+
+    def process_bulk_enrollment(self, valid_students, target_term_id, target_class_id,
+                            payrate_option, uniform_payrate=None):
         success_count = 0
-        error_details = []
-        
-        try:
-            with get_db_connection() as (conn, c):
-                for student in valid_students:
-                    try:
-                        # Determine PayRate
-                        if payrate_option == "uniform" and uniform_payrate is not None:
-                            payrate = uniform_payrate
-                        else:
-                            payrate = student['current_payrate']
-                        
-                        # Insert enrollment
-                        c.execute("""
-                            INSERT INTO StudentTerm (StudentID, ClassID, TermID, PayRate)
-                            VALUES (?, ?, ?, ?)
-                        """, (student['student_id'], target_class_id, target_term_id, payrate))
-                        
-                        success_count += 1
-                        
-                    except sqlite3.IntegrityError as e:
-                        # Handle unique constraint violation
-                        if "UNIQUE" in str(e):
-                            error_details.append({
-                                'student_id': student['student_id'],
-                                'student_name': student['student_name'],
-                                'error': "Duplicate enrollment (violates UNIQUE constraint)"
-                            })
-                        else:
-                            error_details.append({
-                                'student_id': student['student_id'],
-                                'student_name': student['student_name'],
-                                'error': f"Database error: {str(e)}"
-                            })
-                    except Exception as e:
-                        error_details.append({
-                            'student_id': student['student_id'],
-                            'student_name': student['student_name'],
-                            'error': f"Error: {str(e)}"
-                        })
-                
-                # Commit only if there were successful operations
-                if success_count > 0:
-                    conn.commit()
-                else:
-                    conn.rollback()
-                    
-        except sqlite3.Error as e:
-            # Transaction failed
-            error_details.append({
-                'student_id': "All",
-                'student_name': "Transaction",
-                'error': f"Transaction failed: {str(e)}"
-            })
-        
-        return success_count, error_details
-        
+        errors = []
+
+        with get_db_connection() as (conn, c):
+            try:
+                for s in valid_students:
+                    payrate = (
+                        uniform_payrate
+                        if payrate_option == "uniform" and uniform_payrate is not None
+                        else s["current_payrate"]
+                    )
+
+                    c.execute("""
+                        INSERT INTO StudentTerm (StudentID, ClassID, TermID, PayRate)
+                        VALUES (?, ?, ?, ?)
+                    """, (s["student_id"], target_class_id, target_term_id, payrate))
+
+                    success_count += 1
+
+                conn.commit()
+
+            except sqlite3.Error as e:
+                conn.rollback()
+                errors.append({
+                    "student_name": "Transaction",
+                    "error": str(e)
+                })
+
+        return success_count, errors
+       
     def update_filters(self):
         """Update class and term filters when academic year changes"""
         year_id = self.AcademicYear_filter.currentData()
@@ -6780,9 +6711,11 @@ class Uniforms(QTabWidget):
         super().__init__()
         self.Dashboard = UniformDashBoard()
         self.Inventory = InventoryManagement()
+        self.Expenses = UniformExpensesTab()
         self.Report = ReportGenerator()
         self.addTab(self.Dashboard,"Dashboard & Insights")
         self.addTab(self.Inventory,"Inventory")
+        self.addTab(self.Expenses,"Expenses")
         self.addTab(self.Report,"Reports")
 
 class UniformDialog(QDialog):
@@ -7666,7 +7599,7 @@ class InventoryManagement(QWidget):
                 
                 # Update uniform quantity
                 if inv_type == "In":
-                    c.execute("UPDATE Uniform SET Quantity = Quantity + ?, Price = ? WHERE UniformId = ?",
+                    c.execute("UPDATE Uniform SET Quantity = Quantity + ?, UniformPrice = ? WHERE UniformId = ?",
                             (quantity, price, uniform_id))
                 else:
                     c.execute("UPDATE Uniform SET Quantity = Quantity - ? WHERE UniformId = ?",
@@ -7966,6 +7899,829 @@ class InventoryManagement(QWidget):
                     
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to delete inventory: {str(e)}")
+
+class UniformExpensesTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+
+        # Header with title and search
+        self.header = QHBoxLayout()
+        self.Heading = QLabel("Uniform Expenses")
+        self.Heading.setStyleSheet("font-size: 18px; font-weight: bold; color: #2D3748;")
+        
+        self.searchbar = QLineEdit()
+        self.searchbar.setPlaceholderText("Search expenses...")
+        self.searchbar.textChanged.connect(self.load_data)
+        
+        # Filters
+        self.categoryFilter = QComboBox()
+        self.categoryFilter.addItem("All Categories", None)
+        self.categoryFilter.currentIndexChanged.connect(self.load_data)
+        self.categoryFilter.currentIndexChanged.connect(self.update_subcategory_filter)
+        
+        self.subcategoryFilter = QComboBox()
+        self.subcategoryFilter.addItem("All Subcategories", None)
+        self.subcategoryFilter.currentIndexChanged.connect(self.load_data)
+        
+        self.monthFilter = QComboBox()
+        self.monthFilter.addItem("All Months", None)
+        months = [
+            ("January", 1), ("February", 2), ("March", 3), ("April", 4),
+            ("May", 5), ("June", 6), ("July", 7), ("August", 8),
+            ("September", 9), ("October", 10), ("November", 11), ("December", 12)
+        ]
+        for month_name, month_num in months:
+            self.monthFilter.addItem(month_name, month_num)
+        self.monthFilter.currentIndexChanged.connect(self.load_data)
+        
+        self.yearFilter = QComboBox()
+        self.yearFilter.addItem("All Years", None)
+        current_year = datetime.now().year
+        for year in range(current_year, current_year + 6, -1):
+            self.yearFilter.addItem(str(year), year)
+        self.yearFilter.currentIndexChanged.connect(self.load_data)
+        
+        self.amountFilter = QComboBox()
+        self.amountFilter.addItem("All Amounts", None)
+        self.amountFilter.addItem("High to Low", "desc")
+        self.amountFilter.addItem("Low to High", "asc")
+        self.amountFilter.currentIndexChanged.connect(self.load_data)
+        
+        # Date range filters
+        self.fromDateFilter = QDateEdit()
+        self.fromDateFilter.setCalendarPopup(True)
+        self.fromDateFilter.setDate(QDate.currentDate().addMonths(-3))
+        self.fromDateFilter.setDisplayFormat("yyyy-MM-dd")
+        self.fromDateFilter.dateChanged.connect(self.load_data)
+        
+        self.toDateFilter = QDateEdit()
+        self.toDateFilter.setCalendarPopup(True)
+        self.toDateFilter.setDate(QDate.currentDate())
+        self.toDateFilter.setDisplayFormat("yyyy-MM-dd")
+        self.toDateFilter.dateChanged.connect(self.load_data)
+        
+        self.clearDatesBtn = QPushButton("Clear Dates")
+        self.clearDatesBtn.clicked.connect(self.clear_date_filters)
+        
+        self.addbtn = QPushButton("Add Expense")
+        self.addbtn.clicked.connect(self.show_add_expense_dialog)
+        
+        self.exportBtn = QPushButton("Export")
+        self.exportBtn.clicked.connect(self.export_expenses)
+        
+        # Filter toolbar
+        filter_toolbar = QHBoxLayout()
+        filter_toolbar.addWidget(QLabel("Category:"))
+        filter_toolbar.addWidget(self.categoryFilter)
+        filter_toolbar.addWidget(QLabel("Subcategory:"))
+        filter_toolbar.addWidget(self.subcategoryFilter)
+        filter_toolbar.addWidget(QLabel("Month:"))
+        filter_toolbar.addWidget(self.monthFilter)
+        filter_toolbar.addWidget(QLabel("Year:"))
+        filter_toolbar.addWidget(self.yearFilter)
+        filter_toolbar.addWidget(QLabel("Amount:"))
+        filter_toolbar.addWidget(self.amountFilter)
+        filter_toolbar.addStretch()
+        
+        # Date range toolbar
+        date_toolbar = QHBoxLayout()
+        date_toolbar.addWidget(QLabel("Date Range:"))
+        date_toolbar.addWidget(self.fromDateFilter)
+        date_toolbar.addWidget(QLabel("to"))
+        date_toolbar.addWidget(self.toDateFilter)
+        date_toolbar.addWidget(self.clearDatesBtn)
+        date_toolbar.addStretch()
+        date_toolbar.addWidget(self.exportBtn)
+        
+        # Main header
+        self.header.addWidget(self.Heading)
+        self.header.addStretch()
+        self.header.addWidget(QLabel("Search:"))
+        self.header.addWidget(self.searchbar)
+        self.header.addWidget(self.addbtn)
+        
+        layout.addLayout(self.header)
+        layout.addLayout(filter_toolbar)
+        layout.addLayout(date_toolbar)
+        
+        # Table setup
+        self.table = QTableWidget()
+        self.table.setColumnCount(10)
+        self.table.setHorizontalHeaderLabels([
+            "ID", "Category", "Subcategory", "Amount", "Date", "Reference", 
+            "Description", "Month", "Year", "Actions"
+        ])
+        self.table.hideColumn(0)  # Hide ID
+        self.table.hideColumn(7)  # Hide Month
+        self.table.hideColumn(8)  # Hide Year
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setShowGrid(True)
+        self.table.verticalHeader().setVisible(False)
+        # self.exportBtn.clicked.connect(lambda: export_table_to_file(table_widget=self.table, title="Uniform_Inventory", has_id_column=True))
+        
+        layout.addWidget(self.table)
+        
+        # Summary label
+        self.summary_label = QLabel()
+        self.summary_label.setStyleSheet("""
+            QLabel {
+                background-color: #F7FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 4px;
+                padding: 8px;
+                margin: 5px;
+                font-size: 12px;
+            }
+        """)
+        layout.addWidget(self.summary_label)
+        
+        # Load initial data
+        self.load_categories()
+        self.load_data()
+
+    def load_categories(self):
+        """Load uniform expense categories and subcategories"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Load uniform categories
+                c.execute("""
+                    SELECT CatID, CatName 
+                    FROM Category 
+                    WHERE Type = 'Expenses' OR Type IS NULL OR Type = ''
+                    ORDER BY CatName
+                """)
+                categories = c.fetchall()
+                
+                self.categoryFilter.clear()
+                self.categoryFilter.addItem("All Categories", None)
+                for cat_id, cat_name in categories:
+                    self.categoryFilter.addItem(cat_name, cat_id)
+                    
+        except Exception as e:
+            print(f"Error loading categories: {e}")
+
+    def update_subcategory_filter(self):
+        """Update subcategory filter based on selected category"""
+        category_id = self.categoryFilter.currentData()
+        
+        self.subcategoryFilter.clear()
+        self.subcategoryFilter.addItem("All Subcategories", None)
+        
+        if category_id:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("""
+                        SELECT SubCatID, SubCategoryName 
+                        FROM SubCategory 
+                        WHERE CategoryID = ? 
+                        ORDER BY SubCategoryName
+                    """, (category_id,))
+                    
+                    subcategories = c.fetchall()
+                    for subcat_id, subcat_name in subcategories:
+                        self.subcategoryFilter.addItem(subcat_name, subcat_id)
+                        
+            except Exception as e:
+                print(f"Error loading subcategories: {e}")
+
+    def clear_date_filters(self):
+        """Clear date range filters"""
+        self.fromDateFilter.setDate(QDate.currentDate().addMonths(-3))
+        self.toDateFilter.setDate(QDate.currentDate())
+        self.load_data()
+
+    def load_data(self):
+        """Load uniform expense data with all filters applied"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Build query with filters
+                query = """
+                    SELECT 
+                        ue.U_ExpID, 
+                        c.CatName, 
+                        sc.SubCategoryName, 
+                        ue.U_ExpAmount, 
+                        DATE(ue.U_ExpDate) as ExpDate,
+                        COALESCE(ue.U_ExpReference, '') as Reference,
+                        COALESCE(ue.U_ExpDescription, '') as Description,
+                        strftime('%m', ue.U_ExpDate) as ExpMonth,
+                        strftime('%Y', ue.U_ExpDate) as ExpYear
+                    FROM UniformExpenses ue
+                    LEFT JOIN SubCategory sc ON ue.U_SubCategory = sc.SubCatID
+                    LEFT JOIN Category c ON sc.CategoryID = c.CatID
+                    WHERE 1=1
+                """
+                params = []
+                
+                # Search filter
+                search_text = self.searchbar.text().strip()
+                if search_text:
+                    query += " AND ("
+                    query += "c.CatName LIKE ? OR "
+                    query += "sc.SubCategoryName LIKE ? OR "
+                    query += "ue.U_ExpReference LIKE ? OR "
+                    query += "ue.U_ExpDescription LIKE ?"
+                    query += ")"
+                    params.extend([f"%{search_text}%"] * 4)
+                
+                # Category filter
+                category_id = self.categoryFilter.currentData()
+                if category_id:
+                    query += " AND c.CatID = ?"
+                    params.append(category_id)
+                
+                # Subcategory filter
+                subcategory_id = self.subcategoryFilter.currentData()
+                if subcategory_id:
+                    query += " AND sc.SubCategoryID = ?"
+                    params.append(subcategory_id)
+                
+                # Month filter
+                month_filter = self.monthFilter.currentData()
+                if month_filter:
+                    query += " AND strftime('%m', ue.U_ExpDate) = ?"
+                    params.append(f"{month_filter:02d}")
+                
+                # Year filter
+                year_filter = self.yearFilter.currentData()
+                if year_filter:
+                    query += " AND strftime('%Y', ue.U_ExpDate) = ?"
+                    params.append(str(year_filter))
+                
+                # Date range filter
+                from_date = self.fromDateFilter.date().toString("yyyy-MM-dd")
+                to_date = self.toDateFilter.date().toString("yyyy-MM-dd")
+                
+                if self.fromDateFilter.date() <= self.toDateFilter.date():
+                    query += " AND DATE(ue.U_ExpDate) BETWEEN ? AND ?"
+                    params.extend([from_date, to_date])
+                else:
+                    QMessageBox.warning(self, "Invalid Date Range", 
+                                      "From date cannot be after To date")
+                
+                # Amount ordering
+                amount_order = self.amountFilter.currentData()
+                if amount_order == "desc":
+                    query += " ORDER BY ue.U_ExpAmount DESC, ue.U_ExpDate DESC"
+                elif amount_order == "asc":
+                    query += " ORDER BY ue.U_ExpAmount ASC, ue.U_ExpDate DESC"
+                else:
+                    query += " ORDER BY ue.U_ExpDate DESC, c.CatName"
+                
+                c.execute(query, params)
+                rows = c.fetchall()
+                
+                # Update table
+                self.table.setRowCount(0)
+                
+                # Calculate totals
+                total_amount = 0
+                category_totals = {}
+                
+                for idx, row in enumerate(rows):
+                    self.table.insertRow(idx)
+                    self.table.setRowHeight(idx, 40)
+                    
+                    # Update totals
+                    amount = float(row[3]) if row[3] else 0
+                    total_amount += amount
+                    
+                    category = row[1] if row[1] else "Uncategorized"
+                    if category not in category_totals:
+                        category_totals[category] = 0
+                    category_totals[category] += amount
+                    
+                    # Add data to table
+                    for col in range(9):  # 0-8 columns
+                        data = row[col] if row[col] is not None else ""
+                        
+                        item = QTableWidgetItem(str(data))
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        
+                        # Color coding
+                        if col == 3:  # Amount column
+                            item.setForeground(QColor(139, 0, 0))  # Dark red for expenses
+                            item.setFont(QFont("Arial", 9, QFont.Bold))
+                        
+                        elif col == 4:  # Date column
+                            try:
+                                date_obj = QDate.fromString(str(data), "yyyy-MM-dd")
+                                if date_obj == QDate.currentDate():
+                                    item.setForeground(QColor(0, 0, 139))  # Blue for today
+                                    item.setFont(QFont("Arial", 9, QFont.Bold))
+                            except:
+                                pass
+                        
+                        elif col == 5:  # Reference column
+                            if str(data).strip():
+                                item.setForeground(QColor(75, 75, 75))
+                            else:
+                                item.setForeground(QColor(150, 150, 150))
+                                item.setText("(No reference)")
+                        
+                        elif col == 6:  # Description column
+                            if str(data).strip():
+                                item.setForeground(QColor(75, 75, 75))
+                            else:
+                                item.setForeground(QColor(150, 150, 150))
+                                item.setText("(No description)")
+                        
+                        self.table.setItem(idx, col, item)
+                    
+                    # Add action combo
+                    row_id = row[0]
+                    action_combo = QComboBox()
+                    action_combo.addItems(["Select Action", "Edit", "Delete", "View Details"])
+                    action_combo.currentIndexChanged.connect(
+                        lambda index, rid=row_id, cb=action_combo: 
+                        self.handle_action_change(index, rid, cb)
+                    )
+                    self.table.setCellWidget(idx, 9, action_combo)
+                
+                # Update summary
+                self.update_summary(total_amount, category_totals, len(rows))
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load uniform expenses: {str(e)}")
+
+    def update_summary(self, total_amount, category_totals, row_count):
+        """Update summary label with expense totals"""
+        # Create category summary
+        category_summary = ""
+        for category, amount in sorted(category_totals.items(), key=lambda x: x[1], reverse=True):
+            percentage = (amount / total_amount * 100) if total_amount > 0 else 0
+            category_summary += f"• {category}: ${amount:,.2f} ({percentage:.1f}%)<br>"
+        
+        summary_text = f"""
+        <b>Uniform Expenses Summary:</b><br>
+        Total Expenses: <b>${total_amount:,.2f}</b> across {row_count} records<br>
+        <br>
+        <b>Breakdown by Category:</b><br>
+        {category_summary}
+        """
+        
+        self.summary_label.setText(summary_text)
+        self.summary_label.setTextFormat(Qt.RichText)
+
+    def show_add_expense_dialog(self):
+        """Show dialog to add new uniform expense"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Uniform Expense")
+        dialog.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        
+        # Category
+        category_combo = QComboBox()
+        category_combo.addItem("Select Category", None)
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT CatID, CatName 
+                    FROM Category 
+                    WHERE Type = 'Expenses' OR Type IS NULL OR Type = ''
+                    ORDER BY CatName
+                """)
+                for cat_id, cat_name in c.fetchall():
+                    category_combo.addItem(cat_name, cat_id)
+        except:
+            pass
+        
+        form.addRow("Category:", category_combo)
+        
+        # Subcategory (will be updated based on category)
+        subcategory_combo = QComboBox()
+        subcategory_combo.addItem("Select Subcategory", None)
+        form.addRow("Subcategory:", subcategory_combo)
+        
+        # Update subcategories when category changes
+        def update_subcategories():
+            category_id = category_combo.currentData()
+            subcategory_combo.clear()
+            subcategory_combo.addItem("Select Subcategory", None)
+            
+            if category_id:
+                try:
+                    with get_db_connection() as (conn, c):
+                        c.execute("""
+                            SELECT SubCatID, SubCategoryName 
+                            FROM SubCategory 
+                            WHERE CategoryID = ?
+                        """, (category_id,))
+                        for subcat_id, subcat_name in c.fetchall():
+                            subcategory_combo.addItem(subcat_name, subcat_id)
+                except:
+                    pass
+        
+        category_combo.currentIndexChanged.connect(update_subcategories)
+        
+        # Amount
+        amount_input = QLineEdit()
+        amount_input.setValidator(QDoubleValidator(0, 9999999, 2))
+        form.addRow("Amount ($):", amount_input)
+        
+        # Date
+        date_input = QDateEdit()
+        date_input.setCalendarPopup(True)
+        date_input.setDate(QDate.currentDate())
+        date_input.setDisplayFormat("yyyy-MM-dd")
+        form.addRow("Date:", date_input)
+        
+        # Reference
+        reference_input = QLineEdit()
+        reference_input.setPlaceholderText("Optional reference number")
+        form.addRow("Reference:", reference_input)
+        
+        # Description
+        description_input = QTextEdit()
+        description_input.setMaximumHeight(100)
+        description_input.setPlaceholderText("Enter description...")
+        form.addRow("Description:", description_input)
+        
+        layout.addLayout(form)
+        
+        # Error label
+        error_label = QLabel("")
+        error_label.setStyleSheet("color: #E53E3E;")
+        layout.addWidget(error_label)
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        
+        def save_expense():
+            error_label.setText("")
+            
+            # Get values
+            category_id = category_combo.currentData()
+            subcategory_id = subcategory_combo.currentData()
+            amount_text = amount_input.text().strip()
+            date = date_input.date().toString("yyyy-MM-dd")
+            reference = reference_input.text().strip()
+            description = description_input.toPlainText().strip()
+            
+            # Validation
+            if not category_id:
+                error_label.setText("Please select a category")
+                return
+            
+            if not subcategory_id:
+                error_label.setText("Please select a subcategory")
+                return
+            
+            if not amount_text:
+                error_label.setText("Amount is required")
+                return
+            
+            try:
+                amount = float(amount_text)
+                if amount <= 0:
+                    error_label.setText("Amount must be greater than 0")
+                    return
+            except ValueError:
+                error_label.setText("Please enter a valid amount")
+                return
+            
+            if not description:
+                error_label.setText("Description is required")
+                return
+            
+            try:
+                with get_db_connection() as (conn, c):
+                    # Insert new expense
+                    c.execute("""
+                        INSERT INTO UniformExpenses 
+                        (U_SubCategory, U_ExpAmount, U_ExpDate, U_ExpReference, U_ExpDescription)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (subcategory_id, amount, date, reference if reference else None, description))
+                    
+                    conn.commit()
+                    
+                    QMessageBox.information(dialog, "Success", "Uniform expense added successfully")
+                    dialog.accept()
+                    self.load_data()
+                    
+            except Exception as e:
+                error_label.setText(f"Error: {str(e)}")
+        
+        button_box.accepted.connect(save_expense)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        dialog.exec_()
+
+    def handle_action_change(self, index, expense_id, combo_box):
+        """Handle expense action selection"""
+        if index == 0:  # "Select Action"
+            return
+        
+        action = combo_box.itemText(index)
+        combo_box.setCurrentIndex(0)  # Reset combo
+        
+        if action == "Edit":
+            self.edit_expense(expense_id)
+        elif action == "Delete":
+            self.delete_expense(expense_id)
+        elif action == "View Details":
+            self.view_expense_details(expense_id)
+
+    def edit_expense(self, expense_id):
+        """Edit uniform expense"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT 
+                        ue.U_SubCategory,
+                        ue.U_ExpAmount,
+                        ue.U_ExpDate,
+                        ue.U_ExpReference,
+                        ue.U_ExpDescription,
+                        sc.SubCategoryName,
+                        c.CatName,
+                        c.CatID
+                    FROM UniformExpenses ue
+                    LEFT JOIN SubCategory sc ON ue.U_SubCategory = sc.SubCatID
+                    LEFT JOIN Category c ON sc.CategoryID = c.CatID
+                    WHERE ue.U_ExpID = ?
+                """, (expense_id,))
+                
+                expense_data = c.fetchone()
+                
+                if not expense_data:
+                    QMessageBox.warning(self, "Error", "Expense record not found")
+                    return
+                
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Edit Uniform Expense")
+                dialog.setMinimumWidth(500)
+                
+                layout = QVBoxLayout(dialog)
+                form = QFormLayout()
+                
+                # Category
+                category_combo = QComboBox()
+                category_combo.addItem("Select Category", None)
+                try:
+                    with get_db_connection() as (conn2, c2):
+                        c2.execute("""
+                            SELECT CatID, CatName 
+                            FROM Category 
+                            WHERE Type = 'Expenses' OR Type IS NULL OR Type = ''
+                            ORDER BY CatName
+                        """)
+                        for cat_id, cat_name in c2.fetchall():
+                            category_combo.addItem(cat_name, cat_id)
+                except:
+                    pass
+                
+                # Set current category
+                if expense_data[7]:  # CatID
+                    index = category_combo.findData(expense_data[7])
+                    if index >= 0:
+                        category_combo.setCurrentIndex(index)
+                
+                form.addRow("Category:", category_combo)
+                
+                # Subcategory
+                subcategory_combo = QComboBox()
+                subcategory_combo.addItem("Select Subcategory", None)
+                
+                def update_subcategories():
+                    category_id = category_combo.currentData()
+                    subcategory_combo.clear()
+                    subcategory_combo.addItem("Select Subcategory", None)
+                    
+                    if category_id:
+                        try:
+                            with get_db_connection() as (conn2, c2):
+                                c2.execute("""
+                                    SELECT SubCatID, SubCategoryName 
+                                    FROM SubCategory 
+                                    WHERE CategoryID= ?
+                                """, (category_id,))
+                                for subcat_id, subcat_name in c2.fetchall():
+                                    subcategory_combo.addItem(subcat_name, subcat_id)
+                                
+                                # Set current subcategory
+                                index = subcategory_combo.findData(expense_data[0])
+                                if index >= 0:
+                                    subcategory_combo.setCurrentIndex(index)
+                        except:
+                            pass
+                
+                category_combo.currentIndexChanged.connect(update_subcategories)
+                # Trigger initial update
+                update_subcategories()
+                
+                form.addRow("Subcategory:", subcategory_combo)
+                
+                # Amount
+                amount_input = QLineEdit(str(expense_data[1]))
+                amount_input.setValidator(QDoubleValidator(0, 9999999, 2))
+                form.addRow("Amount ($):", amount_input)
+                
+                # Date
+                date_input = QDateEdit()
+                date_input.setCalendarPopup(True)
+                try:
+                    expense_date = QDate.fromString(expense_data[2], "yyyy-MM-dd")
+                    date_input.setDate(expense_date)
+                except:
+                    date_input.setDate(QDate.currentDate())
+                date_input.setDisplayFormat("yyyy-MM-dd")
+                form.addRow("Date:", date_input)
+                
+                # Reference
+                reference_input = QLineEdit(expense_data[3] if expense_data[3] else "")
+                reference_input.setPlaceholderText("Optional reference number")
+                form.addRow("Reference:", reference_input)
+                
+                # Description
+                description_input = QTextEdit()
+                description_input.setText(expense_data[4] if expense_data[4] else "")
+                description_input.setMaximumHeight(100)
+                form.addRow("Description:", description_input)
+                
+                layout.addLayout(form)
+                
+                # Error label
+                error_label = QLabel("")
+                error_label.setStyleSheet("color: #E53E3E;")
+                layout.addWidget(error_label)
+                
+                # Buttons
+                button_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+                
+                def update_expense():
+                    error_label.setText("")
+                    
+                    # Get values
+                    category_id = category_combo.currentData()
+                    subcategory_id = subcategory_combo.currentData()
+                    amount_text = amount_input.text().strip()
+                    date = date_input.date().toString("yyyy-MM-dd")
+                    reference = reference_input.text().strip()
+                    description = description_input.toPlainText().strip()
+                    
+                    # Validation
+                    if not category_id:
+                        error_label.setText("Please select a category")
+                        return
+                    
+                    if not subcategory_id:
+                        error_label.setText("Please select a subcategory")
+                        return
+                    
+                    if not amount_text:
+                        error_label.setText("Amount is required")
+                        return
+                    
+                    try:
+                        amount = float(amount_text)
+                        if amount <= 0:
+                            error_label.setText("Amount must be greater than 0")
+                            return
+                    except ValueError:
+                        error_label.setText("Please enter a valid amount")
+                        return
+                    
+                    if not description:
+                        error_label.setText("Description is required")
+                        return
+                    
+                    try:
+                        with get_db_connection() as (conn2, c2):
+                            c2.execute("""
+                                UPDATE UniformExpenses 
+                                SET U_SubCategory = ?, 
+                                    U_ExpAmount = ?, 
+                                    U_ExpDate = ?, 
+                                    U_ExpReference = ?, 
+                                    U_ExpDescription = ?
+                                WHERE U_ExpID = ?
+                            """, (subcategory_id, amount, date, reference if reference else None, description, expense_id))
+                            
+                            conn2.commit()
+                            
+                            QMessageBox.information(dialog, "Success", "Uniform expense updated successfully")
+                            dialog.accept()
+                            self.load_data()
+                            
+                    except Exception as e:
+                        error_label.setText(f"Error: {str(e)}")
+                
+                button_box.accepted.connect(update_expense)
+                button_box.rejected.connect(dialog.reject)
+                layout.addWidget(button_box)
+                
+                dialog.exec_()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load expense for editing: {str(e)}")
+
+    def delete_expense(self, expense_id):
+        """Delete uniform expense with confirmation"""
+        reply = QMessageBox.question(
+            self, 
+            "Confirm Delete",
+            "Are you sure you want to delete this uniform expense?\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+   
+        if reply == QMessageBox.Yes:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("DELETE FROM UniformExpenses WHERE U_ExpID = ?", (expense_id,))
+                    conn.commit()
+                    QMessageBox.information(self, "Success", "Uniform expense deleted successfully")
+                    self.load_data()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete expense: {str(e)}")
+
+    def view_expense_details(self, expense_id):
+        """View uniform expense details"""
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("""
+                    SELECT 
+                        ue.U_ExpID,
+                        c.CatName,
+                        sc.SubCategoryName,
+                        ue.U_ExpAmount,
+                        ue.U_ExpDate,
+                        COALESCE(ue.U_ExpReference, 'N/A') as Reference,
+                        ue.U_ExpDescription,
+                        strftime('%d/%m/%Y', ue.U_ExpDate) as FormattedDate
+                    FROM UniformExpenses ue
+                    LEFT JOIN SubCategory sc ON ue.U_SubCategory = sc.SubCatID
+                    LEFT JOIN Category c ON sc.CategoryID = c.CatID
+                    WHERE ue.U_ExpID = ?
+                """, (expense_id,))
+                
+                expense_data = c.fetchone()
+                
+                if not expense_data:
+                    QMessageBox.warning(self, "Error", "Expense record not found")
+                    return
+                
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Uniform Expense Details")
+                dialog.setFixedSize(400, 350)
+                
+                layout = QVBoxLayout(dialog)
+                
+                # Details in a group box
+                details_group = QGroupBox("Expense Details")
+                details_layout = QFormLayout(details_group)
+                
+                details_layout.addRow("ID:", QLabel(str(expense_data[0])))
+                details_layout.addRow("Category:", QLabel(expense_data[1]))
+                details_layout.addRow("Subcategory:", QLabel(expense_data[2]))
+                details_layout.addRow("Amount:", QLabel(f"${float(expense_data[3]):,.2f}"))
+                details_layout.addRow("Date:", QLabel(expense_data[7]))  # Formatted date
+                details_layout.addRow("Reference:", QLabel(expense_data[5]))
+                
+                # Description in a read-only text edit
+                description_label = QLabel("Description:")
+                description_text = QTextEdit()
+                description_text.setText(expense_data[6])
+                description_text.setReadOnly(True)
+                description_text.setMaximumHeight(100)
+                
+                details_layout.addRow(description_label, description_text)
+                
+                layout.addWidget(details_group)
+                
+                # Close button
+                close_btn = QPushButton("Close")
+                close_btn.clicked.connect(dialog.close)
+                layout.addWidget(close_btn, alignment=Qt.AlignCenter)
+                
+                dialog.exec_()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load expense details: {str(e)}")
+
+    def export_expenses(self):
+        """Export expenses to file"""
+        export_table_to_file(
+            table_widget=self.table,
+            parent=self,
+            title=f"Uniform Expenses Report {datetime.now().strftime('%Y-%m-%d')}",
+            has_id_column=True
+        )
+        """Export expenses to file"""
+        export_table_to_file(
+            table_widget=self.table,
+            parent=self,
+            title=f"Expenses Report {datetime.now().strftime('%Y-%m-%d')}",
+            has_id_column=True
+        )
 
 class ReportGenerator(QWidget):
     def __init__(self, parent=None):
@@ -8943,48 +9699,146 @@ class Supplies(QWidget):
         self.setLayout(layout)
         
         self.header = QHBoxLayout()
-        self.Heading = QLabel("Supplies")
-        self.Heading.setStyleSheet("font-size: 18px; font-weight: bold; color: #2D3748;")
         self.searchbar = QLineEdit()
         self.searchbar.setPlaceholderText("Search Supplies...")
         self.searchbar.textChanged.connect(self.load_data)
+        
+        # Filters
+        self.FilterCategory = QComboBox()
+        self.FilterCategory.addItem("All Categories", None)
+        try:
+            with get_db_connection() as (conn, c):
+                c.execute("SELECT CatID, CatName FROM Category WHERE Type = 'Supplies'")
+                for cat_id, cat_name in c.fetchall():
+                    self.FilterCategory.addItem(cat_name, cat_id)
+        except Exception as e:
+            print(f"Error loading categories: {e}")
+        
+        self.FilterCategory.currentIndexChanged.connect(self.load_data)
+        self.FilterCategory.currentIndexChanged.connect(self.update_subcategory_filter)
+        
+        self.FilterSubcategory = QComboBox()
+        self.FilterSubcategory.addItem("All Subcategories", None)
+        self.FilterSubcategory.currentIndexChanged.connect(self.load_data)
+        
+        self.FilterStock = QComboBox()
+        self.FilterStock.addItems(["All Stock", "High to Low", "Low to High", "Out of Stock", "Low Stock (<10)", "In Stock"])
+        self.FilterStock.currentIndexChanged.connect(self.load_data)
+        
         self.addbtn = QPushButton("Add Supply")
         self.addbtn.clicked.connect(self.show_add_supply_dialog)
         self.exportbtn = QPushButton("Export")
         
-        self.header.addWidget(self.Heading)
-        self.header.addStretch()
+        self.header.addWidget(QLabel("Search:"))
         self.header.addWidget(self.searchbar)
+        self.header.addWidget(QLabel("Category:"))
+        self.header.addWidget(self.FilterCategory)
+        self.header.addWidget(QLabel("Subcategory:"))
+        self.header.addWidget(self.FilterSubcategory)
+        self.header.addWidget(QLabel("Stock:"))
+        self.header.addWidget(self.FilterStock)
+        self.header.addStretch()
         self.header.addWidget(self.addbtn)
+        self.header.addWidget(self.exportbtn)
         layout.addLayout(self.header)
         
         self.table = QTableWidget()
-        self.table.setColumnCount(6) # Added ID column (hidden)
-        self.table.setHorizontalHeaderLabels(["ID", "Name", "Subcategory", "Quantity", "Unit", "Actions"])
-        self.table.hideColumn(0) # Hide ID
+        self.table.setColumnCount(7)  # Added ID column and Category column
+        self.table.setHorizontalHeaderLabels(["ID", "Name", "Category", "Subcategory", "Quantity", "Unit", "Actions"])
+        self.table.hideColumn(0)  # Hide ID column
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Fixed)
-        self.table.setColumnWidth(5, 250)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Fixed)  # Actions column fixed width
+        self.table.setColumnWidth(6, 250)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         layout.addWidget(self.table)
         
         self.load_data()
-        self.exportbtn.clicked.connect(lambda:export_table_to_file(table_widget=self.table, parent=self, title=f"Supplies On{datetime.now().strftime('&d/&m/%Y')} ",has_id_column=True))
+        self.exportbtn.clicked.connect(lambda: export_table_to_file(
+            table_widget=self.table, 
+            parent=self, 
+            title=f"Supplies On {datetime.now().strftime('%d/%m/%Y')}",
+            has_id_column=True
+        ))
+
+    def update_subcategory_filter(self):
+        """Update subcategory filter based on selected category"""
+        category_id = self.FilterCategory.currentData()
+        
+        # Clear existing items except first
+        self.FilterSubcategory.clear()
+        self.FilterSubcategory.addItem("All Subcategories", None)
+        
+        if category_id:
+            try:
+                with get_db_connection() as (conn, c):
+                    # Get subcategories for selected category
+                    c.execute("""
+                        SELECT sc.SubCatID, sc.SubCategoryName 
+                        FROM SubCategory sc
+                        WHERE sc.CategoryID = ?
+                        ORDER BY sc.SubCategoryName
+                    """, (category_id,))
+                    
+                    for subcat_id, subcat_name in c.fetchall():
+                        self.FilterSubcategory.addItem(subcat_name, subcat_id)
+            except Exception as e:
+                print(f"Error loading subcategories: {e}")
 
     def load_data(self):
         try:
             with get_db_connection() as (conn, c):
                 query = """
-                    SELECT s.SuppliesID, s.Name, sc.SubCategoryName, s.Quantity, s.Unit 
+                    SELECT 
+                        s.SuppliesID, 
+                        s.Name, 
+                        c.CatName,
+                        sc.SubCategoryName, 
+                        s.Quantity, 
+                        s.Unit 
                     FROM Supplies s
                     LEFT JOIN SubCategory sc ON s.Subcategory = sc.SubCatID
+                    LEFT JOIN Category c ON sc.CategoryID = c.CatID
+                    WHERE 1=1
                 """
                 params = []
+                
+                # Search filter
                 search_text = self.searchbar.text().strip()
                 if search_text:
-                    query += " WHERE s.Name LIKE ?"
-                    params.append(f"%{search_text}%")
+                    query += " AND (s.Name LIKE ? OR c.CatName LIKE ? OR sc.SubCategoryName LIKE ?)"
+                    params.extend([f"%{search_text}%", f"%{search_text}%", f"%{search_text}%"])
+                
+                # Category filter
+                category_id = self.FilterCategory.currentData()
+                if category_id:
+                    query += " AND c.CatID = ?"
+                    params.append(category_id)
+                
+                # Subcategory filter
+                subcategory_id = self.FilterSubcategory.currentData()
+                if subcategory_id:
+                    query += " AND sc.SubCatID = ?"
+                    params.append(subcategory_id)
+                
+                # Stock ordering and filtering
+                stock_filter = self.FilterStock.currentText()
+                
+                if stock_filter == "High to Low":
+                    query += " ORDER BY s.Quantity DESC, s.Name"
+                elif stock_filter == "Low to High":
+                    query += " ORDER BY s.Quantity ASC, s.Name"
+                elif stock_filter == "Out of Stock":
+                    query += " AND s.Quantity <= 0"
+                    query += " ORDER BY s.Name"
+                elif stock_filter == "Low Stock (<10)":
+                    query += " AND s.Quantity > 0 AND s.Quantity < 10"
+                    query += " ORDER BY s.Quantity ASC, s.Name"
+                elif stock_filter == "In Stock":
+                    query += " AND s.Quantity > 0"
+                    query += " ORDER BY s.Quantity DESC, s.Name"
+                else:  # "All Stock"
+                    query += " ORDER BY s.Name"
                 
                 c.execute(query, params)
                 rows = c.fetchall()
@@ -8993,9 +9847,28 @@ class Supplies(QWidget):
                 for row_idx, row_data in enumerate(rows):
                     self.table.insertRow(row_idx)
                     self.table.setRowHeight(row_idx, 40)
+                    
                     # Data columns
                     for col_idx, data in enumerate(row_data):
-                        self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(data) if data is not None else ""))
+                        item = QTableWidgetItem(str(data) if data is not None else "")
+                        
+                        # Color code quantity based on stock level
+                        if col_idx == 4:  # Quantity column
+                            try:
+                                quantity = float(data) if data else 0
+                                if quantity <= 0:
+                                    item.setBackground(QColor(255, 200, 200))  # Red for out of stock
+                                    item.setForeground(QColor(139, 0, 0))
+                                elif quantity < 10:
+                                    item.setBackground(QColor(255, 255, 200))  # Yellow for low stock
+                                    item.setForeground(QColor(153, 102, 0))
+                                else:
+                                    item.setBackground(QColor(200, 255, 200))  # Green for good stock
+                                    item.setForeground(QColor(0, 100, 0))
+                            except:
+                                pass
+                        
+                        self.table.setItem(row_idx, col_idx, item)
                     
                     # Actions - ComboBox
                     supply_id = row_data[0]
@@ -9009,7 +9882,22 @@ class Supplies(QWidget):
                         lambda idx, sid=supply_id, sname=supply_name, cb=action_combo: 
                         self.on_supply_action_selected(idx, sid, sname, cb)
                     )
-                    self.table.setCellWidget(row_idx, 5, action_combo)
+                    self.table.setCellWidget(row_idx, 6, action_combo)
+                
+                # Update status label
+                total_items = len(rows)
+                out_of_stock = sum(1 for row in rows if (row[4] or 0) <= 0)
+                low_stock = sum(1 for row in rows if 0 < (row[4] or 0) < 10)
+                
+                status_text = f"Total: {total_items} | Out of Stock: {out_of_stock} | Low Stock: {low_stock}"
+                
+                # Add status label if not exists
+                if not hasattr(self, 'status_label'):
+                    self.status_label = QLabel(status_text)
+                    self.status_label.setStyleSheet("color: #666; font-size: 12px; padding: 5px;")
+                    self.layout().addWidget(self.status_label)
+                else:
+                    self.status_label.setText(status_text)
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
@@ -9110,7 +9998,7 @@ class Supplies(QWidget):
         try:
             with get_db_connection() as (conn, c):
                 c.execute("INSERT INTO Supplies (Name, Subcategory, Quantity, Unit) VALUES (?, ?, 0, ?)",
-                          (name, subcat_id, unit))
+                        (name, subcat_id, unit))
                 conn.commit()
             dialog.accept()
             self.load_data()
@@ -9152,7 +10040,7 @@ class Supplies(QWidget):
         try:
             with get_db_connection() as (conn, c):
                 c.execute("UPDATE Supplies SET Name=?, Unit=? WHERE SuppliesID=?", 
-                          (name_input.text().strip(), unit_input.text().strip(), supply_id))
+                        (name_input.text().strip(), unit_input.text().strip(), supply_id))
                 conn.commit()
             dialog.accept()
             self.load_data()
@@ -9161,7 +10049,7 @@ class Supplies(QWidget):
 
     def delete_supply(self, supply_id):
         reply = QMessageBox.question(self, "Confirm Delete", "Are you sure? This will delete all inventory records for this supply.",
-                                     QMessageBox.Yes | QMessageBox.No)
+                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             try:
                 with get_db_connection() as (conn, c):
@@ -9226,14 +10114,14 @@ class Supplies(QWidget):
             is_valid, projected = validate_inventory_change(supply_id, itype, qty)
             if not is_valid:
                 QMessageBox.warning(dialog, "Invalid Transaction", 
-                                  f"Insufficient stock! This transaction would result in negative inventory.\nCurrent projected stock: {projected}")
+                                f"Insufficient stock! This transaction would result in negative inventory.\nCurrent projected stock: {projected}")
                 return
             
             with get_db_connection() as (conn, c):
                 # 1. Add record
                 c.execute("""INSERT INTO SuppliesInventory (Supplies_ID, Type, Quantity, Price, Date, ReferencesNotes)
-                             VALUES (?, ?, ?, ?, ?, ?)""",
-                          (supply_id, itype, qty, price, date, ref))
+                            VALUES (?, ?, ?, ?, ?, ?)""",
+                        (supply_id, itype, qty, price, date, ref))
                 conn.commit()
             
             # 2. Recalculate stock
@@ -9253,74 +10141,261 @@ class SuppliesInventory(QWidget):
         self.setLayout(layout)       
 
         self.header = QHBoxLayout()
-        self.Heading = QLabel("Supplies Inventory")
-        self.Heading.setStyleSheet("font-size: 18px; font-weight: bold; color: #2D3748;")
+        
+        # Search bar
         self.searchbar = QLineEdit()
-        self.searchbar.setPlaceholderText("Search Supplies Inventory...")
+        self.searchbar.setPlaceholderText("Search inventory...")
         self.searchbar.textChanged.connect(self.load_data)
+        
+        # Type filter
+        self.typeFilter = QComboBox()
+        self.typeFilter.addItem("All Types", None)
+        self.typeFilter.addItem("Stock In", "In")
+        self.typeFilter.addItem("Stock Out", "Out")
+        self.typeFilter.currentIndexChanged.connect(self.load_data)
+        
+        # Date range filters
+        date_filter_label = QLabel("Date Range:")
+        
+        self.fromDateFilter = QDateEdit()
+        self.fromDateFilter.setCalendarPopup(True)
+        self.fromDateFilter.setDate(QDate.currentDate().addMonths(-1))  # Default to last month
+        self.fromDateFilter.setDisplayFormat("yyyy-MM-dd")
+        self.fromDateFilter.dateChanged.connect(self.load_data)
+        
+        to_label = QLabel("to")
+        
+        self.toDateFilter = QDateEdit()
+        self.toDateFilter.setCalendarPopup(True)
+        self.toDateFilter.setDate(QDate.currentDate())  # Default to today
+        self.toDateFilter.setDisplayFormat("yyyy-MM-dd")
+        self.toDateFilter.dateChanged.connect(self.load_data)
+        
+        # Clear date filters button
+        self.clearDateBtn = QPushButton("Clear Dates")
+        self.clearDateBtn.clicked.connect(self.clear_date_filters)
+        
         self.exportBtn = QPushButton("Export")
-        self.header.addWidget(self.Heading)
-        self.header.addStretch()
+        
+        # Add widgets to header
+        self.header.addWidget(QLabel("Search:"))
         self.header.addWidget(self.searchbar)
+        self.header.addWidget(QLabel("Type:"))
+        self.header.addWidget(self.typeFilter)
+        self.header.addWidget(date_filter_label)
+        self.header.addWidget(self.fromDateFilter)
+        self.header.addWidget(to_label)
+        self.header.addWidget(self.toDateFilter)
+        self.header.addWidget(self.clearDateBtn)
+        self.header.addStretch()
         self.header.addWidget(self.exportBtn)
         layout.addLayout(self.header)
         
         self.table = QTableWidget()
-        self.table.setColumnCount(8) # ID, SupplyID, Name, Type, Quantity, Price, Date, Actions
-        self.table.setHorizontalHeaderLabels(["ID", "SupplyID", "Name", "Type", "Quantity", "Price", "Date", "Actions"])
-        self.table.hideColumn(0) # Hide Inventory ID
-        self.table.hideColumn(1) # Hide Supply ID
+        self.table.setColumnCount(9)  # ID, SupplyID, Name, Type, Quantity, Price, Date, Reference, Actions
+        self.table.setHorizontalHeaderLabels(["ID", "SupplyID", "Name", "Type", "Quantity", "Unit Price", "Total", "Date", "Reference", "Actions"])
+        self.table.hideColumn(0)  # Hide Inventory ID
+        self.table.hideColumn(1)  # Hide Supply ID
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Fixed)
-        self.table.setColumnWidth(7, 180)
+        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Fixed)  # Actions column
+        self.table.setColumnWidth(8, 200)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.exportBtn.clicked.connect(lambda:export_table_to_file(table_widget=self.table, parent=self, title=f"Supplies Inventory On {datetime.now().strftime('%d/%m/%Y')} ",has_id_column=True))
+        self.exportBtn.clicked.connect(lambda: export_table_to_file(
+            table_widget=self.table, 
+            parent=self, 
+            title=f"Supplies Inventory {datetime.now().strftime('%d/%m/%Y')}",
+            has_id_column=True
+        ))
         layout.addWidget(self.table)
         
+        self.load_data()
+
+    def clear_date_filters(self):
+        """Clear date filters and reset to default range"""
+        self.fromDateFilter.setDate(QDate.currentDate().addMonths(-1))
+        self.toDateFilter.setDate(QDate.currentDate())
         self.load_data()
 
     def load_data(self):
         try:
             with get_db_connection() as (conn, c):
                 query = """
-                    SELECT si.Sup_Inv_ID, si.Supplies_ID, s.Name, si.Type, si.Quantity, si.Price, si.Date
+                    SELECT 
+                        si.Sup_Inv_ID, 
+                        si.Supplies_ID, 
+                        s.Name,
+                        CASE 
+                            WHEN si.Type = 'In' THEN 'Stock In'
+                            WHEN si.Type = 'Out' THEN 'Stock Out'
+                            ELSE si.Type
+                        END as TypeDisplay,
+                        si.Quantity, 
+                        si.Price,
+                        ROUND(si.Quantity * si.Price, 2) as TotalAmount,
+                        DATE(si.Date) as TransactionDate,
+                        COALESCE(si.ReferencesNotes, '') as Reference,
+                        si.Type as TypeRaw
                     FROM SuppliesInventory si
                     JOIN Supplies s ON si.Supplies_ID = s.SuppliesID
+                    WHERE 1=1
                 """
                 params = []
+                
+                # Search filter
                 search_text = self.searchbar.text().strip()
                 if search_text:
-                    query += " WHERE s.Name LIKE ? OR si.ReferencesNotes LIKE ?"
-                    params.append(f"%{search_text}%")
-                    params.append(f"%{search_text}%")
+                    query += " AND (s.Name LIKE ? OR si.ReferencesNotes LIKE ?)"
+                    params.extend([f"%{search_text}%", f"%{search_text}%"])
                 
-                query += " ORDER BY si.Date DESC"
+                # Type filter
+                type_filter = self.typeFilter.currentData()
+                if type_filter:
+                    query += " AND si.Type = ?"
+                    params.append(type_filter)
+                
+                # Date range filter
+                from_date = self.fromDateFilter.date().toString("yyyy-MM-dd")
+                to_date = self.toDateFilter.date().toString("yyyy-MM-dd")
+                
+                # Validate date range (from_date should be <= to_date)
+                if self.fromDateFilter.date() <= self.toDateFilter.date():
+                    query += " AND DATE(si.Date) BETWEEN ? AND ?"
+                    params.extend([from_date, to_date])
+                else:
+                    # If invalid range, show error and don't apply date filter
+                    QMessageBox.warning(self, "Invalid Date Range", 
+                                      "From date cannot be after To date. Date filter not applied.")
+                
+                query += " ORDER BY si.Date DESC, s.Name"
                 
                 c.execute(query, params)
                 rows = c.fetchall()
                 
                 self.table.setRowCount(0)
+                
+                # Calculate totals for summary
+                total_in_qty = 0
+                total_out_qty = 0
+                total_in_value = 0
+                total_out_value = 0
+                
                 for row_idx, row_data in enumerate(rows):
                     self.table.insertRow(row_idx)
                     self.table.setRowHeight(row_idx, 40)
-                    for col_idx, data in enumerate(row_data):
-                        self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(data)))
+                    
+                    # Update totals
+                    quantity = float(row_data[4]) if row_data[4] else 0
+                    total_amount = float(row_data[6]) if row_data[6] else 0
+                    type_raw = row_data[9]  # TypeRaw
+                    
+                    if type_raw == 'In':
+                        total_in_qty += quantity
+                        total_in_value += total_amount
+                    elif type_raw == 'Out':
+                        total_out_qty += quantity
+                        total_out_value += total_amount
+                    
+                    # Format data for display
+                    display_data = [
+                        str(row_data[0]),  # ID
+                        str(row_data[1]),  # SupplyID
+                        str(row_data[2]),  # Name
+                        str(row_data[3]),  # TypeDisplay
+                        f"{quantity:,.2f}",  # Quantity
+                        f"{row_data[5]:,.2f}" if row_data[5] else "0.00",  # Price
+                        f"{total_amount:,.2f}",  # TotalAmount
+                        str(row_data[7]),  # TransactionDate
+                        str(row_data[8])   # Reference
+                    ]
+                    
+                    for col_idx, data in enumerate(display_data):
+                        item = QTableWidgetItem(str(data))
+                        
+                        # Color coding based on type
+                        if col_idx == 3:  # Type column
+                            if type_raw == 'In':
+                                item.setBackground(QColor(200, 255, 200))  # Light green for stock in
+                                item.setForeground(QColor(0, 100, 0))
+                            elif type_raw == 'Out':
+                                item.setBackground(QColor(255, 200, 200))  # Light red for stock out
+                                item.setForeground(QColor(139, 0, 0))
+                        
+                        # Color coding for quantity
+                        elif col_idx == 4:  # Quantity column
+                            if type_raw == 'In':
+                                item.setForeground(QColor(0, 100, 0))  # Green for positive
+                            elif type_raw == 'Out':
+                                item.setForeground(QColor(139, 0, 0))  # Red for negative
+                        
+                        # Format currency columns
+                        elif col_idx in [5, 6]:  # Price and Total columns
+                            item.setForeground(QColor(0, 0, 139))  # Dark blue
+                            item.setFont(QFont("Arial", 9, QFont.Bold))
+                        
+                        # Date column formatting
+                        elif col_idx == 7:
+                            try:
+                                date_obj = QDate.fromString(str(data), "yyyy-MM-dd")
+                                if date_obj == QDate.currentDate():
+                                    item.setForeground(QColor(0, 0, 139))  # Blue for today
+                                    item.setFont(QFont("Arial", 9, QFont.Bold))
+                            except:
+                                pass
+                        
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        self.table.setItem(row_idx, col_idx, item)
                     
                     # Actions
                     action_widget = QWidget()
                     action_layout = QHBoxLayout(action_widget)
                     action_layout.setContentsMargins(5, 2, 5, 2)
+                    
                     action_combo = QComboBox()
                     action_combo.addItems(["Select Action", "Edit", "Delete"])
                     action_combo.setProperty("row_id", row_data[0])
-                    action_combo.currentIndexChanged.connect(lambda idx, inv_id=row_data[0], supply_id=row_data[1], cb=action_combo: 
-                                                     self.on_inventory_action_selected(idx, inv_id, supply_id, cb))
-                    action_layout.addWidget(action_combo)
-                    self.table.setCellWidget(row_idx, 7, action_widget)
                     
+                    action_combo.currentIndexChanged.connect(
+                        lambda idx, inv_id=row_data[0], supply_id=row_data[1], cb=action_combo: 
+                        self.on_inventory_action_selected(idx, inv_id, supply_id, cb)
+                    )
+                    
+                    action_layout.addWidget(action_combo)
+                    action_widget.setLayout(action_layout)
+                    self.table.setCellWidget(row_idx, 8, action_widget)
+                
+                # Add summary row or label
+                self.update_summary_label(total_in_qty, total_out_qty, total_in_value, total_out_value)
+                
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load inventory: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to load inventory: {str(e)}")
+
+    def update_summary_label(self, total_in_qty, total_out_qty, total_in_value, total_out_value):
+        """Update summary label with totals"""
+        summary_text = f"""
+        <b>Summary:</b> 
+        Stock In: {total_in_qty:,.2f} units (${total_in_value:,.2f}) | 
+        Stock Out: {total_out_qty:,.2f} units (${total_out_value:,.2f}) | 
+        Net: {total_in_qty - total_out_qty:,.2f} units (${total_in_value - total_out_value:,.2f})
+        """
+        
+        # Create or update summary label
+        if not hasattr(self, 'summary_label'):
+            self.summary_label = QLabel()
+            self.summary_label.setStyleSheet("""
+                QLabel {
+                    background-color: #F7FAFC;
+                    border: 1px solid #E2E8F0;
+                    border-radius: 4px;
+                    padding: 8px;
+                    margin: 5px;
+                    font-size: 12px;
+                }
+            """)
+            self.summary_label.setTextFormat(Qt.RichText)
+            self.layout().insertWidget(1, self.summary_label)  # Insert after header, before table
+        
+        self.summary_label.setText(summary_text)
     
     def on_inventory_action_selected(self, index, inv_id, supply_id, combo_box):
         """Handle inventory action selection"""
@@ -9438,105 +10513,377 @@ class Expense(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
+        # Header with title and search
         self.header = QHBoxLayout()
         self.Heading = QLabel("Expenses")
         self.Heading.setStyleSheet("font-size: 18px; font-weight: bold; color: #2D3748;")
+        
         self.searchbar = QLineEdit()
         self.searchbar.setPlaceholderText("Search Expenses...")
         self.searchbar.textChanged.connect(self.load_data)
+        
+        # Filters
+        self.categoryFilter = QComboBox()
+        self.categoryFilter.addItem("All Categories", None)
+        self.categoryFilter.currentIndexChanged.connect(self.load_data)
+        self.categoryFilter.currentIndexChanged.connect(self.update_subcategory_filter)
+        
+        self.subcategoryFilter = QComboBox()
+        self.subcategoryFilter.addItem("All Subcategories", None)
+        self.subcategoryFilter.currentIndexChanged.connect(self.load_data)
+        
+        self.monthFilter = QComboBox()
+        self.monthFilter.addItem("All Months", None)
+        months = [
+            ("January", 1), ("February", 2), ("March", 3), ("April", 4),
+            ("May", 5), ("June", 6), ("July", 7), ("August", 8),
+            ("September", 9), ("October", 10), ("November", 11), ("December", 12)
+        ]
+        for month_name, month_num in months:
+            self.monthFilter.addItem(month_name, month_num)
+        self.monthFilter.currentIndexChanged.connect(self.load_data)
+        
+        self.yearFilter = QComboBox()
+        self.yearFilter.addItem("All Years", None)
+        current_year = datetime.now().year
+        for year in range(current_year, current_year - 5, -1):
+            self.yearFilter.addItem(str(year), year)
+        self.yearFilter.currentIndexChanged.connect(self.load_data)
+        
+        self.amountFilter = QComboBox()
+        self.amountFilter.addItem("All Amounts", None)
+        self.amountFilter.addItem("High to Low", "desc")
+        self.amountFilter.addItem("Low to High", "asc")
+        self.amountFilter.currentIndexChanged.connect(self.load_data)
+        
+        # Date range filters
+        self.fromDateFilter = QDateEdit()
+        self.fromDateFilter.setCalendarPopup(True)
+        self.fromDateFilter.setDate(QDate.currentDate().addMonths(-3))  # Default: last 3 months
+        self.fromDateFilter.setDisplayFormat("yyyy-MM-dd")
+        self.fromDateFilter.dateChanged.connect(self.load_data)
+        
+        self.toDateFilter = QDateEdit()
+        self.toDateFilter.setCalendarPopup(True)
+        self.toDateFilter.setDate(QDate.currentDate())
+        self.toDateFilter.setDisplayFormat("yyyy-MM-dd")
+        self.toDateFilter.dateChanged.connect(self.load_data)
+        
+        self.clearDatesBtn = QPushButton("Clear Dates")
+        self.clearDatesBtn.clicked.connect(self.clear_date_filters)
+        
         self.addbtn = QPushButton("Add Expense")
         self.addbtn.clicked.connect(self.add_expense)
+        
+        self.exportBtn = QPushButton("Export")
+        self.exportBtn.clicked.connect(lambda: export_table_to_file(title = "Expense", table_widget = self.table,has_id_column = True))
+        
+        # Filter toolbar
+        filter_toolbar = QHBoxLayout()
+        filter_toolbar.addWidget(QLabel("Category:"))
+        filter_toolbar.addWidget(self.categoryFilter)
+        filter_toolbar.addWidget(QLabel("Subcategory:"))
+        filter_toolbar.addWidget(self.subcategoryFilter)
+        filter_toolbar.addWidget(QLabel("Month:"))
+        filter_toolbar.addWidget(self.monthFilter)
+        filter_toolbar.addWidget(QLabel("Year:"))
+        filter_toolbar.addWidget(self.yearFilter)
+        filter_toolbar.addWidget(QLabel("Amount:"))
+        filter_toolbar.addWidget(self.amountFilter)
+        filter_toolbar.addStretch()
+        
+        # Date range toolbar
+        date_toolbar = QHBoxLayout()
+        date_toolbar.addWidget(QLabel("Date Range:"))
+        date_toolbar.addWidget(self.fromDateFilter)
+        date_toolbar.addWidget(QLabel("to"))
+        date_toolbar.addWidget(self.toDateFilter)
+        date_toolbar.addWidget(self.clearDatesBtn)
+        date_toolbar.addStretch()
+        date_toolbar.addWidget(self.exportBtn)
+        
+        # Main header
         self.header.addWidget(self.Heading)
         self.header.addStretch()
+        self.header.addWidget(QLabel("Search:"))
         self.header.addWidget(self.searchbar)
         self.header.addWidget(self.addbtn)
+        
         layout.addLayout(self.header)
-
+        layout.addLayout(filter_toolbar)
+        layout.addLayout(date_toolbar)
+        
+        # Table setup
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["ID", "Category", "Subcategory", "Amount", "Date", "Description", "Actions"])
-        self.table.hideColumn(0)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Fixed)
-        self.table.setColumnWidth(6, 180)
+        self.table.setColumnCount(9)  # Added columns for filtering data
+        self.table.setHorizontalHeaderLabels([
+            "ID", "Category", "Subcategory", "Amount", "Date", "Description", 
+            "Month", "Year", "Actions"
+        ])
+        self.table.hideColumn(0)  # Hide ID
+        self.table.hideColumn(6)  # Hide Month (used for filtering)
+        self.table.hideColumn(7)  # Hide Year (used for filtering)
+        
+        # Configure column sizes
+        header = self.table.horizontalHeader()
+        for col in range(5):  # Category, Subcategory, Amount, Date, Description
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+        header.setSectionResizeMode(8, QHeaderView.Fixed)  # Actions column
+        self.table.setColumnWidth(8, 200)
+        
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         layout.addWidget(self.table)
+        
+        # Summary label
+        self.summary_label = QLabel()
+        self.summary_label.setStyleSheet("""
+            QLabel {
+                background-color: #F7FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 4px;
+                padding: 8px;
+                margin: 5px;
+                font-size: 12px;
+            }
+        """)
+        layout.addWidget(self.summary_label)
+        
+        # Load initial data
+        self.load_categories()
+        self.load_data()
 
+    def load_categories(self):
+        """Load expense categories and subcategories"""
+        try:
+            with get_db_connection() as (conn, c):
+                # Load expense categories
+                c.execute("""
+                    SELECT CatID, CatName 
+                    FROM Category 
+                    WHERE Type = 'Expense' OR Type IS NULL OR Type = ''
+                    ORDER BY CatName
+                """)
+                categories = c.fetchall()
+                
+                self.categoryFilter.clear()
+                self.categoryFilter.addItem("All Categories", None)
+                for cat_id, cat_name in categories:
+                    self.categoryFilter.addItem(cat_name, cat_id)
+                    
+        except Exception as e:
+            print(f"Error loading categories: {e}")
+
+    def update_subcategory_filter(self):
+        """Update subcategory filter based on selected category"""
+        category_id = self.categoryFilter.currentData()
+        
+        self.subcategoryFilter.clear()
+        self.subcategoryFilter.addItem("All Subcategories", None)
+        
+        if category_id:
+            try:
+                with get_db_connection() as (conn, c):
+                    c.execute("""
+                        SELECT SubCatID, SubCategoryName 
+                        FROM SubCategory 
+                        WHERE CategoryID= ? 
+                        ORDER BY SubCategoryName
+                    """, (category_id,))
+                    
+                    subcategories = c.fetchall()
+                    for subcat_id, subcat_name in subcategories:
+                        self.subcategoryFilter.addItem(subcat_name, subcat_id)
+                        
+            except Exception as e:
+                print(f"Error loading subcategories: {e}")
+
+    def clear_date_filters(self):
+        """Clear date range filters"""
+        self.fromDateFilter.setDate(QDate.currentDate().addMonths(-3))
+        self.toDateFilter.setDate(QDate.currentDate())
         self.load_data()
 
     def _ensure_expense_description_column(self, c):
-        # ensure the Expenses table has ExpDescription column; add it if missing
+        """Ensure the Expenses table has ExpDescription column"""
         c.execute("PRAGMA table_info(Expenses)")
         cols = [r[1] for r in c.fetchall()]
         if 'ExpDescription' not in cols:
             try:
                 c.execute("ALTER TABLE Expenses ADD COLUMN ExpDescription TEXT")
+                return True
             except Exception:
-                pass
+                return False
+        return True
 
     def load_data(self):
+        """Load expense data with all filters applied"""
         try:
             with get_db_connection() as (conn, c):
-                # Ensure column exists so queries won't fail on older DBs
-                self._ensure_expense_description_column(c)
-
-                # Check whether ExpDescription exists now
-                c.execute("PRAGMA table_info(Expenses)")
-                cols = [r[1] for r in c.fetchall()]
-                has_desc = 'ExpDescription' in cols
-
-                if has_desc:
-                    query = (
-                        "SELECT e.ExpID, c.CatName, sc.SubCategoryName, e.ExpAmount, e.ExpDate, e.ExpDescription "
-                        "FROM Expenses e "
-                        "LEFT JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID "
-                        "LEFT JOIN Category c ON sc.CategoryID = c.CatID "
-                    )
-                else:
-                    # select a blank description to keep column positions stable
-                    query = (
-                        "SELECT e.ExpID, c.CatName, sc.SubCategoryName, e.ExpAmount, e.ExpDate, '' as ExpDescription "
-                        "FROM Expenses e "
-                        "LEFT JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID "
-                        "LEFT JOIN Category c ON sc.CategoryID = c.CatID "
-                    )
-
+                # Ensure column exists
+                has_desc = self._ensure_expense_description_column(c)
+                
+                # Build query with filters
+                query = """
+                    SELECT 
+                        e.ExpID, 
+                        c.CatName, 
+                        sc.SubCategoryName, 
+                        e.ExpAmount, 
+                        DATE(e.ExpDate) as ExpDate,
+                        COALESCE(e.ExpDescription, '') as ExpDescription,
+                        strftime('%m', e.ExpDate) as ExpMonth,
+                        strftime('%Y', e.ExpDate) as ExpYear
+                    FROM Expenses e
+                    LEFT JOIN SubCategory sc ON e.ExpSubCategory = sc.SubCatID
+                    LEFT JOIN Category c ON sc.CategoryID = c.CatID
+                    WHERE 1=1
+                """
                 params = []
-                search = self.searchbar.text().strip()
-                if search:
-                    if has_desc:
-                        query += " WHERE c.CatName LIKE ? OR sc.SubCategoryName LIKE ? OR e.ExpDescription LIKE ?"
-                        params.extend([f"%{search}%"] * 3)
-                    else:
-                        query += " WHERE c.CatName LIKE ? OR sc.SubCategoryName LIKE ?"
-                        params.extend([f"%{search}%"] * 2)
-
-                query += " ORDER BY e.ExpDate DESC"
+                
+                # Search filter
+                search_text = self.searchbar.text().strip()
+                if search_text:
+                    query += " AND ("
+                    query += "c.CatName LIKE ? OR "
+                    query += "sc.SubCategoryName LIKE ? OR "
+                    query += "e.ExpDescription LIKE ?"
+                    query += ")"
+                    params.extend([f"%{search_text}%", f"%{search_text}%", f"%{search_text}%"])
+                
+                # Category filter
+                category_id = self.categoryFilter.currentData()
+                if category_id:
+                    query += " AND c.CatID = ?"
+                    params.append(category_id)
+                
+                # Subcategory filter
+                subcategory_id = self.subcategoryFilter.currentData()
+                if subcategory_id:
+                    query += " AND sc.SubCatID = ?"
+                    params.append(subcategory_id)
+                
+                # Month filter
+                month_filter = self.monthFilter.currentData()
+                if month_filter:
+                    query += " AND strftime('%m', e.ExpDate) = ?"
+                    params.append(f"{month_filter:02d}")
+                
+                # Year filter
+                year_filter = self.yearFilter.currentData()
+                if year_filter:
+                    query += " AND strftime('%Y', e.ExpDate) = ?"
+                    params.append(str(year_filter))
+                
+                # Date range filter
+                from_date = self.fromDateFilter.date().toString("yyyy-MM-dd")
+                to_date = self.toDateFilter.date().toString("yyyy-MM-dd")
+                
+                if self.fromDateFilter.date() <= self.toDateFilter.date():
+                    query += " AND DATE(e.ExpDate) BETWEEN ? AND ?"
+                    params.extend([from_date, to_date])
+                else:
+                    # Show warning but don't apply invalid date filter
+                    QMessageBox.warning(self, "Invalid Date Range", 
+                                      "From date cannot be after To date")
+                
+                # Amount ordering
+                amount_order = self.amountFilter.currentData()
+                if amount_order == "desc":
+                    query += " ORDER BY e.ExpAmount DESC, e.ExpDate DESC"
+                elif amount_order == "asc":
+                    query += " ORDER BY e.ExpAmount ASC, e.ExpDate DESC"
+                else:
+                    query += " ORDER BY e.ExpDate DESC, c.CatName"
+                
                 c.execute(query, params)
                 rows = c.fetchall()
-
+                
+                # Update table
                 self.table.setRowCount(0)
+                
+                # Calculate totals
+                total_amount = 0
+                category_totals = {}
+                
                 for idx, row in enumerate(rows):
                     self.table.insertRow(idx)
                     self.table.setRowHeight(idx, 40)
-                    # row: ExpID, CatName, SubCategoryName, ExpAmount, ExpDate, ExpDescription
-                    self.table.setItem(idx, 0, QTableWidgetItem(str(row[0] if row[0] is not None else "")))
-                    self.table.setItem(idx, 1, QTableWidgetItem(str(row[1] if row[1] else "")))
-                    self.table.setItem(idx, 2, QTableWidgetItem(str(row[2] if row[2] else "")))
-                    self.table.setItem(idx, 3, QTableWidgetItem(str(row[3] if row[3] is not None else "")))
-                    self.table.setItem(idx, 4, QTableWidgetItem(str(row[4] if row[4] else "")))
-                    self.table.setItem(idx, 5, QTableWidgetItem(str(row[5] if row[5] else "")))
-
-                    # Actions - ComboBox
+                    
+                    # Update totals
+                    amount = float(row[3]) if row[3] else 0
+                    total_amount += amount
+                    
+                    category = row[1] if row[1] else "Uncategorized"
+                    if category not in category_totals:
+                        category_totals[category] = 0
+                    category_totals[category] += amount
+                    
+                    # Add data to table
+                    for col in range(8):  # 0-7 columns
+                        data = row[col] if row[col] is not None else ""
+                        
+                        item = QTableWidgetItem(str(data))
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        
+                        # Color coding
+                        if col == 3:  # Amount column
+                            item.setForeground(QColor(139, 0, 0))  # Dark red for expenses
+                            item.setFont(QFont("Arial", 9, QFont.Bold))
+                        
+                        elif col == 4:  # Date column
+                            try:
+                                date_obj = QDate.fromString(str(data), "yyyy-MM-dd")
+                                if date_obj == QDate.currentDate():
+                                    item.setForeground(QColor(0, 0, 139))  # Blue for today
+                                    item.setFont(QFont("Arial", 9, QFont.Bold))
+                            except:
+                                pass
+                        
+                        elif col == 5:  # Description column
+                            if str(data).strip():
+                                item.setForeground(QColor(75, 75, 75))
+                            else:
+                                item.setForeground(QColor(150, 150, 150))
+                                item.setText("(No description)")
+                        
+                        self.table.setItem(idx, col, item)
+                    
+                    # Add action combo
                     row_id = row[0]
                     action_combo = QComboBox()
-                    action_combo.addItems(["Select Action","Edit","Delete"])
-                    action_combo.currentIndexChanged.connect(lambda index, rid=row_id: self.handle_action_change(index, rid, action_combo))
-                    self.table.setCellWidget(idx, 6, action_combo)
-
+                    action_combo.addItems(["Select Action", "Edit", "Delete"])
+                    action_combo.setProperty("row_id", row_id)
+                    action_combo.currentIndexChanged.connect(
+                        lambda index, rid=row_id, cb=action_combo: 
+                        self.handle_action_change(index, rid, cb)
+                    )
+                    self.table.setCellWidget(idx, 8, action_combo)
+                
+                # Update summary
+                self.update_summary(total_amount, category_totals, len(rows))
+                
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load expenses: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to load expenses: {str(e)}")
+
+    def update_summary(self, total_amount, category_totals, row_count):
+        """Update summary label with expense totals"""
+        # Create category summary
+        category_summary = ""
+        for category, amount in sorted(category_totals.items(), key=lambda x: x[1], reverse=True):
+            percentage = (amount / total_amount * 100) if total_amount > 0 else 0
+            category_summary += f"{category}: ${amount:,.2f} ({percentage:.1f}%)<br>"
+        
+        summary_text = f"""
+        <b>Expense Summary:</b><br>
+        Total Expenses: <b>${total_amount:,.2f}</b> across {row_count} records<br>
+        <br>
+        <b>By Category:</b><br>
+        {category_summary}
+        """
+        
+        self.summary_label.setText(summary_text)
+        self.summary_label.setTextFormat(Qt.RichText)
    
     def handle_action_change(self, index, exp_id, combo):
         if index == 0:
